@@ -1,0 +1,34 @@
+# dependencies
+node_modules/
+**/.venv/
+*.pyc
+**/__pycache__/
+
+# build output
+dist/
+dist-ssr/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# editor / os
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# env
+.env
+.env.local
+.env.*.local
+.claude/settings.local.json
