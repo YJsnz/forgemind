@@ -1,11 +1,12 @@
-import { useMemo, useRef } from 'react'
+import { useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { OBJECT_DEFS } from '../game/types'
-import { objectPortCells, objectToWorld, occupiedCells, rotatedFootprint } from '../game/grid'
+import { gridToWorld, objectPortCells, objectPortCellsForSide, objectToWorld, occupiedCells, rotatedFootprint } from '../game/grid'
+import { rotationToDir } from '../game/dir'
 import { EquipmentModel } from './EquipmentModel'
 import type { FactoryObject, PortSide } from '../game/types'
-import type { MachineRuntime } from '../game/simulation'
+import type { MachineRuntime, SourceRuntimeSnapshot } from '../game/simulation'
 
 /**
  * 单个已放置对象的渲染。
@@ -18,6 +19,7 @@ export function FactoryObjectMesh({
   selected,
   active = false,
   runtime,
+  sourceRuntime,
   onClick,
 }: {
   obj: FactoryObject
@@ -25,6 +27,7 @@ export function FactoryObjectMesh({
   selected: boolean
   active?: boolean
   runtime?: MachineRuntime
+  sourceRuntime?: SourceRuntimeSnapshot
   onClick: (id: string) => void
 }) {
   const def = OBJECT_DEFS[obj.type]
@@ -59,7 +62,7 @@ export function FactoryObjectMesh({
     >
       {isMachine ? (
         <>
-          <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} />
+        <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} />
           {/* 状态色底座（显示机器状态，模型上方不遮挡） */}
           <mesh position={[0, 0.025, 0]} receiveShadow>
             <boxGeometry args={[fp.w, 0.04, fp.d]} />
@@ -75,9 +78,9 @@ export function FactoryObjectMesh({
           </mesh>
         </>
       ) : def.role === 'conveyor' || def.role === 'storage' ? (
-        <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} conveyorCorner={Boolean(conveyorLinks?.corner)} />
+        <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} />
       ) : (
-        <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} conveyorCorner={Boolean(conveyorLinks?.corner)} />
+        <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} />
       )}
 
       {/* 机器进度条（加工/收料/出料阶段） */}
@@ -92,15 +95,14 @@ export function FactoryObjectMesh({
       {def.role === 'conveyor' && (
         <>
           {conveyorLinks?.corner
-            ? <ConveyorCornerArrow height={Math.max(def.height, 0.52)} />
+            ? <ConveyorCornerArrow height={Math.max(def.height, 0.52)} inputSide={conveyorLinks.inputSide} />
             : <ConveyorArrow height={Math.max(def.height, 0.52)} />}
           {!conveyorLinks?.corner && <ConveyorMotion active={active} height={Math.max(def.height, 0.52)} />}
         </>
       )}
 
       <PortMarkers
-        type={obj.type}
-        footprint={fp}
+        obj={obj}
         input={def.inputPort}
         output={def.outputPort}
         hideInput={Boolean(conveyorLinks?.inputConnected)}
@@ -119,11 +121,10 @@ export function FactoryObjectMesh({
 }
 
 function getConveyorLinks(obj: FactoryObject, objects: FactoryObject[]) {
-  const ownCells = occupiedCells(obj)
   const sharesCell = (cells: { x: number; z: number }[], target: { x: number; z: number }[]) => cells.some((a) => target.some((b) => a.x === b.x && a.z === b.z))
-  const incoming = objects.find((other) => other.id !== obj.id && sharesCell(objectPortCells(other, 'output'), ownCells))
+  const incoming = objects.find((other) => other.id !== obj.id && sharesCell(objectPortCells(other, 'output'), objectPortCells(obj, 'input')))
   const outgoing = objects.find((other) => other.id !== obj.id && sharesCell(objectPortCells(obj, 'output'), occupiedCells(other)))
-  const incomingConveyor = objects.find((other) => other.id !== obj.id && other.type === 'conveyor' && sharesCell(objectPortCells(other, 'output'), ownCells))
+  const incomingConveyor = objects.find((other) => other.id !== obj.id && other.type === 'conveyor' && sharesCell(objectPortCells(other, 'output'), objectPortCells(obj, 'input')))
   const outgoingConveyor = objects.find((other) => other.id !== obj.id && other.type === 'conveyor' && sharesCell(objectPortCells(obj, 'output'), occupiedCells(other)))
   const directionBetween = (from: FactoryObject, to: FactoryObject) => ({
     dx: Math.sign(to.pos.x - from.pos.x),
@@ -135,44 +136,103 @@ function getConveyorLinks(obj: FactoryObject, objects: FactoryObject[]) {
     incomingDir && outgoingDir &&
     incomingDir.dx * outgoingDir.dx + incomingDir.dz * outgoingDir.dz === 0,
   )
+  const forward = rotationToDir(obj.rotation)
+  const left = { dx: -forward.dz, dz: forward.dx }
+  const inputSide = incomingConveyor && incomingDir
+    ? incomingDir.dx === left.dx && incomingDir.dz === left.dz ? 'left' as const : 'right' as const
+    : undefined
   return {
     inputConnected: Boolean(incoming),
     outputConnected: Boolean(outgoing),
     corner,
+    inputSide,
   }
 }
 
-function PortMarkers({ type, footprint, input, output, hideInput = false, hideOutput = false }: { type: FactoryObject['type']; footprint: { w: number; d: number }; input: PortSide | null; output: PortSide | null; hideInput?: boolean; hideOutput?: boolean }) {
+function PortMarkers({ obj, input, output, hideInput = false, hideOutput = false }: { obj: FactoryObject; input: PortSide | null; output: PortSide | null; hideInput?: boolean; hideOutput?: boolean }) {
   // Conveyors communicate direction through the belt arrow. Rendering a full
   // input/output marker pair on every 1x1 segment creates floating dots at
   // every joint, especially where a route turns.
-  if (type === 'conveyor') return null
-  const inputSides: PortSide[] = type === 'merger' ? ['back', 'left', 'right'] : input ? [input] : []
-  const outputSides: PortSide[] = type === 'splitter' ? ['front', 'left', 'right'] : output ? [output] : []
-  return <>{inputSides.filter(() => !hideInput).map((side) => <PortMarker key={`input-${side}`} kind="input" side={side} footprint={footprint} color="#4d9bb1" />)}{outputSides.filter(() => !hideOutput).map((side) => <PortMarker key={`output-${side}`} kind="output" side={side} footprint={footprint} color="#e6ad26" />)}</>
+  if (obj.type === 'conveyor') return null
+  const inputSides: PortSide[] = obj.type === 'merger' || obj.type === 'assembler' ? ['back', 'left', 'right'] : input ? [input] : []
+  const outputSides: PortSide[] = obj.type === 'splitter' ? ['front', 'left', 'right'] : output ? [output] : []
+  return <>{inputSides.filter(() => !hideInput).map((side) => <PortMarker key={`input-${side}`} kind="input" port="input" side={side} obj={obj} color="#4d9bb1" />)}{outputSides.filter(() => !hideOutput).map((side) => <PortMarker key={`output-${side}`} kind="output" port="output" side={side} obj={obj} color="#e6ad26" />)}</>
 }
 
-function PortMarker({ kind, side, footprint, color }: { kind: 'input' | 'output'; side: PortSide; footprint: { w: number; d: number }; color: string }) {
-  const sideData: Record<PortSide, { x: number; z: number; dx: number; dz: number }> = {
-    front: { x: footprint.w / 2 + 0.08, z: 0, dx: 1, dz: 0 },
-    back: { x: -footprint.w / 2 - 0.08, z: 0, dx: -1, dz: 0 },
-    left: { x: 0, z: footprint.d / 2 + 0.08, dx: 0, dz: 1 },
-    right: { x: 0, z: -footprint.d / 2 - 0.08, dx: 0, dz: -1 },
+function PortMarker({ kind, port, side, obj, color }: { kind: 'input' | 'output'; port: 'input' | 'output'; side: PortSide; obj: FactoryObject; color: string }) {
+  const beacon = useRef<THREE.Group>(null)
+  useFrame(({ clock }) => {
+    if (!beacon.current) return
+    const pulse = 0.92 + Math.sin(clock.getElapsedTime() * 3.2 + (kind === 'output' ? 0.8 : 0)) * 0.08
+    beacon.current.scale.setScalar(pulse)
+  })
+  const cells = objectPortCellsForSide(obj, port, side)
+  if (cells.length === 0) return null
+  // Port cells are the actual connection coordinates. Average the two middle
+  // lanes of an even-sized footprint so the marker stays centered while the
+  // simulation accepts either lane.
+  const world = cells.reduce((sum, cell) => {
+    const point = gridToWorld(cell)
+    return { x: sum.x + point.x / cells.length, z: sum.z + point.z / cells.length }
+  }, { x: 0, z: 0 })
+  const centre = objectToWorld(obj)
+  const angle = rotationAngle(obj.rotation)
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  const worldOffset = { x: world.x - centre.x, z: world.z - centre.z }
+  const edge = {
+    x: cos * worldOffset.x - sin * worldOffset.z,
+    z: sin * worldOffset.x + cos * worldOffset.z,
   }
-  const edge = sideData[side]
-  const arrow = kind === 'output' ? edge : { dx: -edge.dx, dz: -edge.dz }
+  const sideData: Record<PortSide, { dx: number; dz: number }> = {
+    front: { dx: 1, dz: 0 },
+    back: { dx: -1, dz: 0 },
+    left: { dx: 0, dz: 1 },
+    right: { dx: 0, dz: -1 },
+  }
+  const sideDirection = sideData[side]
+  const arrow = kind === 'output' ? sideDirection : { dx: -sideDirection.dx, dz: -sideDirection.dz }
+  const footprint = rotatedFootprint(OBJECT_DEFS[obj.type].footprint, obj.rotation)
+  const bodyEdgeDistance = side === 'front' || side === 'back' ? footprint.w / 2 : footprint.d / 2
+  const markerDistance = Math.abs(side === 'front' || side === 'back' ? edge.x : edge.z)
+  const bridgeLength = Math.max(0.32, markerDistance - bodyEdgeDistance)
+  const bridgeCentre = bodyEdgeDistance + bridgeLength / 2
   return (
-    <group position={[edge.x, 0.28, edge.z]}>
-      <mesh>
-        <cylinderGeometry args={[0.075, 0.075, 0.025, 16]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.35} roughness={0.4} metalness={0.5} />
+    <>
+      <mesh
+        position={[sideDirection.dx * bridgeCentre, 0.16, sideDirection.dz * bridgeCentre]}
+      >
+        <boxGeometry args={sideDirection.dx !== 0 ? [bridgeLength, 0.026, 0.12] : [0.12, 0.026, bridgeLength]} />
+        <meshBasicMaterial color={color} transparent opacity={0.52} />
       </mesh>
-      <mesh position={[arrow.dx * 0.07, 0, arrow.dz * 0.07]} rotation={arrowRotation(arrow.dx, arrow.dz)}>
-        <coneGeometry args={[0.05, 0.12, 8]} />
-        <meshBasicMaterial color={color} />
-      </mesh>
-    </group>
+      <group ref={beacon} position={[edge.x, 0.27, edge.z]}>
+        <mesh position={[0, -0.18, 0]}>
+          <cylinderGeometry args={[0.245, 0.245, 0.032, 8]} />
+          <meshStandardMaterial color="#172526" roughness={0.64} metalness={0.72} />
+        </mesh>
+        <mesh position={[0, -0.155, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.19, 0.025, 8, 24]} />
+          <meshBasicMaterial color={color} transparent opacity={0.92} />
+        </mesh>
+        <mesh position={[0, -0.145, 0]}>
+          <boxGeometry args={[0.16, 0.028, 0.16]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.38} roughness={0.35} metalness={0.5} />
+        </mesh>
+        <mesh position={[arrow.dx * 0.14, 0.015, arrow.dz * 0.14]} rotation={arrowRotation(arrow.dx, arrow.dz)}>
+          <coneGeometry args={[0.105, 0.24, 8]} />
+          <meshBasicMaterial color={color} />
+        </mesh>
+        <mesh position={[0, 0.03, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.27, 0.285, 24]} />
+          <meshBasicMaterial color={color} transparent opacity={0.18} />
+        </mesh>
+      </group>
+    </>
   )
+}
+
+function rotationAngle(rotation: FactoryObject['rotation']): number {
+  return rotation === 90 ? -Math.PI / 2 : rotation === 180 ? Math.PI : rotation === 270 ? Math.PI / 2 : 0
 }
 
 function arrowRotation(dx: number, dz: number): [number, number, number] {
@@ -218,35 +278,19 @@ function ConveyorArrow({ height }: { height: number }) {
   )
 }
 
-function ConveyorCornerArrow({ height }: { height: number }) {
-  const arrowShape = useMemo(() => {
-    const shape = new THREE.Shape()
-    const points: Array<[number, number]> = []
-    const centre = { x: 0.48, z: -0.48 }
-    const appendArc = (radius: number, reverse = false) => {
-      for (let i = 0; i <= 8; i++) {
-        const t = i / 8
-        const angle = reverse ? Math.PI / 2 + t * Math.PI / 2 : Math.PI - t * Math.PI / 2
-        const x = centre.x + Math.cos(angle) * radius
-        const z = centre.z + Math.sin(angle) * radius
-        points.push([x, -z])
-      }
-    }
-    appendArc(0.31)
-    appendArc(0.24, true)
-    shape.moveTo(points[0][0], points[0][1])
-    points.slice(1).forEach(([x, y]) => shape.lineTo(x, y))
-    shape.closePath()
-    return shape
-  }, [])
-
+function ConveyorCornerArrow({ height, inputSide = 'left' }: { height: number; inputSide?: 'left' | 'right' }) {
+  const inputZ = inputSide === 'left' ? 1 : -1
   return (
     <group position={[0, height + 0.045, 0]}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <shapeGeometry args={[arrowShape]} />
-        <meshBasicMaterial color="#8be28a" transparent opacity={0.92} />
+      <mesh position={[0, 0, inputZ * 0.25]}>
+        <boxGeometry args={[0.045, 0.018, 0.34]} />
+        <meshBasicMaterial color="#8be28a" transparent opacity={0.72} />
       </mesh>
-      <mesh position={[0.35, 0, -0.02]} rotation={[0, 0, -Math.PI / 2]}>
+      <mesh position={[0.18, 0, 0]}>
+        <boxGeometry args={[0.36, 0.018, 0.045]} />
+        <meshBasicMaterial color="#8be28a" transparent opacity={0.72} />
+      </mesh>
+      <mesh position={[0.38, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
         <coneGeometry args={[0.075, 0.17, 8]} />
         <meshBasicMaterial color="#8be28a" />
       </mesh>

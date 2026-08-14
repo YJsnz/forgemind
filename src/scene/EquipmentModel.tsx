@@ -3,8 +3,9 @@ import * as THREE from 'three'
 import { useGLTF } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { PandaArmModel } from './PandaArmModel'
+import { IncomingStationModel } from './IncomingStationModel'
 import type { BuildType } from '../game/types'
-import type { MachineRuntime } from '../game/simulation'
+import type { MachineRuntime, SourceRuntimeSnapshot } from '../game/simulation'
 
 interface EquipmentModelProps {
   type: BuildType
@@ -13,23 +14,25 @@ interface EquipmentModelProps {
   height: number
   active?: boolean
   runtime?: MachineRuntime
+  sourceRuntime?: SourceRuntimeSnapshot
   conveyorCorner?: boolean
+  conveyorCornerInput?: 'left' | 'right'
 }
 
-export function EquipmentModel({ type, color, accent, height, active = false, runtime, conveyorCorner = false }: EquipmentModelProps) {
+export function EquipmentModel({ type, color, accent, height, active = false, runtime, sourceRuntime, conveyorCorner = false, conveyorCornerInput = 'left' }: EquipmentModelProps) {
   switch (type) {
     case 'machine':
-      return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/industrial/robot_cell.glb" targetFootprint={1.3} targetHeight={height} /></Suspense>
+      return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/industrial/realvirtual_high_detail.glb" targetFootprint={1.3} targetHeight={height} /></Suspense>
     case 'oreMiner':
       return <RawRack color={color} accent={accent} />
     case 'source':
-      return <ResourceNode color={color} accent={accent} />
+      return <IncomingStationModel color={color} accent={accent} active={active} runtime={sourceRuntime} />
     case 'smelter':
       return <Suspense fallback={<CncCell color={color} accent={accent} />}><ImportedModel path="/models/industrial/cnc_machining_center.glb" targetFootprint={2.8} targetHeight={height} /></Suspense>
     case 'press':
       return <Suspense fallback={<Press color={color} accent={accent} runtime={runtime} />}><DetailedAsset path="/models/industrial/hydraulic_press_detail.glb" targetFootprint={1.72} targetHeight={height} accent={accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="press" /></Suspense>
     case 'assembler':
-      return <ImportedAssemblyCell targetFootprint={2.6} targetHeight={height} />
+      return <ImportedAssemblyCell targetFootprint={2.6} targetHeight={height} active={runtime?.state === 'loading' || runtime?.state === 'processing' || runtime?.state === 'output'} />
     case 'inspection':
       return <Suspense fallback={<InspectionCell color={color} accent={accent} />}><ImportedInspectionCell color={color} accent={accent} targetFootprint={1.8} targetHeight={height} /></Suspense>
     case 'washing':
@@ -44,7 +47,7 @@ export function EquipmentModel({ type, color, accent, height, active = false, ru
       return <Suspense fallback={<FlowNode color={color} accent={accent} branches={3} merger scale={0.64} active={active} />}><DetailedAsset path="/models/industrial/flow_node_detail.glb" targetFootprint={1.02} targetHeight={0.8} accent={accent} active={active} kind="flow" /></Suspense>
     case 'conveyor':
       return conveyorCorner
-        ? <ConveyorCorner accent={accent} height={Math.max(height, 0.52)} />
+        ? <ConveyorCorner accent={accent} height={Math.max(height, 0.52)} inputSide={conveyorCornerInput} />
         : <Suspense fallback={<Belt color={color} accent={accent} active={active} />}><ImportedModel path="/models/industrial/roller_conveyor_segment.glb" targetFootprint={1.05} targetHeight={Math.max(height, 0.52)} rotationOffsetY={Math.PI / 2} stripDirectionTexture /></Suspense>
     default:
       return <Belt color={color} accent={accent} />
@@ -85,16 +88,6 @@ function RawRack({ color, accent }: { color: string; accent: string }) {
       <mesh position={[0, 0.42, 0.08]}><boxGeometry args={[1.16, 0.3, 0.85]} /><meshStandardMaterial color="#b08b55" roughness={0.75} /></mesh>
       <mesh position={[0, 1.08, -0.06]}><boxGeometry args={[1.1, 0.26, 0.78]} /><meshStandardMaterial color="#9b6f45" roughness={0.75} /></mesh>
       <mesh position={[0, 1.76, 0]}><boxGeometry args={[1.16, 0.04, 1.32]} /><meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.12} /></mesh>
-    </group>
-  </Base>
-}
-
-function ResourceNode({ color, accent }: { color: string; accent: string }) {
-  return <Base width={1.05} depth={1.05}>
-    <group position={[0, 0.42, 0]}>
-      <mesh castShadow><dodecahedronGeometry args={[0.46, 1]} /><meshStandardMaterial color={color} roughness={0.8} metalness={0.25} /></mesh>
-      <mesh position={[0, 0.36, 0]}><ringGeometry args={[0.18, 0.24, 8]} /><meshBasicMaterial color={accent} /></mesh>
-      <mesh position={[0, 0.72, 0]}><octahedronGeometry args={[0.14, 0]} /><meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.3} /></mesh>
     </group>
   </Base>
 }
@@ -231,71 +224,48 @@ function Belt({ color, accent, active = false }: { color: string; accent: string
   </Base>
 }
 
-function ConveyorCorner({ accent, height }: { accent: string; height: number }) {
+function ConveyorCorner({ accent, height, inputSide }: { accent: string; height: number; inputSide: 'left' | 'right' }) {
   const beltColor = '#182321'
   const railColor = '#687570'
-  const cornerShape = useMemo(() => {
-    const shape = new THREE.Shape()
-    const points: Array<[number, number]> = []
-    const centre = { x: 0.48, z: -0.48 }
-    const addArc = (radius: number, reverse = false) => {
-      for (let i = 0; i <= 8; i++) {
-        const t = i / 8
-        const angle = reverse ? Math.PI / 2 + t * Math.PI / 2 : Math.PI - t * Math.PI / 2
-        const x = centre.x + Math.cos(angle) * radius
-        const z = centre.z + Math.sin(angle) * radius
-        points.push([x, -z])
-      }
-    }
-    addArc(0.42)
-    addArc(0.2, true)
-    shape.moveTo(points[0][0], points[0][1])
-    points.slice(1).forEach(([x, y]) => shape.lineTo(x, y))
-    shape.closePath()
-    return shape
-  }, [])
+  const inputZ = inputSide === 'left' ? 1 : -1
+  const deckHeight = Math.max(0.25, height * 0.58)
 
   return <group>
-    {/* Match the straight belt width instead of filling the whole 1x1 cell. */}
-    <mesh position={[0, 0.13, -0.25]} castShadow receiveShadow>
-      <boxGeometry args={[0.42, 0.18, 0.5]} />
-      <meshStandardMaterial color="#202b29" roughness={0.58} metalness={0.52} />
-    </mesh>
     <mesh position={[0.25, 0.13, 0]} castShadow receiveShadow>
       <boxGeometry args={[0.5, 0.18, 0.42]} />
       <meshStandardMaterial color="#202b29" roughness={0.58} metalness={0.52} />
     </mesh>
-    <mesh position={[0, Math.max(0.25, height * 0.58), -0.25]} receiveShadow>
-      <boxGeometry args={[0.36, 0.035, 0.5]} />
-      <meshStandardMaterial color={beltColor} roughness={0.78} metalness={0.18} />
+    <mesh position={[0, 0.13, inputZ * 0.25]} castShadow receiveShadow>
+      <boxGeometry args={[0.42, 0.18, 0.5]} />
+      <meshStandardMaterial color="#202b29" roughness={0.58} metalness={0.52} />
     </mesh>
-    <mesh position={[0.25, Math.max(0.25, height * 0.58), 0]} receiveShadow>
+    <mesh position={[0.25, deckHeight, 0]} receiveShadow>
       <boxGeometry args={[0.5, 0.035, 0.36]} />
       <meshStandardMaterial color={beltColor} roughness={0.78} metalness={0.18} />
     </mesh>
-    <mesh position={[0, Math.max(0.27, height * 0.62), 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-      <shapeGeometry args={[cornerShape]} />
+    <mesh position={[0, deckHeight, inputZ * 0.25]} receiveShadow>
+      <boxGeometry args={[0.36, 0.035, 0.5]} />
       <meshStandardMaterial color={beltColor} roughness={0.78} metalness={0.18} />
     </mesh>
-    <mesh position={[0, Math.max(0.295, height * 0.66), 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <shapeGeometry args={[cornerShape]} />
-      <meshBasicMaterial color={accent} transparent opacity={0.1} />
+    <mesh position={[0, deckHeight, 0]} receiveShadow>
+      <boxGeometry args={[0.36, 0.035, 0.36]} />
+      <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.1} roughness={0.65} metalness={0.22} />
     </mesh>
-    <mesh position={[-0.22, 0.24, -0.25]}>
-      <boxGeometry args={[0.035, 0.09, 0.5]} />
+    <mesh position={[0.25, 0.24, -0.22]}>
+      <boxGeometry args={[0.5, 0.09, 0.035]} />
       <meshStandardMaterial color={railColor} roughness={0.48} metalness={0.68} />
     </mesh>
-    <mesh position={[0.25, 0.24, 0.22]}>
-      <boxGeometry args={[0.5, 0.09, 0.035]} />
+    <mesh position={[-0.22, 0.24, inputZ * 0.25]}>
+      <boxGeometry args={[0.035, 0.09, 0.5]} />
       <meshStandardMaterial color={railColor} roughness={0.48} metalness={0.68} />
     </mesh>
   </group>
 }
 
-function ImportedAssemblyCell({ targetFootprint, targetHeight }: { targetFootprint: number; targetHeight: number }) {
+function ImportedAssemblyCell({ targetFootprint, targetHeight, active }: { targetFootprint: number; targetHeight: number; active: boolean }) {
   void targetFootprint
   void targetHeight
-  return <group><WorkcellPlinth /><PandaArmModel /></group>
+  return <group><WorkcellPlinth /><PandaArmModel active={active} /></group>
 }
 
 function WorkcellPlinth() {
@@ -349,7 +319,7 @@ function ImportedModel({ path, targetFootprint, targetHeight, rotationOffsetY = 
       if (node instanceof THREE.Mesh) {
         node.castShadow = true
         node.receiveShadow = true
-        if (stripDirectionTexture && (node.name.toLowerCase().includes('belt') || (Array.isArray(node.material) ? node.material : [node.material]).some((material) => material.name.toLowerCase().includes('conveyorbelt') || material.name.toLowerCase().includes('rubber')))) {
+        if (stripDirectionTexture && (node.name.toLowerCase().includes('belt') || (Array.isArray(node.material) ? node.material : [node.material]).some((material) => material?.name?.toLowerCase().includes('conveyorbelt') || material?.name?.toLowerCase().includes('rubber')))) {
           const replaceDirectionTexture = (material: THREE.Material) => {
             const next = material.clone() as THREE.MeshStandardMaterial
             next.map = null
@@ -364,7 +334,7 @@ function ImportedModel({ path, targetFootprint, targetHeight, rotationOffsetY = 
       }
     })
     return scene
-  }, [gltf, targetFootprint, targetHeight])
+  }, [gltf, rotationOffsetY, stripDirectionTexture, targetFootprint, targetHeight])
   return <primitive object={normalized} />
 }
 

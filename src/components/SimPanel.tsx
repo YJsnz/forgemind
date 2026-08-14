@@ -27,7 +27,7 @@ export function SimPanel() {
         machines.length /
         Math.max(snapshot.timeSec, 0.001)
 
-  const speeds = [1, 2, 5, 10]
+  const speeds = [0.35, 0.5, 1, 2]
 
   return (
     <div className="flex flex-col gap-3 px-3 py-3">

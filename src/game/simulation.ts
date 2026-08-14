@@ -30,6 +30,7 @@ export const CONVEYOR_SPEED = 2
 
 /** source 产出间隔（秒） */
 export const SOURCE_INTERVAL = 1.0
+export const SOURCE_TRANSFER_TIME = 1.2
 
 /** 机器运行时状态（§3.4 状态机） */
 export type MachineState = 'idle' | 'loading' | 'processing' | 'output'
@@ -65,8 +66,18 @@ export interface SimStats {
 export interface SimulationSnapshot {
   timeSec: number
   machines: MachineRuntime[]
+  sources: SourceRuntimeSnapshot[]
   itemLots: ItemLot[]
   stats: SimStats
+}
+
+export type SourceState = 'idle' | 'picking' | 'placing' | 'blocked'
+
+export interface SourceRuntimeSnapshot {
+  objectId: string
+  itemId: string | null
+  state: SourceState
+  progress: number
 }
 
 interface SourceRuntime {
@@ -74,6 +85,8 @@ interface SourceRuntime {
   itemId: string | null
   /** 产出计时器 */
   timer: number
+  transferTimer: number
+  state: SourceState
 }
 
 interface ConveyorRuntime {
@@ -144,6 +157,8 @@ export class SimulationEngine {
           objectId: o.id,
           itemId: o.itemId ?? null,
           timer: 0,
+          transferTimer: 0,
+          state: 'idle',
         })
       }
     }
@@ -170,37 +185,69 @@ export class SimulationEngine {
   // —— Source：定时产出到下游 ——
   private stepSources(dt: number): void {
     for (const s of this.sources.values()) {
-      if (!s.itemId) continue
-      s.timer += dt
-      if (s.timer < SOURCE_INTERVAL) continue
-
-      const srcObj = this.objectById.get(s.objectId)
-      if (!srcObj) continue
-      const dir = rotationToDir(srcObj.rotation)
-      const output = objectPortCell(srcObj, 'output') ?? { x: srcObj.pos.x + dir.dx, z: srcObj.pos.z + dir.dz }
-      const nx = output.x
-      const nz = output.z
-      const downstream = this.objectByCell.get(cellKey(nx, nz))
-
-      let placed = false
-      if (downstream && this.isConnected(srcObj, downstream) && isTransportType(downstream.type)) {
-        const c = this.conveyors.get(downstream.id)
-        if (c && !c.lot) {
-          c.lot = this.makeLot(s.itemId, downstream.id, 0)
-          placed = true
-        }
-      } else if (downstream && this.isConnected(srcObj, downstream) && objectRole(downstream.type) === 'machine') {
-        if (this.tryFeedMachine(downstream.id, s.itemId)) {
-          placed = true
-        }
+      if (!s.itemId) {
+        s.state = 'blocked'
+        s.transferTimer = 0
+        continue
       }
 
-      if (placed) s.timer -= SOURCE_INTERVAL
-      else s.timer = Math.min(s.timer, SOURCE_INTERVAL) // 下游满，等待
+      const srcObj = this.objectById.get(s.objectId)
+      if (!srcObj) {
+        s.state = 'blocked'
+        s.transferTimer = 0
+        continue
+      }
+
+      if (s.transferTimer <= 0 && s.state !== 'picking' && s.state !== 'placing') {
+        s.timer += dt
+        if (s.timer < SOURCE_INTERVAL) {
+          s.state = 'idle'
+          continue
+        }
+        if (this.sourceDownstreams(srcObj).length === 0) {
+          s.state = 'blocked'
+          continue
+        }
+        s.timer -= SOURCE_INTERVAL
+        s.transferTimer = 0
+      }
+
+      s.transferTimer += dt
+      const progress = Math.min(s.transferTimer / SOURCE_TRANSFER_TIME, 1)
+      s.state = progress < 0.52 ? 'picking' : 'placing'
+      if (progress < 1) continue
+
+      if (this.trySourceOutput(srcObj, s.itemId)) {
+        s.transferTimer = 0
+        s.state = 'idle'
+      } else {
+        s.state = 'blocked'
+      }
     }
   }
 
-  // —— Conveyor：物品前进 + 跨格 + 进机器 ——
+  private sourceDownstreams(srcObj: FactoryObject): FactoryObject[] {
+    return objectPortCells(srcObj, 'output')
+      .map((cell) => this.objectByCell.get(cellKey(cell.x, cell.z)))
+      .filter((obj): obj is FactoryObject => Boolean(obj))
+      .filter((obj) => this.isConnected(srcObj, obj))
+  }
+
+  private trySourceOutput(srcObj: FactoryObject, itemId: string): boolean {
+    for (const downstream of this.sourceDownstreams(srcObj)) {
+      if (isTransportType(downstream.type)) {
+        const c = this.conveyors.get(downstream.id)
+        if (c && !c.lot) {
+          c.lot = this.makeLot(itemId, downstream.id, 0)
+          return true
+        }
+      } else if (objectRole(downstream.type) === 'machine' && this.tryFeedMachine(downstream.id, itemId)) {
+        return true
+      }
+    }
+    return false
+  }
+
   private stepConveyors(dt: number): void {
     const step = CONVEYOR_SPEED * dt
     // 固定按 id 排序，保证确定性
@@ -377,15 +424,15 @@ export class SimulationEngine {
 
     const obj = this.findMachineObject(m.objectId)
     if (!obj) return false
-    const dir = rotationToDir(obj.rotation)
-    const output = objectPortCell(obj, 'output') ?? { x: obj.pos.x + dir.dx, z: obj.pos.z + dir.dz }
-    const nx = output.x
-    const nz = output.z
-    const downstream = this.objectByCell.get(cellKey(nx, nz))
+    const outputs = objectPortCells(obj, 'output')
+    const downstreams = outputs
+      .map((cell) => this.objectByCell.get(cellKey(cell.x, cell.z)))
+      .filter((target): target is FactoryObject => Boolean(target))
+    const downstream = downstreams.find((target) => this.isConnected(obj, target))
 
     const out = recipe.outputs[0] // MVP 单输出；多输出后续扩展
 
-    if (downstream && this.isConnected(obj, downstream) && isTransportType(downstream.type)) {
+    if (downstream && isTransportType(downstream.type)) {
       const dc = this.conveyors.get(downstream.id)
       if (dc && !dc.lot) {
         dc.lot = this.makeLot(out.itemId, downstream.id, 0)
@@ -396,6 +443,8 @@ export class SimulationEngine {
     }
 
     // 下游无传送带 → 直接视为出口，计入产出
+    if (downstreams.length > 0 && !downstream) return false
+
     this.recordProduced(recipe)
     return true
   }
@@ -434,6 +483,12 @@ export class SimulationEngine {
     return {
       timeSec: this.timeSec,
       machines: Array.from(this.machines.values()).map((m) => ({ ...m })),
+      sources: Array.from(this.sources.values()).map((s) => ({
+        objectId: s.objectId,
+        itemId: s.itemId,
+        state: s.state,
+        progress: s.transferTimer > 0 ? Math.min(s.transferTimer / SOURCE_TRANSFER_TIME, 1) : 0,
+      })),
       itemLots: lots,
       stats: {
         consumed: { ...this.stats.consumed },

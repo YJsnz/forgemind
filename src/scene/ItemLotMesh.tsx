@@ -13,6 +13,7 @@ import { rotationToDir } from '../game/dir'
  */
 export function ItemLotMesh({ lot }: { lot: ItemLot }) {
   const ref = useRef<THREE.Group>(null)
+  const initialized = useRef(false)
   const objects = useForgeMindStore((s) => s.objects)
   const items = useForgeMindStore((s) => s.items)
 
@@ -30,14 +31,21 @@ export function ItemLotMesh({ lot }: { lot: ItemLot }) {
 
   const size = 0.3
 
-  useFrame(({ clock }) => {
+  useFrame((_, delta) => {
     if (!ref.current) return
-    ref.current.rotation.y = clock.getElapsedTime() * 1.8
-    ref.current.position.y = 0.35 + size / 2 + Math.sin(clock.getElapsedTime() * 5 + lot.offset * 3) * 0.025
+    const targetY = 0.35 + size / 2
+    if (!initialized.current) {
+      ref.current.position.set(px, targetY, pz)
+      initialized.current = true
+      return
+    }
+    ref.current.position.x = THREE.MathUtils.damp(ref.current.position.x, px, 10, delta)
+    ref.current.position.y = THREE.MathUtils.damp(ref.current.position.y, targetY, 12, delta)
+    ref.current.position.z = THREE.MathUtils.damp(ref.current.position.z, pz, 10, delta)
   })
 
   return (
-    <group ref={ref} position={[px, 0.35 + size / 2, pz]}>
+    <group ref={ref}>
       <mesh castShadow>
         <boxGeometry args={[size, size, size]} />
         <meshStandardMaterial color={color} roughness={0.5} metalness={0.4} />

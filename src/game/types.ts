@@ -106,7 +106,7 @@ export const OBJECT_DEFS: Record<BuildType, ObjectDef> = {
   conveyor: equipment('conveyor', 'conveyor', '物流', '滚筒输送线', 'ROLLER CONVEYOR Mk.I', '以滚筒输送托盘和周转箱，连接工位、缓存区和检验区。', 'Industrial roller conveyor', { w: 1, d: 1 }, '#5b9b99', '#82d0c7', 0.35, '120 / min', '1.5 kW', ['托盘 / 周转箱'], ['托盘 / 周转箱']),
   splitter: equipment('splitter', 'conveyor', '物流', '三向分流器', 'FLOW SPLITTER Mk.I', '将一条上游线路拆分为三条可控物流支路。', 'Three-way hub', { w: 1, d: 1 }, '#4d8f8f', '#83d5cc', 0.52, '180 / min', '2.4 kW', ['物料批次'], ['物料批次 × 3']),
   merger: equipment('merger', 'conveyor', '物流', '汇流节点', 'FLOW MERGER Mk.I', '汇聚多条线路，为加工设备提供稳定进料。', 'Confluence hub', { w: 1, d: 1 }, '#4d8f8f', '#83d5cc', 0.52, '180 / min', '2.4 kW', ['物料批次 × 3'], ['物料批次']),
-  machine: equipment('machine', 'machine', '加工', '通用工艺工作站', 'GENERAL PROCESS CELL Mk.I', '面向钻孔、攻丝、去毛刺等离散工艺的通用工作站。', '6-axis robot workcell', { w: 1, d: 1 }, '#4b9ca4', '#72d4d2', 1.2, '30 / min', '8 kW', ['工艺输入'], ['工艺输出']),
+  machine: equipment('machine', 'machine', '加工', '通用工艺工作站', 'GENERAL PROCESS CELL Mk.I', '面向钻孔、攻丝、去毛刺等离散工艺的通用工作站。', 'High-detail imported process asset', { w: 1, d: 1 }, '#4b9ca4', '#72d4d2', 1.2, '30 / min', '8 kW', ['工艺输入'], ['工艺输出']),
   smelter: equipment('smelter', 'machine', '加工', '数控加工中心', 'CNC MACHINING CENTER Mk.I', '完成铣削、钻孔和攻丝，输出带有质量状态的机加工件。', 'Enclosed CNC cell', { w: 3, d: 2 }, '#657782', '#d2ad50', 1.9, '18 / min', '22 kW', ['钢坯 / 铝坯'], ['机加工壳体']),
   press: equipment('press', 'machine', '加工', '液压冲压机', 'HYDRAULIC PRESS Mk.I', '使用模具完成板材冲压和折弯，配置安全光栅与液压站。', 'Hydraulic forming press', { w: 2, d: 2 }, '#677e89', '#d2ad50', 1.6, '36 / min', '24 kW', ['板材'], ['冲压壳体']),
   assembler: equipment('assembler', 'machine', '装配', '机器人装配单元', 'ROBOTIC ASSEMBLY CELL Mk.I', '由六轴机器人、夹具和扭矩工具组成的自动装配单元。', 'ABB / IRB robotic cell', { w: 3, d: 3 }, '#5d7185', '#e4b52b', 1.85, '12 / min', '28 kW', ['机加工件', '标准件'], ['电机总成']),
@@ -116,9 +116,15 @@ export const OBJECT_DEFS: Record<BuildType, ObjectDef> = {
   storage: equipment('storage', 'storage', '物流', '成品缓存仓', 'FINISHED GOODS BUFFER Mk.I', '按批次缓存已检验产品，等待入库或出货。', 'Pallet buffer rack', { w: 2, d: 2 }, '#6c7674', '#d7b44a', 1.35, '240 / min', '4 kW', ['合格品'], ['待出货托盘']),
 }
 
+// The material infeed is a compound station: an unloading buffer, robot arm,
+// and a short belt are placed inside one 3 x 2 m build footprint.
+OBJECT_DEFS.source.footprint = { w: 3, d: 2 }
+OBJECT_DEFS.source.height = 1.35
+OBJECT_DEFS.source.model = 'Robotic material infeed station'
+
 /** Assets extracted from the centre reference cell and exposed in the build catalogue. */
 export const BUILD_ASSET_PATHS: Partial<Record<BuildType, string>> = {
-  machine: '/models/industrial/robot_cell.glb',
+  machine: '/models/industrial/realvirtual_high_detail.glb',
   conveyor: '/models/industrial/roller_conveyor_segment.glb',
   smelter: '/models/industrial/cnc_machining_center.glb',
   assembler: '/models/panda/panda.urdf + robot_cell.glb / open cell, no fence',

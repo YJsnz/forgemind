@@ -6,6 +6,7 @@ import { genId as itemGenId } from '../game/item'
 import type { FactorySave } from '../game/save'
 import { SAVE_VERSION } from '../game/save'
 import type { SimulationSnapshot } from '../game/simulation'
+import { createBaseA01Layout } from '../game/baseA01'
 
 /**
  * 低频 UI/编辑状态（补充设计 §5.3：只装低频状态；
@@ -51,6 +52,8 @@ export interface ForgeMindState {
   simSpeed: number
   /** 重置信号：每 +1，runner 重建引擎 */
   simResetTick: number
+  canUndo: boolean
+  canRedo: boolean
 
   setBuildType: (t: BuildType | null) => void
   /** 更新 ghost 的网格位置（含合法性计算）；null = 指针不在网格上 */
@@ -67,6 +70,8 @@ export interface ForgeMindState {
   remove: (id: string) => void
   /** 旋转已放置对象 */
   rotateObject: (id: string) => void
+  undo: () => void
+  redo: () => void
   select: (id: string | null) => void
 
   /** 新增物品 */
@@ -108,13 +113,37 @@ const emptyGhost: Ghost = { type: 'machine', pos: null, rotation: 0, valid: fals
 const emptySnapshot: SimulationSnapshot = {
   timeSec: 0,
   machines: [],
+  sources: [],
   itemLots: [],
   stats: { consumed: {}, produced: {} },
 }
 
-export const useForgeMindStore = create<ForgeMindState>((set, get) => ({
+interface FactoryHistoryEntry {
+  objects: FactoryObject[]
+  selectedId: string | null
+}
+
+const HISTORY_LIMIT = 80
+
+export const useForgeMindStore = create<ForgeMindState>((set, get) => {
+  let undoStack: FactoryHistoryEntry[] = []
+  let redoStack: FactoryHistoryEntry[] = []
+
+  const capture = (state: Pick<ForgeMindState, 'objects' | 'selectedId'>): FactoryHistoryEntry => ({
+    objects: state.objects,
+    selectedId: state.selectedId,
+  })
+
+  const pushHistory = (state: Pick<ForgeMindState, 'objects' | 'selectedId'>) => {
+    undoStack = [...undoStack, capture(state)].slice(-HISTORY_LIMIT)
+    redoStack = []
+  }
+
+  const historyFlags = () => ({ canUndo: undoStack.length > 0, canRedo: redoStack.length > 0 })
+
+  return ({
   buildType: null,
-  objects: [],
+  objects: createBaseA01Layout(),
   ghost: emptyGhost,
   ghostPath: [],
   ghostPathValid: [],
@@ -123,8 +152,10 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => ({
   recipes: DEFAULT_RECIPES,
   simSnapshot: emptySnapshot,
   simPlaying: false,
-  simSpeed: 1,
+  simSpeed: 0.35,
   simResetTick: 0,
+  canUndo: false,
+  canRedo: false,
 
   setBuildType: (t) =>
     set((s) => ({
@@ -158,13 +189,14 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => ({
   place: () =>
     set((s) => {
       if (!s.ghost.pos || !s.ghost.valid) return {}
+      pushHistory(s)
       const obj: FactoryObject = {
         id: genId(),
         type: s.ghost.type,
         pos: s.ghost.pos,
         rotation: s.ghost.rotation,
       }
-      return { objects: [...s.objects, obj] }
+      return { objects: [...s.objects, obj], ...historyFlags() }
     }),
 
   placeAt: (pos, rotation = get().ghost.rotation) => {
@@ -172,22 +204,28 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => ({
     set((s) => {
       if (!s.buildType || !canPlace(pos, s.buildType, rotation, s.objects)) return {}
       placed = true
+      pushHistory(s)
       const obj: FactoryObject = {
         id: genId(),
         type: s.buildType,
         pos,
         rotation,
       }
-      return { objects: [...s.objects, obj], ghost: { ...s.ghost, pos, rotation, valid: true } }
+      return { objects: [...s.objects, obj], ghost: { ...s.ghost, pos, rotation, valid: true }, ...historyFlags() }
     })
     return placed
   },
 
   remove: (id) =>
-    set((s) => ({
-      objects: s.objects.filter((o) => o.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
-    })),
+    set((s) => {
+      if (!s.objects.some((o) => o.id === id)) return {}
+      pushHistory(s)
+      return {
+        objects: s.objects.filter((o) => o.id !== id),
+        selectedId: s.selectedId === id ? null : s.selectedId,
+        ...historyFlags(),
+      }
+    }),
 
   rotateObject: (id) =>
     set((s) => {
@@ -196,8 +234,40 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => ({
       const rotation = ((obj.rotation + 90) % 360) as Rotation
       const others = s.objects.filter((o) => o.id !== id)
       if (!canPlace(obj.pos, obj.type, rotation, others)) return {}
+      pushHistory(s)
       return {
         objects: s.objects.map((o) => (o.id === id ? { ...o, rotation } : o)),
+        ...historyFlags(),
+      }
+    }),
+
+  undo: () =>
+    set((s) => {
+      const previous = undoStack.pop()
+      if (!previous) return {}
+      redoStack.push(capture(s))
+      return {
+        objects: previous.objects,
+        selectedId: previous.selectedId,
+        ghostPath: [],
+        ghostPathValid: [],
+        simResetTick: s.simResetTick + 1,
+        ...historyFlags(),
+      }
+    }),
+
+  redo: () =>
+    set((s) => {
+      const next = redoStack.pop()
+      if (!next) return {}
+      undoStack.push(capture(s))
+      return {
+        objects: next.objects,
+        selectedId: next.selectedId,
+        ghostPath: [],
+        ghostPathValid: [],
+        simResetTick: s.simResetTick + 1,
+        ...historyFlags(),
       }
     }),
 
@@ -242,18 +312,32 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => ({
     set((s) => ({ recipes: s.recipes.filter((r) => r.id !== id) })),
 
   bindRecipe: (objectId, recipeId) =>
-    set((s) => ({
-      objects: s.objects.map((o) =>
-        o.id === objectId ? { ...o, recipeId: recipeId ?? undefined } : o,
-      ),
-    })),
+    set((s) => {
+      const object = s.objects.find((o) => o.id === objectId)
+      const nextRecipeId = recipeId ?? undefined
+      if (!object || object.recipeId === nextRecipeId) return {}
+      pushHistory(s)
+      return {
+        objects: s.objects.map((o) =>
+          o.id === objectId ? { ...o, recipeId: nextRecipeId } : o,
+        ),
+        ...historyFlags(),
+      }
+    }),
 
   bindItem: (objectId, itemId) =>
-    set((s) => ({
-      objects: s.objects.map((o) =>
-        o.id === objectId ? { ...o, itemId: itemId ?? undefined } : o,
-      ),
-    })),
+    set((s) => {
+      const object = s.objects.find((o) => o.id === objectId)
+      const nextItemId = itemId ?? undefined
+      if (!object || object.itemId === nextItemId) return {}
+      pushHistory(s)
+      return {
+        objects: s.objects.map((o) =>
+          o.id === objectId ? { ...o, itemId: nextItemId } : o,
+        ),
+        ...historyFlags(),
+      }
+    }),
 
   setSimSnapshot: (snap) => set({ simSnapshot: snap }),
   setSimPlaying: (p) => set({ simPlaying: p }),
@@ -271,7 +355,9 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => ({
     }
   },
 
-  importSave: (save) =>
+  importSave: (save) => {
+    undoStack = []
+    redoStack = []
     set({
       objects: save.objects,
       items: save.items,
@@ -283,9 +369,14 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => ({
       ghostPathValid: [],
       simSnapshot: emptySnapshot,
       simPlaying: false,
-    }),
+      canUndo: false,
+      canRedo: false,
+    })
+  },
 
-  clearAll: () =>
+  clearAll: () => {
+    undoStack = []
+    redoStack = []
     set({
       objects: [],
       items: [],
@@ -297,5 +388,9 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => ({
       ghostPathValid: [],
       simSnapshot: emptySnapshot,
       simPlaying: false,
-    }),
-}))
+      canUndo: false,
+      canRedo: false,
+    })
+  },
+  })
+})

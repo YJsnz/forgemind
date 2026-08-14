@@ -7,7 +7,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sim": "node scripts/run-sim.mjs",
+    "sim:regression": "node scripts/run-sim.mjs scripts/sim-regression.ts",
+    "sim:smoke": "node scripts/run-sim.mjs scripts/sim-smoke.ts",
+    "sim:backpressure": "node scripts/run-sim.mjs scripts/backpressure-check.ts"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",
@@ -24,6 +28,7 @@
     "@types/three": "^0.169.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "esbuild": "^0.21.5",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.6.3",

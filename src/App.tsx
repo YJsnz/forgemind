@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { FactoryCanvas, type FactoryView } from './scene/FactoryCanvas'
-import { LeftPanel } from './components/LeftPanel'
+import { BuildMenu } from './components/BuildMenu'
 import { InfoPanel } from './components/InfoPanel'
 import { SimPanel } from './components/SimPanel'
+import { LoginOverlay } from './components/LoginOverlay'
 import { SimulationRunner } from './game/SimulationRunner'
 import { useForgeMindStore } from './store/forgeMind'
+import { useAuthStore } from './store/auth'
 import { isMachineType, isTransportType, objectRole } from './game/types'
 
 const VIEW_META: Record<FactoryView, { code: string; label: string; title: string; description: string }> = {
@@ -45,11 +47,60 @@ function App() {
   const playing = useForgeMindStore((s) => s.simPlaying)
   const buildType = useForgeMindStore((s) => s.buildType)
   const setBuildType = useForgeMindStore((s) => s.setBuildType)
+  const undo = useForgeMindStore((s) => s.undo)
+  const redo = useForgeMindStore((s) => s.redo)
+
+  const phase = useAuthStore((s) => s.phase)
+  const user = useAuthStore((s) => s.user)
+  const logout = useAuthStore((s) => s.logout)
+  const restoreSession = useAuthStore((s) => s.restoreSession)
 
   const changeView = (next: FactoryView) => {
     setView(next)
     if (next !== 'build') setBuildType(null)
   }
+
+  // 挂载时用本地 token 续登（无 token 则停留在电梯舱）
+  useEffect(() => {
+    restoreSession()
+  }, [restoreSession])
+
+  // 登录成功 → 播放 BT-7274 欢迎语音（与舱门开启同步）
+  useEffect(() => {
+    if (phase !== 'entering') return
+    const audio = new Audio('/audio/welcome_home_bt.wav')
+    audio.play().catch(() => {})
+    return () => audio.pause()
+  }, [phase])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)) return
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setBuildType(null)
+        if (view !== 'overview') setView('overview')
+        return
+      }
+
+      const modifier = event.ctrlKey || event.metaKey
+      if (!modifier) return
+      const key = event.key.toLowerCase()
+      if (key === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) redo()
+        else undo()
+      } else if (key === 'y') {
+        event.preventDefault()
+        redo()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [redo, setBuildType, undo, view])
 
   const counts = useMemo(() => ({
     machines: objects.filter((o) => isMachineType(o.type)).length,
@@ -60,15 +111,27 @@ function App() {
   const meta = VIEW_META[view]
   const activeTool = buildType ? '建造工具已启用' : '浏览与选择'
 
+  // 未进厂：电梯舱登录界面（舱门打开 + BT 音效 + 推镜进厂在 store phase 中驱动）
+  if (phase !== 'factory') {
+    return (
+      <div className="fm-login-shell">
+        <FactoryCanvas view="overview" />
+        <LoginOverlay />
+      </div>
+    )
+  }
+
   return (
     <div className="fm-shell">
       <SimulationRunner />
 
       <header className="fm-topbar">
         <div className="fm-brand-block">
-          <div className="fm-brand-mark">FM</div>
+          <div className="fm-brand-mark">
+            <img src="/brand/forgemind-emblem.png" alt="ForgeMind" />
+          </div>
           <div>
-            <div className="fm-brand-name">FORGEMIND</div>
+            <img className="fm-brand-wordmark" src="/brand/forgemind-wordmark.png" alt="FORGEMIND" />
             <div className="fm-brand-sub">DIGITAL FACTORY / 01</div>
           </div>
         </div>
@@ -100,7 +163,8 @@ function App() {
         <div className="fm-top-actions">
           <button className="fm-icon-button" title="帮助">?</button>
           <button className="fm-icon-button" title="设置">⚙</button>
-          <div className="fm-user-chip"><span /> OPERATOR</div>
+          <div className="fm-user-chip"><span /> {user ? user.toUpperCase() : 'OPERATOR'}</div>
+          <button className="fm-icon-button" title="登出" onClick={() => logout()}>⏻</button>
         </div>
       </header>
 
@@ -129,7 +193,7 @@ function App() {
         </aside>
 
         <main className="fm-main">
-          <section className="fm-viewport" aria-label="3D 工厂视口">
+          <section className="fm-viewport" data-building={buildType ? 'true' : 'false'} aria-label="3D 工厂视口">
             <FactoryCanvas view={view} />
 
             <div className="fm-viewport-header">
@@ -147,20 +211,34 @@ function App() {
             <div className="fm-viewport-tools">
               <span className="fm-coord-label">X 00.0 &nbsp; Y 00.0 &nbsp; Z 00.0</span>
               <span className="fm-grid-label">GRID / 1M</span>
+              {view === 'overview' && <span className="fm-camera-hint"><b>CAMERA</b> DRAG / ORBIT · RMB / PAN · WHEEL / ZOOM</span>}
             </div>
 
             <div className="fm-viewport-footer">
-              <div className="fm-key-hint"><kbd>R</kbd> 旋转组件 <kbd>ESC</kbd> 退出建造</div>
+              <div className="fm-key-hint fm-key-hint-undo"><kbd>CTRL</kbd><kbd>Z</kbd> 撤回 <kbd>CTRL</kbd><kbd>SHIFT</kbd><kbd>Z</kbd> 重做</div>
+              <div className="fm-key-hint"><kbd>R</kbd> 旋转组件 <kbd>ESC</kbd> 退出建造 <kbd>右键</kbd> 锁定传送带转角</div>
               <div className={`fm-run-state ${playing ? 'is-running' : ''}`}><span /> {playing ? '仿真运行中' : '仿真已暂停'}</div>
             </div>
 
-            <div className="fm-view-dock" aria-label="快速视角">
+            <div className={`fm-view-dock ${view !== 'overview' ? 'is-mode-open' : ''}`} aria-label="快速视角">
               {VIEW_ORDER.map((key) => (
                  <button key={key} className={view === key ? 'is-active' : ''} onClick={() => changeView(key)}>
                   <span>{VIEW_META[key].code}</span>{VIEW_META[key].label}
                 </button>
               ))}
             </div>
+
+            {view !== 'overview' && (
+              <div className={`fm-mode-panel fm-mode-panel-${view} is-open`}>
+                {view === 'build' ? <BuildMenu compact /> : <ViewSummary view={view} counts={counts} />}
+                <div className="fm-mode-shortcuts" aria-label="快捷键">
+                  <kbd>ESC</kbd><span>返回</span>
+                  <kbd>R</kbd><span>旋转</span>
+                  <kbd>CTRL</kbd><kbd>Z</kbd><span>撤回</span>
+                  <kbd>CTRL</kbd><kbd>SHIFT</kbd><kbd>Z</kbd><span>重做</span>
+                </div>
+              </div>
+            )}
           </section>
 
           <section className="fm-kpi-strip" aria-label="工厂关键指标">
@@ -192,13 +270,6 @@ function App() {
         </aside>
       </div>
 
-      <aside className={`fm-left-panel ${view === 'build' ? 'is-build' : 'is-overview'}`} aria-label={view === 'build' ? '建造与配置' : '当前视图概览'}>
-        <div className="fm-left-panel-head">
-          <div><span className="fm-eyebrow">{view === 'build' ? 'CONTROL DECK' : 'VIEW BRIEF'}</span><h2>{view === 'build' ? '工厂配置' : `${meta.label}概览`}</h2></div>
-          <span className="fm-panel-index">{view === 'build' ? 'EDIT' : meta.code}</span>
-        </div>
-        {view === 'build' ? <LeftPanel focus="build" /> : <ViewSummary view={view} counts={counts} />}
-      </aside>
     </div>
   )
 }

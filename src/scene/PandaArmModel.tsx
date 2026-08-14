@@ -16,33 +16,47 @@ const HOME_JOINTS: Record<string, number> = {
   panda_joint7: 0.785,
 }
 const DEADZONE = 0.16
-const MAX_JOINT_STEP = 0.14
-const DAMPING = 0.07
+const MAX_JOINT_STEP = 0.014
+const DAMPING = 0.12
 const previousPadButtons: boolean[] = []
 
 type RobotMode = 'auto' | 'manual'
 type RobotTask = 'sort' | 'weld' | 'assemble'
 type RobotControl = { mode: RobotMode; task: RobotTask; gripOpen: boolean; reset: boolean }
+type PandaArmBehavior = 'assembly' | 'infeed'
 
-export function PandaArmModel() {
+export function PandaArmModel({ behavior = 'assembly', active = true, progress = 0 }: { behavior?: PandaArmBehavior; active?: boolean; progress?: number }) {
   const [robot, setRobot] = useState<URDFRobot | null>(null)
+  const [robotReady, setRobotReady] = useState(false)
 
   useEffect(() => {
     let disposed = false
-    const loader = new URDFLoader()
+    const manager = new THREE.LoadingManager()
+    const assetsLoaded = new Promise<void>((resolve, reject) => {
+      manager.onLoad = () => resolve()
+      manager.onError = (url) => reject(new Error(`Panda mesh failed to load: ${url}`))
+    })
+    const loader = new URDFLoader(manager)
+    loader.packages = {}
     loader.parseCollision = false
-    loader.loadAsync('/models/panda/panda.urdf').then((loaded) => {
+    loader.loadAsync('/models/panda/panda.urdf').then(async (loaded) => {
+      if (disposed) return
+      // URDFLoader resolves as soon as the XML has been parsed. The visual
+      // Collada files are requested separately, so normalize only after the
+      // LoadingManager confirms that every link mesh is present.
+      await assetsLoaded
       if (disposed) return
       normalizeRobot(loaded)
       setRobot(loaded)
+      setRobotReady(true)
     }).catch(() => {
       // The precise GLB remains a safe fallback if the optional URDF asset is unavailable.
     })
     return () => { disposed = true }
   }, [])
 
-  if (!robot) return <PandaArmFallback />
-  return <PandaArmRuntime robot={robot} />
+  if (!robot || !robotReady) return <PandaArmFallback />
+  return <PandaArmRuntime robot={robot} behavior={behavior} active={active} progress={progress} />
 }
 
 function PandaArmFallback() {
@@ -54,12 +68,17 @@ function PandaArmFallback() {
   </group>
 }
 
-function PandaArmRuntime({ robot }: { robot: URDFRobot }) {
+function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRobot; behavior: PandaArmBehavior; active: boolean; progress: number }) {
+  const runtimeRef = useRef<THREE.Group>(null)
   const control = useRef<RobotControl>({ mode: 'auto', task: 'sort', gripOpen: true, reset: false })
   const targetPos = useRef(new THREE.Vector3())
   const targetQuat = useRef(new THREE.Quaternion())
+  const payloadPosition = useRef(new THREE.Vector3())
+  const payloadRef = useRef<THREE.Mesh>(null)
   const homePose = useRef<{ x: number; y: number; z: number; quaternion: THREE.Quaternion } | null>(null)
   const initialized = useRef(false)
+  const visualProgress = useRef(0)
+  const gripperAmount = useRef(1)
   const ik = useMemo(() => createDlsIk(robot), [robot])
 
   useEffect(() => {
@@ -98,6 +117,64 @@ function PandaArmRuntime({ robot }: { robot: URDFRobot }) {
       return
     }
 
+    if (behavior === 'infeed') {
+      if (!active) {
+        visualProgress.current = THREE.MathUtils.damp(visualProgress.current, 0, 3.5, delta)
+        if (homePose.current) {
+          targetPos.current.set(homePose.current.x, homePose.current.y, homePose.current.z)
+          targetQuat.current.copy(homePose.current.quaternion)
+          ik.solve(targetPos.current, targetQuat.current)
+        }
+        gripperAmount.current = THREE.MathUtils.damp(gripperAmount.current, 1, 7, delta)
+        setGripper(robot, gripperAmount.current)
+        if (payloadRef.current) payloadRef.current.visible = false
+        return
+      }
+
+      const targetPhase = THREE.MathUtils.clamp(progress, 0, 0.9999)
+      if (targetPhase + 0.35 < visualProgress.current) visualProgress.current = targetPhase
+      visualProgress.current = THREE.MathUtils.damp(visualProgress.current, targetPhase, 9, delta)
+      const phase = visualProgress.current
+      const pose = sampleInfeedPose(phase)
+      targetPos.current.set(pose[0], pose[1], pose[2])
+      runtimeRef.current?.localToWorld(targetPos.current)
+      if (homePose.current) targetQuat.current.copy(homePose.current.quaternion)
+      ik.solve(targetPos.current, targetQuat.current)
+      const carrying = phase >= 0.34 && phase < 0.84
+      const payloadVisible = phase >= 0.34 && phase < 0.995
+      gripperAmount.current = THREE.MathUtils.damp(gripperAmount.current, phase >= 0.3 && phase < 0.87 ? 0 : 1, 10, delta)
+      setGripper(robot, gripperAmount.current)
+      if (payloadRef.current) {
+        payloadRef.current.visible = payloadVisible
+        if (carrying) {
+          robot.updateMatrixWorld(true)
+          robot.links[END_LINK]?.getWorldPosition(payloadPosition.current)
+          runtimeRef.current?.worldToLocal(payloadPosition.current)
+          payloadPosition.current.y -= 0.1
+        } else {
+          const beltPhase = smootherstep(THREE.MathUtils.clamp((phase - 0.84) / 0.155, 0, 1))
+          payloadPosition.current.set(
+            THREE.MathUtils.lerp(1.04, 1.42, beltPhase),
+            0.49,
+            -0.43,
+          )
+        }
+        payloadRef.current.position.copy(payloadPosition.current)
+      }
+      return
+    }
+
+    if (!active && control.current.mode === 'auto') {
+      if (homePose.current) {
+        targetPos.current.set(homePose.current.x, homePose.current.y, homePose.current.z)
+        targetQuat.current.copy(homePose.current.quaternion)
+        ik.solve(targetPos.current, targetQuat.current)
+      }
+      gripperAmount.current = THREE.MathUtils.damp(gripperAmount.current, 1, 7, delta)
+      setGripper(robot, gripperAmount.current)
+      return
+    }
+
     if (control.current.reset) {
       setHome(robot)
       end.getWorldPosition(targetPos.current)
@@ -119,7 +196,7 @@ function PandaArmRuntime({ robot }: { robot: URDFRobot }) {
       targetQuat.current.premultiply(new THREE.Quaternion().setFromEuler(euler)).normalize()
       ik.solve(targetPos.current, targetQuat.current)
     } else {
-      const phase = clock.getElapsedTime() * (control.current.task === 'weld' ? 4.2 : control.current.task === 'assemble' ? 2.6 : 1.9)
+      const phase = clock.getElapsedTime() * (control.current.task === 'weld' ? 1.35 : control.current.task === 'assemble' ? 0.82 : 0.58)
       const home = homePose.current ?? getHomePose(robot)
       targetPos.current.set(home.x + Math.sin(phase) * 0.14, home.y + 0.08 + Math.sin(phase * 0.5) * 0.04, home.z + Math.cos(phase) * 0.12)
       targetQuat.current.copy(home.quaternion)
@@ -128,20 +205,38 @@ function PandaArmRuntime({ robot }: { robot: URDFRobot }) {
     setGripper(robot, control.current.gripOpen ? 1 : 0)
   })
 
-  return <group><PandaArmFallback /><primitive object={robot} /></group>
+  return (
+    <group ref={runtimeRef}>
+      <primitive object={robot} />
+      {behavior === 'infeed' && (
+        <mesh ref={payloadRef} visible={false} castShadow>
+          <boxGeometry args={[0.16, 0.12, 0.16]} />
+          <meshStandardMaterial color="#b98245" roughness={0.76} />
+        </mesh>
+      )}
+    </group>
+  )
 }
 
 function normalizeRobot(robot: URDFRobot) {
+  // Keep the Collada visuals in the link frames created by URDFLoader. Only
+  // the complete Z-up robot root is converted to the factory's Y-up space.
+  robot.rotation.x = -Math.PI / 2
+  robot.updateMatrixWorld(true)
   const box = new THREE.Box3().setFromObject(robot)
   const size = box.getSize(new THREE.Vector3())
   const scale = Math.min(1.25 / Math.max(size.y, 0.001), 1.1 / Math.max(size.x, size.z, 0.001))
   robot.scale.setScalar(scale)
   robot.updateMatrixWorld(true)
   const normalized = new THREE.Box3().setFromObject(robot)
-  const center = normalized.getCenter(new THREE.Vector3())
+  // setFromObject returns world-space bounds. Convert them back into the
+  // robot runtime group's local space before correcting the origin; otherwise
+  // the station's grid position is accidentally baked into robot.position.
+  const localBounds = boxInParentSpace(normalized, robot.parent)
+  const center = localBounds.getCenter(new THREE.Vector3())
   robot.position.x -= center.x
   robot.position.z -= center.z
-  robot.position.y -= normalized.min.y
+  robot.position.y -= localBounds.min.y
   robot.traverse((node) => {
     if (!(node instanceof THREE.Mesh)) return
     node.castShadow = true
@@ -155,6 +250,50 @@ function normalizeRobot(robot: URDFRobot) {
     }))
     if (Array.isArray(node.material) && node.material.length === 1) node.material = node.material[0]
   })
+}
+
+function boxInParentSpace(box: THREE.Box3, parent: THREE.Object3D | null) {
+  if (!parent) return box.clone()
+  const local = new THREE.Box3()
+  for (const x of [box.min.x, box.max.x]) {
+    for (const y of [box.min.y, box.max.y]) {
+      for (const z of [box.min.z, box.max.z]) {
+        local.expandByPoint(parent.worldToLocal(new THREE.Vector3(x, y, z)))
+      }
+    }
+  }
+  return local
+}
+
+const INFEED_POSES: Array<{ at: number; position: [number, number, number] }> = [
+  { at: 0, position: [-0.02, 0.82, 0.1] },
+  { at: 0.14, position: [-0.68, 0.82, 0.52] },
+  { at: 0.28, position: [-0.68, 0.58, 0.52] },
+  { at: 0.38, position: [-0.68, 0.58, 0.52] },
+  { at: 0.5, position: [-0.68, 0.82, 0.52] },
+  { at: 0.68, position: [1.04, 0.82, -0.43] },
+  { at: 0.8, position: [1.04, 0.59, -0.43] },
+  { at: 0.88, position: [1.04, 0.59, -0.43] },
+  { at: 1, position: [-0.02, 0.82, 0.1] },
+]
+
+function sampleInfeedPose(phase: number): [number, number, number] {
+  const value = THREE.MathUtils.clamp(phase, 0, 0.9999)
+  const nextIndex = INFEED_POSES.findIndex((keyframe) => keyframe.at > value)
+  const index = Math.max(0, nextIndex < 0 ? INFEED_POSES.length - 2 : nextIndex - 1)
+  const from = INFEED_POSES[index]
+  const to = INFEED_POSES[Math.min(index + 1, INFEED_POSES.length - 1)]
+  const t = (value - from.at) / Math.max(to.at - from.at, 0.0001)
+  const eased = smootherstep(THREE.MathUtils.clamp(t, 0, 1))
+  return [
+    THREE.MathUtils.lerp(from.position[0], to.position[0], eased),
+    THREE.MathUtils.lerp(from.position[1], to.position[1], eased),
+    THREE.MathUtils.lerp(from.position[2], to.position[2], eased),
+  ]
+}
+
+function smootherstep(value: number) {
+  return value * value * value * (value * (value * 6 - 15) + 10)
 }
 
 function setHome(robot: URDFRobot) {
@@ -211,7 +350,7 @@ function createDlsIk(robot: URDFRobot) {
   const solve = (target: THREE.Vector3, targetQuat: THREE.Quaternion) => {
     const end = robot.links[END_LINK]
     const angles = joints.map((joint) => joint.angle)
-    for (let iteration = 0; iteration < 8; iteration += 1) {
+    for (let iteration = 0; iteration < 6; iteration += 1) {
       robot.updateMatrixWorld(true)
       end.getWorldPosition(pEE)
       end.getWorldQuaternion(qEE)

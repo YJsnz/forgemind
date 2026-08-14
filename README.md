@@ -62,7 +62,7 @@ cd ai-service && py -3.10 -m venv .venv && .venv/Scripts/pip install -r requirem
 2. 「配方」tab 建配方：铁板×1 → 齿轮×1，时长 1s
 3. 「建造」tab 依次放置：
    - 原料源（Source），选中后绑定「铁板」
-   - 传送带若干（注意 rotation 方向指向下游）
+   - 传送带若干（注意 rotation 方向指向下游；拖拽中右键可锁定转弯并继续追加线路）
    - 通用机器，选中后绑定「铁板→齿轮」配方
 4. 右键面板点「启动」，看铁板沿带流动、机器加工、齿轮产出
 ```
@@ -85,8 +85,14 @@ src/
 ## 集成测试
 
 ```bash
-npx tsx scripts/sim-smoke.ts          # 闭环验证（Source→带→机→带→出口）
-npx tsx scripts/backpressure-check.ts # 背压验证（头堵停住不穿透）
+npm run sim:regression            # 完整回归：闭环 / 转弯 / 分流 / 汇流 / 头堵
+```
+
+也可以单独运行快速检查：
+
+```bash
+npm run sim:smoke                   # 闭环验证（Source→带→机→带→出口）
+npm run sim:backpressure            # 背压验证（头堵停住不穿透）
 ```
 
 ## 关键设计原则（防翻车）

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { EQUIPMENT_ORDER, OBJECT_DEFS } from '../game/types'
 import type { BuildType, EquipmentCategory } from '../game/types'
 import { useForgeMindStore } from '../store/forgeMind'
+import { EquipmentThumbnail } from './EquipmentThumbnail'
 
 const CATEGORIES: Array<{ key: EquipmentCategory; code: string; label: string; description: string }> = [
   { key: '采集', code: 'A', label: '原料采集', description: '从矿脉和资源节点开始生产链' },
@@ -10,7 +11,7 @@ const CATEGORIES: Array<{ key: EquipmentCategory; code: string; label: string; d
   { key: '物流', code: 'D', label: '物流仓储', description: '输送、分流、汇流和物料缓存' },
 ]
 
-export function BuildMenu() {
+export function BuildMenu({ compact = false }: { compact?: boolean }) {
   const buildType = useForgeMindStore((s) => s.buildType)
   const setBuildType = useForgeMindStore((s) => s.setBuildType)
   const objectCount = useForgeMindStore((s) => s.objects.length)
@@ -29,7 +30,7 @@ export function BuildMenu() {
   }
 
   return (
-    <div className="fm-build-menu">
+    <div className={`fm-build-menu ${compact ? 'is-compact' : ''}`}>
       <div className="fm-build-note fm-build-note-strong">网格 = 1 m · 蓝色端口为入口 · 琥珀端口为出口 · 输送带可按住拖动连续放置</div>
       <div className="fm-build-mode">
         <div>
@@ -70,17 +71,21 @@ export function BuildMenu() {
             <button
               key={type}
               className={`fm-equipment-card ${active ? 'is-active' : ''} ${inspected ? 'is-inspected' : ''}`}
+              style={{ '--equipment-accent': item.accent } as React.CSSProperties}
               onClick={() => selectEquipment(type)}
             >
-              <span className="fm-equipment-glyph" style={{ '--equipment-accent': item.accent } as React.CSSProperties}>{modelGlyph(type)}</span>
-              <span className="fm-equipment-copy">
-                <strong>{item.label}</strong>
-                <small>{item.subtitle}</small>
-                <em className={item.assetPath ? 'is-split-asset' : 'is-procedural'}>
-                  {type === 'assembler' ? '7 轴 Panda / 开放单元' : item.assetKind === 'center-split' ? '中心拆分资产' : item.assetKind === 'detailed-process' ? '独立高精度工艺资产' : '工艺结构模型'}
-                </em>
+              <EquipmentThumbnail type={type} />
+              <span className="fm-equipment-card-body">
+                <span className="fm-equipment-glyph" style={{ '--equipment-accent': item.accent } as React.CSSProperties}>{modelGlyph(type)}</span>
+                <span className="fm-equipment-copy">
+                  <strong>{item.label}</strong>
+                  <small>{item.subtitle}</small>
+                  <em className={item.assetPath ? 'is-split-asset' : 'is-procedural'}>
+                    {type === 'assembler' ? '7 轴 Panda / 开放单元' : item.assetKind === 'center-split' ? '中心拆分资产' : item.assetKind === 'detailed-process' ? '独立高精度工艺资产' : '工艺结构模型'}
+                  </em>
+                </span>
+                <span className="fm-equipment-meta">{item.footprint.w}×{item.footprint.d}<br />{item.power}</span>
               </span>
-              <span className="fm-equipment-meta">{item.footprint.w}×{item.footprint.d}<br />{item.power}</span>
             </button>
           )
         })}

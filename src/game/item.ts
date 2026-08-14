@@ -62,6 +62,7 @@ export const DEFAULT_ITEMS: Item[] = [
   { id: 'item_steel_sheet', name: '冷轧钢板', category: 'raw', color: '#9ba8aa', size: 1 },
   { id: 'item_copper_wire', name: '铜线盘', category: 'raw', color: '#c87948', size: 1 },
   { id: 'item_fastener', name: '标准紧固件', category: 'raw', color: '#6d7b7b', size: 1 },
+  { id: 'item_fastener_kit', name: '紧固件齐套包', category: 'intermediate', color: '#7f8b88', size: 1 },
   { id: 'item_machined_housing', name: '机加工壳体', category: 'intermediate', color: '#71868a', size: 1 },
   { id: 'item_stamped_shell', name: '冲压壳体', category: 'intermediate', color: '#8a9ca0', size: 1 },
   { id: 'item_clean_part', name: '洁净零件', category: 'intermediate', color: '#5f9c9c', size: 1 },
@@ -74,8 +75,9 @@ export const DEFAULT_RECIPES: Recipe[] = [
   { id: 'recipe_machining', name: '数控车铣复合', inputs: [{ itemId: 'item_steel_blank', qty: 1 }], outputs: [{ itemId: 'item_machined_housing', qty: 1 }], durationSec: 6.0 },
   { id: 'recipe_stamping', name: '板材冲压成型', inputs: [{ itemId: 'item_steel_sheet', qty: 1 }], outputs: [{ itemId: 'item_stamped_shell', qty: 1 }], durationSec: 4.0 },
   { id: 'recipe_coil', name: '定子线圈绕制', inputs: [{ itemId: 'item_copper_wire', qty: 1 }], outputs: [{ itemId: 'item_coil', qty: 1 }], durationSec: 5.5 },
+  { id: 'recipe_fastener_kit', name: '紧固件自动齐套', inputs: [{ itemId: 'item_fastener', qty: 4 }], outputs: [{ itemId: 'item_fastener_kit', qty: 1 }], durationSec: 2.5 },
   { id: 'recipe_wash', name: '去毛刺与清洗', inputs: [{ itemId: 'item_machined_housing', qty: 1 }], outputs: [{ itemId: 'item_clean_part', qty: 1 }], durationSec: 3.5 },
-  { id: 'recipe_motor', name: '电机自动装配', inputs: [{ itemId: 'item_clean_part', qty: 1 }, { itemId: 'item_stamped_shell', qty: 1 }, { itemId: 'item_fastener', qty: 4 }, { itemId: 'item_coil', qty: 1 }], outputs: [{ itemId: 'item_motor', qty: 1 }], durationSec: 8.0 },
+  { id: 'recipe_motor', name: '电机自动装配', inputs: [{ itemId: 'item_clean_part', qty: 1 }, { itemId: 'item_stamped_shell', qty: 1 }, { itemId: 'item_fastener_kit', qty: 1 }, { itemId: 'item_coil', qty: 1 }], outputs: [{ itemId: 'item_motor', qty: 1 }], durationSec: 8.0 },
   { id: 'recipe_inspection', name: '视觉终检与追溯', inputs: [{ itemId: 'item_motor', qty: 1 }], outputs: [{ itemId: 'item_inspected_motor', qty: 1 }], durationSec: 2.0 },
   { id: 'recipe_packaging', name: '成品包装入库', inputs: [{ itemId: 'item_inspected_motor', qty: 1 }], outputs: [{ itemId: 'item_inspected_motor', qty: 1 }], durationSec: 3.0 },
 ]
