@@ -133,16 +133,6 @@ export function ElevatorCabin() {
       <DoorLeaf side={-1} groupRef={leftRef} />
       <DoorLeaf side={1} groupRef={rightRef} />
 
-      {/* 两侧控制台保持低亮，避免与认证 HUD 争抢视觉中心。 */}
-      <group position={[-0.98, 0.72, -2.5]} rotation={[0.16, 0, 0]}>
-        <HullPanel position={[0, 0, 0]} size={[1.62, 0.76, 0.38]} color="#0a100f" />
-        <HullPanel position={[-0.16, 0.395, 0]} size={[0.74, 0.022, 0.22]} color="#183c38" emissive="#72b8b0" emissiveIntensity={0.5} />
-      </group>
-      <group position={[-0.98, 0.72, 2.5]} rotation={[-0.16, 0, 0]}>
-        <HullPanel position={[0, 0, 0]} size={[1.62, 0.76, 0.38]} color="#0a100f" />
-        <HullPanel position={[-0.16, 0.395, 0]} size={[0.74, 0.022, 0.22]} color="#263b38" emissive="#87b7b1" emissiveIntensity={0.42} />
-      </group>
-
       <pointLight ref={lightRef} position={[0.75, 2.55, 0]} intensity={0.9} distance={8} color="#d9fff6" />
       <pointLight position={[-1.55, 1.1, 0]} intensity={0.32} distance={5} color="#9ec7c1" />
     </group>

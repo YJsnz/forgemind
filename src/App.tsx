@@ -8,6 +8,9 @@ import { SimulationRunner } from './game/SimulationRunner'
 import { useForgeMindStore } from './store/forgeMind'
 import { useAuthStore } from './store/auth'
 import { isMachineType, isTransportType, objectRole } from './game/types'
+import { AssistantOrb } from './components/AssistantOrb'
+import { AssistantRuntime } from './components/AssistantRuntime'
+import { AssistantVoiceButton } from './components/AssistantVoiceButton'
 
 const VIEW_META: Record<FactoryView, { code: string; label: string; title: string; description: string }> = {
   overview: {
@@ -124,6 +127,7 @@ function App() {
   return (
     <div className="fm-shell">
       <SimulationRunner />
+      <AssistantRuntime />
 
       <header className="fm-topbar">
         <div className="fm-brand-block">
@@ -239,6 +243,7 @@ function App() {
                 </div>
               </div>
             )}
+
           </section>
 
           <section className="fm-kpi-strip" aria-label="工厂关键指标">
@@ -246,6 +251,8 @@ function App() {
             <Kpi label="设备利用率" value={counts.machines ? '78.6%' : '—'} trend={`${counts.machines} 台设备`} />
             <Kpi label="实时产出" value={String(Object.values(snapshot.stats.produced).reduce((sum, value) => sum + value, 0))} trend="units / min" />
             <Kpi label="物流负载" value={counts.conveyors ? '64%' : '—'} trend={`${counts.conveyors} 条线路`} tone="cyan" />
+            <AssistantOrb compact />
+            <AssistantVoiceButton />
             <div className="fm-kpi-context"><span className="fm-context-dot" /> {activeTool}</div>
           </section>
         </main>

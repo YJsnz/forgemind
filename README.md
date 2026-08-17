@@ -13,6 +13,23 @@ AI 驱动的智能工厂数字孪生设计与仿真平台。学习答辩项目�
 
 ## 快速开始
 
+Windows 推荐直接双击项目根目录的 `start-forgemind.bat`。脚本会检测并复用已运行的 Ollama、BT TTS、AI 服务和前端，只为缺失的服务打开终端窗口；启动完成后自动打开 `http://127.0.0.1:5173`。
+
+```powershell
+.\start-forgemind.bat                 # 前端 + Ollama + BT TTS + AI 服务
+.\start-forgemind.bat -NoBrowser       # 启动但不自动打开浏览器
+.\start-forgemind.bat -SkipSpring     # 跳过 Spring Boot 8080
+.\start-forgemind.bat -IncludeVoiceChat # 额外启动独立终端语音助手
+.\stop-forgemind.bat                  # 停止 ForgeMind 服务，默认保留 Ollama
+```
+
+如果 BT TTS 不在默认目录 `D:\local\bt7274-space`，可先设置：
+
+```powershell
+$env:FORGEMIND_BT_TTS_ROOT = 'D:\local\bt7274-space'
+$env:FORGEMIND_OLLAMA_EXE = "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" # 可选
+```
+
 ```bash
 npm install
 npm run dev      # 前端开发服务器 http://localhost:5173
@@ -36,6 +53,8 @@ cd ai-service && py -3.10 -m venv .venv && .venv/Scripts/pip install -r requirem
 
 - [原方案（67 节）](docs/AI%20驱动的智能工厂数字孪生设计与仿真平台项目方案(1).md)
 - [补充设计（权威，9 节）](docs/ForgeMind-补充设计.md)
+- [功能模块技术文档（当前实现）](docs/ForgeMind-功能模块技术文档.md)
+- [黛玉渲染引擎技术文档](docs/daiyu-render-engine.md)
 
 ## 已实现功能（7 天）
 

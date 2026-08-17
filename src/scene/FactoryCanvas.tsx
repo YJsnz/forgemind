@@ -1,17 +1,20 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Grid } from '@react-three/drei'
-import { useEffect, useMemo, useRef } from 'react'
+import { OrbitControls, Grid, PerformanceMonitor } from '@react-three/drei'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { GridFloor } from './GridFloor'
 import { BuildPlacer } from './BuildPlacer'
 import { GhostPreview } from './GhostPreview'
-import { FactoryObjectMesh } from './FactoryObjectMesh'
+import { FactoryObjectMesh, getConveyorLinks } from './FactoryObjectMesh'
 import { ItemLotMesh } from './ItemLotMesh'
 import { ElevatorCabin } from './ElevatorCabin'
 import { LoginCameraRig } from './LoginCameraRig'
+import { preloadPandaArm } from './PandaArmModel'
 import { useForgeMindStore } from '../store/forgeMind'
 import { useAuthStore } from '../store/auth'
+import { DaiyuConveyorBatch, DaiyuEmbeddedModelBatch, DaiyuPandaBatch, DaiyuRuntime, DaiyuScenePrewarmer, DaiyuStaticModelBatch } from '../engine/daiyu'
+import type { BuildType, FactoryObject } from '../game/types'
 
 /**
  * 3D 工厂视口 —— 主画布。
@@ -32,103 +35,213 @@ export const CAMERA_PRESETS: Record<FactoryView, { position: [number, number, nu
 }
 
 /** 工厂场景内容（无 Canvas 包装，供 FactoryCanvas 复用）。 */
-export function FactoryScene({ view }: { view: FactoryView }) {
-  const objects = useForgeMindStore((s) => s.objects)
+export function FactoryScene({ view, visible = true }: { view: FactoryView; visible?: boolean }) {
+  const storedObjects = useForgeMindStore((s) => s.objects)
+  const objects = useMemo(() => getDaiyuStressObjects(storedObjects), [storedObjects])
   const ghost = useForgeMindStore((s) => s.ghost)
   const selectedId = useForgeMindStore((s) => s.selectedId)
   const select = useForgeMindStore((s) => s.select)
   const simSnapshot = useForgeMindStore((s) => s.simSnapshot)
+  const contentRef = useRef<THREE.Group>(null)
 
   // 机器运行时态索引：objectId -> runtime
-  const runtimeMap = new Map(
-    simSnapshot.machines.map((m) => [m.objectId, m]),
+  const runtimeMap = useMemo(
+    () => new Map(simSnapshot.machines.map((machine) => [machine.objectId, machine])),
+    [simSnapshot.machines],
   )
-  const sourceRuntimeMap = new Map(
-    simSnapshot.sources.map((s) => [s.objectId, s]),
+  const sourceRuntimeMap = useMemo(
+    () => new Map(simSnapshot.sources.map((source) => [source.objectId, source])),
+    [simSnapshot.sources],
   )
+  const conveyorActiveIds = useMemo(
+    () => new Set(simSnapshot.itemLots.map((lot) => lot.conveyorId)),
+    [simSnapshot.itemLots],
+  )
+  const batchedConveyors = useMemo(
+    () => objects.filter((object) => object.type === 'conveyor' && !getConveyorLinks(object, objects).corner),
+    [objects],
+  )
+  const individuallyRenderedObjects = useMemo(() => {
+    const batchedIds = new Set(batchedConveyors.map((object) => object.id))
+    return objects.filter((object) => !batchedIds.has(object.id))
+  }, [batchedConveyors, objects])
+  const staticMachineObjects = useMemo(() => objects.filter((object) => object.type === 'machine'), [objects])
+  const staticAgvObjects = useMemo(() => objects.filter((object) => object.type === 'agv'), [objects])
+  const staticPressObjects = useMemo(() => objects.filter((object) => object.type === 'press'), [objects])
+  const staticWashingObjects = useMemo(() => objects.filter((object) => object.type === 'washing'), [objects])
+  const staticStorageObjects = useMemo(() => objects.filter((object) => object.type === 'storage'), [objects])
+  const sourceObjects = useMemo(() => objects.filter((object) => object.type === 'source'), [objects])
+  const inspectionObjects = useMemo(() => objects.filter((object) => object.type === 'inspection'), [objects])
+  const sourceIds = useMemo(() => new Set(sourceObjects.map((object) => object.id)), [sourceObjects])
+  const inspectionIds = useMemo(() => new Set(inspectionObjects.map((object) => object.id)), [inspectionObjects])
+  const batchedPandaObjects = useMemo(
+    () => objects.filter((object) => {
+      if (object.type !== 'source') return false
+      const state = sourceRuntimeMap.get(object.id)?.state
+      return state !== 'picking' && state !== 'placing'
+    }),
+    [objects, sourceRuntimeMap],
+  )
+  const batchedPandaIds = useMemo(() => new Set(batchedPandaObjects.map((object) => object.id)), [batchedPandaObjects])
+  const staticBatchedIds = useMemo(
+    () => new Set([...staticMachineObjects, ...staticAgvObjects, ...staticPressObjects, ...staticWashingObjects, ...staticStorageObjects].map((object) => object.id)),
+    [staticAgvObjects, staticMachineObjects, staticPressObjects, staticStorageObjects, staticWashingObjects],
+  )
+  const castDetailedShadows = objects.length <= 120
 
   return (
     <>
       {/* 背景雾 —— 让远处网格淡出，工业纵深感 */}
-      <color attach="background" args={['#c4ceca']} />
-      <fog attach="fog" args={['#c4ceca', 60, 180]} />
+      {visible && <color attach="background" args={['#c4ceca']} />}
+      {visible && <fog attach="fog" args={['#c4ceca', 60, 180]} />}
 
-      {/* 灯光 */}
-      <ambientLight intensity={0.5} />
-      <hemisphereLight args={['#edf1f0', '#8d9794', 0.55]} />
-      <directionalLight
-        position={[20, 30, 15]}
-        intensity={1.2}
-        castShadow
-        shadow-mapSize={[2048, 2048]}
-        shadow-camera-near={1}
-        shadow-camera-far={120}
-        shadow-camera-left={-40}
-        shadow-camera-right={40}
-        shadow-camera-top={40}
-        shadow-camera-bottom={-40}
-      />
-
-      {/* 场景内容 */}
-      <GridFloor />
-
-      {/* 细网格叠加 —— CAD 参考线质感 */}
-      <Grid
-        infiniteGrid
-        cellSize={1}
-        cellThickness={0.8}
-        cellColor="#879790"
-        sectionSize={5}
-        sectionThickness={1}
-        sectionColor="#657873"
-        fadeDistance={120}
-        fadeStrength={1}
-        position={[0, 0.005, 0]}
-      />
-
-      {/* 已放置对象 */}
-      {objects.map((o) => (
-        <FactoryObjectMesh
-          key={o.id}
-          obj={o}
-          objects={objects}
-          selected={o.id === selectedId}
-          active={simSnapshot.itemLots.some((lot) => lot.conveyorId === o.id) || sourceRuntimeMap.get(o.id)?.state === 'picking' || sourceRuntimeMap.get(o.id)?.state === 'placing'}
-          runtime={runtimeMap.get(o.id)}
-          sourceRuntime={sourceRuntimeMap.get(o.id)}
-          onClick={select}
+      <DaiyuScenePrewarmer rootRef={contentRef} enabled={!visible} preload={preloadPandaArm} />
+      <group ref={contentRef} visible={visible}>
+        {/* 灯光 */}
+        <ambientLight intensity={0.5} />
+        <hemisphereLight args={['#edf1f0', '#8d9794', 0.55]} />
+        <directionalLight
+          position={[20, 30, 15]}
+          intensity={1.2}
+          castShadow
+          shadow-mapSize={[1024, 1024]}
+          shadow-normalBias={0.025}
+          shadow-camera-near={1}
+          shadow-camera-far={120}
+          shadow-camera-left={-40}
+          shadow-camera-right={40}
+          shadow-camera-top={40}
+          shadow-camera-bottom={-40}
         />
-      ))}
 
-      {/* 在途物品（ItemLot） */}
-      {simSnapshot.itemLots.map((lot) => (
-        <ItemLotMesh key={lot.id} lot={lot} />
-      ))}
+        {/* 场景内容 */}
+        <GridFloor />
 
-      {/* ghost 预览 */}
-      <GhostPreview ghost={ghost} />
+        {/* 细网格叠加 —— CAD 参考线质感 */}
+        <Grid
+          infiniteGrid
+          cellSize={1}
+          cellThickness={0.8}
+          cellColor="#879790"
+          sectionSize={5}
+          sectionThickness={1}
+          sectionColor="#657873"
+          fadeDistance={120}
+          fadeStrength={1}
+          position={[0, 0.005, 0]}
+        />
 
-      {/* 建造指针交互（挂 window 键盘） */}
-      <BuildPlacer enabled={view === 'build'} />
+        {/* 已放置对象 */}
+        <DaiyuConveyorBatch
+          objects={batchedConveyors}
+          activeIds={conveyorActiveIds}
+          selectedId={selectedId}
+          castShadows={castDetailedShadows}
+          onSelect={select}
+        />
+        <DaiyuStaticModelBatch type="machine" objects={staticMachineObjects} castShadows={castDetailedShadows} onSelect={select} />
+        <DaiyuStaticModelBatch type="agv" objects={staticAgvObjects} castShadows={castDetailedShadows} onSelect={select} />
+        <DaiyuStaticModelBatch type="press" objects={staticPressObjects} castShadows={castDetailedShadows} onSelect={select} />
+        <DaiyuStaticModelBatch type="washing" objects={staticWashingObjects} castShadows={castDetailedShadows} onSelect={select} />
+        <DaiyuStaticModelBatch type="storage" objects={staticStorageObjects} castShadows={castDetailedShadows} onSelect={select} />
+        <DaiyuPandaBatch objects={batchedPandaObjects} castShadows={castDetailedShadows} onSelect={select} />
+        <DaiyuEmbeddedModelBatch batchName="source-conveyor" path="/models/industrial/roller_conveyor_segment.glb" targetFootprint={1.05} targetHeight={0.52} localPosition={[0.92, 0.17, -0.5]} rotationOffsetY={Math.PI / 2} stripDirectionTexture objects={sourceObjects} castShadows={castDetailedShadows} onSelect={select} />
+        <DaiyuEmbeddedModelBatch batchName="inspection-sensor" path="/models/industrial/sensor_pack.glb" targetFootprint={1.296} targetHeight={1.023} localPosition={[0, 0.04, 0]} objects={inspectionObjects} castShadows={castDetailedShadows} onSelect={select} />
+        <DaiyuEmbeddedModelBatch batchName="inspection-cabinet" path="/models/industrial/control_cabinet.glb" targetFootprint={0.468} targetHeight={1.116} localPosition={[0.62, 0.04, -0.3]} objects={inspectionObjects} castShadows={castDetailedShadows} onSelect={select} />
+        {individuallyRenderedObjects.map((o) => (
+          <FactoryObjectMesh
+            key={o.id}
+            obj={o}
+            objects={objects}
+            selected={o.id === selectedId}
+            active={conveyorActiveIds.has(o.id) || sourceRuntimeMap.get(o.id)?.state === 'picking' || sourceRuntimeMap.get(o.id)?.state === 'placing'}
+            runtime={runtimeMap.get(o.id)}
+            sourceRuntime={sourceRuntimeMap.get(o.id)}
+            suppressEquipmentModel={staticBatchedIds.has(o.id)}
+            showPortMarkers={objects.length <= 120 || o.id === selectedId}
+            castShadows={castDetailedShadows}
+            suppressPanda={batchedPandaIds.has(o.id)}
+            suppressConveyor={sourceIds.has(o.id)}
+            suppressInspectionImports={inspectionIds.has(o.id)}
+            onClick={select}
+          />
+        ))}
+
+        {/* 在途物品（ItemLot） */}
+        {simSnapshot.itemLots.map((lot) => (
+          <ItemLotMesh key={lot.id} lot={lot} />
+        ))}
+
+        {/* ghost 预览 */}
+        <GhostPreview ghost={ghost} />
+
+        {/* 建造指针交互（挂 window 键盘） */}
+        <BuildPlacer enabled={visible && view === 'build'} />
+      </group>
     </>
   )
+}
+
+/** 仅开发环境：?daiyuStress=300，不写入 store，也不参与保存。 */
+function getDaiyuStressObjects(storedObjects: FactoryObject[]) {
+  if (!import.meta.env.DEV) return storedObjects
+  const requested = Number(new URLSearchParams(window.location.search).get('daiyuStress'))
+  if (!Number.isFinite(requested) || requested < 1) return storedObjects
+  const count = Math.min(Math.floor(requested), 600)
+  const pattern: BuildType[] = [
+    'conveyor', 'conveyor', 'conveyor', 'conveyor', 'conveyor', 'conveyor',
+    'conveyor', 'conveyor', 'conveyor', 'conveyor', 'conveyor', 'conveyor',
+    'machine', 'machine', 'agv', 'storage', 'source', 'press', 'washing', 'inspection',
+  ]
+  const columns = Math.ceil(Math.sqrt(count * 1.45))
+  const rows = Math.ceil(count / columns)
+  return Array.from({ length: count }, (_, index): FactoryObject => {
+    const type = pattern[index % pattern.length]
+    const column = index % columns
+    const row = Math.floor(index / columns)
+    return {
+      id: `daiyu-stress-${index}`,
+      type,
+      pos: {
+        x: column * 3 - Math.floor(columns * 1.5),
+        z: row * 3 - Math.floor(rows * 1.5),
+      },
+      rotation: ([0, 90, 180, 270] as const)[(column + row) % 4],
+    }
+  })
 }
 
 export function FactoryCanvas({ view = 'overview' }: { view?: FactoryView }) {
   const phase = useAuthStore((s) => s.phase)
   const buildType = useForgeMindStore((s) => s.buildType)
   const inFactory = phase === 'factory'
+  const showFactory = phase !== 'elevator'
   const isPlacing = buildType !== null
+  const forcedDevelopmentDpr = getForcedDevelopmentDpr()
+  const [dpr, setDpr] = useState(() => forcedDevelopmentDpr ?? Math.min(window.devicePixelRatio, 1.2))
 
   return (
     <Canvas
-      shadows
-      dpr={[1, 2]}
+      shadows="basic"
+      dpr={dpr}
+      performance={{ min: 0.55, debounce: 650 }}
       camera={{ position: inFactory ? CAMERA_PRESETS[view].position : CABIN_CAM, fov: 45, near: 0.1, far: 500 }}
-      gl={{ antialias: true, powerPreference: 'high-performance' }}
+      gl={{ antialias: true, powerPreference: 'high-performance', stencil: false }}
       style={{ background: 'transparent' }}
     >
-      <FactoryScene view={view} />
+      <PerformanceMonitor
+        flipflops={3}
+        onChange={({ factor }) => {
+          if (forcedDevelopmentDpr === null && phase !== 'entering') setDpr(Math.max(1, Math.round((0.78 + factor * 0.62) * 100) / 100))
+        }}
+        onFallback={() => {
+          if (forcedDevelopmentDpr === null) setDpr(1)
+        }}
+      />
+      <DaiyuRuntime running={inFactory} />
+      <Suspense fallback={null}>
+        <FactoryScene view={view} visible={showFactory} />
+      </Suspense>
 
       {/* 未进厂：电梯舱 + 登录相机推镜（独占相机） */}
       {!inFactory && <ElevatorCabin />}
@@ -138,6 +251,12 @@ export function FactoryCanvas({ view = 'overview' }: { view?: FactoryView }) {
       {inFactory && <FactoryCameraController view={view} isPlacing={isPlacing} />}
     </Canvas>
   )
+}
+
+function getForcedDevelopmentDpr() {
+  if (!import.meta.env.DEV) return null
+  const value = Number(new URLSearchParams(window.location.search).get('daiyuDpr'))
+  return Number.isFinite(value) && value >= 1 && value <= 2 ? value : null
 }
 
 function FactoryCameraController({ view, isPlacing }: { view: FactoryView; isPlacing: boolean }) {

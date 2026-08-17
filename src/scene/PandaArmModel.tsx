@@ -3,10 +3,10 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import URDFLoader, { type URDFJoint, type URDFRobot } from 'urdf-loader'
 
-const JOINT_NAMES = ['panda_joint1', 'panda_joint2', 'panda_joint3', 'panda_joint4', 'panda_joint5', 'panda_joint6', 'panda_joint7']
-const END_LINK = 'panda_link8'
+export const JOINT_NAMES = ['panda_joint1', 'panda_joint2', 'panda_joint3', 'panda_joint4', 'panda_joint5', 'panda_joint6', 'panda_joint7']
+export const END_LINK = 'panda_link8'
 const FINGER_JOINTS = ['panda_finger_joint1', 'panda_finger_joint2']
-const HOME_JOINTS: Record<string, number> = {
+export const HOME_JOINTS: Record<string, number> = {
   panda_joint1: 0,
   panda_joint2: -0.785,
   panda_joint3: 0,
@@ -15,9 +15,9 @@ const HOME_JOINTS: Record<string, number> = {
   panda_joint6: 1.571,
   panda_joint7: 0.785,
 }
-const DEADZONE = 0.16
-const MAX_JOINT_STEP = 0.014
-const DAMPING = 0.12
+export const DEADZONE = 0.16
+export const MAX_JOINT_STEP = 0.014
+export const DAMPING = 0.12
 const previousPadButtons: boolean[] = []
 
 type RobotMode = 'auto' | 'manual'
@@ -25,38 +25,88 @@ type RobotTask = 'sort' | 'weld' | 'assemble'
 type RobotControl = { mode: RobotMode; task: RobotTask; gripOpen: boolean; reset: boolean }
 type PandaArmBehavior = 'assembly' | 'infeed'
 
-export function PandaArmModel({ behavior = 'assembly', active = true, progress = 0 }: { behavior?: PandaArmBehavior; active?: boolean; progress?: number }) {
+let pandaTemplatePromise: Promise<URDFRobot> | null = null
+
+/** 黛玉资产复用：URDF/DAE只解析一次，各设备克隆独立关节树。 */
+export function loadPandaTemplate(): Promise<URDFRobot> {
+  if (pandaTemplatePromise) return pandaTemplatePromise
+
+  const manager = new THREE.LoadingManager()
+  const loader = new URDFLoader(manager)
+  loader.packages = {}
+  loader.parseCollision = false
+  pandaTemplatePromise = loader.loadAsync('/models/panda/panda.urdf').then(async (loaded) => {
+    await waitForRobotVisuals(loaded)
+    setHome(loaded)
+    setGripper(loaded, 1)
+    loaded.updateMatrixWorld(true)
+    normalizeRobot(loaded)
+    return loaded
+  }).catch((error) => {
+    pandaTemplatePromise = null
+    throw error
+  })
+  return pandaTemplatePromise
+}
+
+export function preloadPandaArm() {
+  void loadPandaTemplate().catch(() => {})
+}
+
+export function PandaArmModel({ behavior = 'assembly', active = true, progress = 0, castShadows = true }: { behavior?: PandaArmBehavior; active?: boolean; progress?: number; castShadows?: boolean }) {
   const [robot, setRobot] = useState<URDFRobot | null>(null)
   const [robotReady, setRobotReady] = useState(false)
 
   useEffect(() => {
     let disposed = false
-    const manager = new THREE.LoadingManager()
-    const assetsLoaded = new Promise<void>((resolve, reject) => {
-      manager.onLoad = () => resolve()
-      manager.onError = (url) => reject(new Error(`Panda mesh failed to load: ${url}`))
-    })
-    const loader = new URDFLoader(manager)
-    loader.packages = {}
-    loader.parseCollision = false
-    loader.loadAsync('/models/panda/panda.urdf').then(async (loaded) => {
+    loadPandaTemplate().then((template) => {
       if (disposed) return
-      // URDFLoader resolves as soon as the XML has been parsed. The visual
-      // Collada files are requested separately, so normalize only after the
-      // LoadingManager confirms that every link mesh is present.
-      await assetsLoaded
-      if (disposed) return
-      normalizeRobot(loaded)
+      const loaded = template.clone(true) as URDFRobot
+      loaded.traverse((node) => {
+        if (node instanceof THREE.Mesh) node.castShadow = castShadows
+      })
+      setHome(loaded)
+      setGripper(loaded, 1)
+      loaded.updateMatrixWorld(true)
       setRobot(loaded)
       setRobotReady(true)
     }).catch(() => {
       // The precise GLB remains a safe fallback if the optional URDF asset is unavailable.
     })
     return () => { disposed = true }
-  }, [])
+  }, [castShadows])
 
   if (!robot || !robotReady) return <PandaArmFallback />
   return <PandaArmRuntime robot={robot} behavior={behavior} active={active} progress={progress} />
+}
+
+async function waitForRobotVisuals(robot: URDFRobot): Promise<void> {
+  const startedAt = performance.now()
+  let lastCount = -1
+  let stableRounds = 0
+  while (true) {
+    let meshCount = 0
+    robot.traverse((node) => {
+      if (node instanceof THREE.Mesh && node.geometry?.attributes.position?.count > 0) meshCount += 1
+    })
+    robot.updateMatrixWorld(true)
+    const bounds = new THREE.Box3().setFromObject(robot)
+    const size = bounds.getSize(new THREE.Vector3())
+    const finiteBounds = [bounds.min.x, bounds.min.y, bounds.min.z, bounds.max.x, bounds.max.y, bounds.max.z]
+      .every(Number.isFinite)
+
+    // Collada 网格是渐进加载的：等网格数连续多轮不再增长（完全加载）再返回，
+    // 避免提前用不完整几何做 normalizeRobot 导致后续网格错位/缺部件。
+    if (meshCount >= 10 && meshCount === lastCount && finiteBounds && size.lengthSq() > 0.01) {
+      stableRounds += 1
+      if (stableRounds >= 5) return
+    } else {
+      stableRounds = 0
+    }
+    lastCount = meshCount
+    if (performance.now() - startedAt > 20_000) throw new Error('Panda visual meshes timed out')
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 40))
+  }
 }
 
 function PandaArmFallback() {
@@ -104,6 +154,9 @@ function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRob
   }, [])
 
   useFrame(({ clock }, delta) => {
+    // 登录舱期间工厂会以不可见状态预热。祖先节点不可见时跳过 IK，
+    // 避免十余个机械臂在后台消耗主线程，舱门动画因此不再与 IK 抢帧。
+    if (!runtimeRef.current || !isHierarchyVisible(runtimeRef.current)) return
     robot.updateMatrixWorld(true)
     const end = robot.links[END_LINK]
     if (!end) return
@@ -123,7 +176,7 @@ function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRob
         if (homePose.current) {
           targetPos.current.set(homePose.current.x, homePose.current.y, homePose.current.z)
           targetQuat.current.copy(homePose.current.quaternion)
-          ik.solve(targetPos.current, targetQuat.current)
+          ik.solve(targetPos.current, targetQuat.current, 1)
         }
         gripperAmount.current = THREE.MathUtils.damp(gripperAmount.current, 1, 7, delta)
         setGripper(robot, gripperAmount.current)
@@ -139,7 +192,7 @@ function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRob
       targetPos.current.set(pose[0], pose[1], pose[2])
       runtimeRef.current?.localToWorld(targetPos.current)
       if (homePose.current) targetQuat.current.copy(homePose.current.quaternion)
-      ik.solve(targetPos.current, targetQuat.current)
+      ik.solve(targetPos.current, targetQuat.current, 1)
       const carrying = phase >= 0.34 && phase < 0.84
       const payloadVisible = phase >= 0.34 && phase < 0.995
       gripperAmount.current = THREE.MathUtils.damp(gripperAmount.current, phase >= 0.3 && phase < 0.87 ? 0 : 1, 10, delta)
@@ -168,7 +221,7 @@ function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRob
       if (homePose.current) {
         targetPos.current.set(homePose.current.x, homePose.current.y, homePose.current.z)
         targetQuat.current.copy(homePose.current.quaternion)
-        ik.solve(targetPos.current, targetQuat.current)
+        ik.solve(targetPos.current, targetQuat.current, 1)
       }
       gripperAmount.current = THREE.MathUtils.damp(gripperAmount.current, 1, 7, delta)
       setGripper(robot, gripperAmount.current)
@@ -194,13 +247,13 @@ function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRob
       targetPos.current.z = THREE.MathUtils.clamp(targetPos.current.z, 0.1, 1.0)
       const euler = new THREE.Euler(input.rot.pitch * 0.85 * delta, input.rot.yaw * 0.85 * delta, input.rot.roll * 0.85 * delta, 'XYZ')
       targetQuat.current.premultiply(new THREE.Quaternion().setFromEuler(euler)).normalize()
-      ik.solve(targetPos.current, targetQuat.current)
+      ik.solve(targetPos.current, targetQuat.current, 3)
     } else {
       const phase = clock.getElapsedTime() * (control.current.task === 'weld' ? 1.35 : control.current.task === 'assemble' ? 0.82 : 0.58)
       const home = homePose.current ?? getHomePose(robot)
       targetPos.current.set(home.x + Math.sin(phase) * 0.14, home.y + 0.08 + Math.sin(phase * 0.5) * 0.04, home.z + Math.cos(phase) * 0.12)
       targetQuat.current.copy(home.quaternion)
-      ik.solve(targetPos.current, targetQuat.current)
+      ik.solve(targetPos.current, targetQuat.current, 1)
     }
     setGripper(robot, control.current.gripOpen ? 1 : 0)
   })
@@ -218,7 +271,16 @@ function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRob
   )
 }
 
-function normalizeRobot(robot: URDFRobot) {
+function isHierarchyVisible(object: THREE.Object3D) {
+  let current: THREE.Object3D | null = object
+  while (current) {
+    if (!current.visible) return false
+    current = current.parent
+  }
+  return true
+}
+
+export function normalizeRobot(robot: URDFRobot) {
   // Keep the Collada visuals in the link frames created by URDFLoader. Only
   // the complete Z-up robot root is converted to the factory's Y-up space.
   robot.rotation.x = -Math.PI / 2
@@ -296,15 +358,15 @@ function smootherstep(value: number) {
   return value * value * value * (value * (value * 6 - 15) + 10)
 }
 
-function setHome(robot: URDFRobot) {
+export function setHome(robot: URDFRobot) {
   Object.entries(HOME_JOINTS).forEach(([name, value]) => robot.joints[name]?.setJointValue(value))
 }
 
-function setGripper(robot: URDFRobot, open: number) {
+export function setGripper(robot: URDFRobot, open: number) {
   FINGER_JOINTS.forEach((name) => robot.joints[name]?.setJointValue(open * 0.04))
 }
 
-function getHomePose(robot: URDFRobot) {
+export function getHomePose(robot: URDFRobot) {
   setHome(robot)
   robot.updateMatrixWorld(true)
   const position = new THREE.Vector3()
@@ -314,7 +376,7 @@ function getHomePose(robot: URDFRobot) {
   return { x: position.x, y: position.y, z: position.z, quaternion }
 }
 
-function readInput() {
+export function readInput() {
   const keys = (window as Window & { __forgeKeys?: Set<string> }).__forgeKeys ?? new Set<string>()
   const pad = Array.from(navigator.getGamepads?.() ?? []).find((candidate) => candidate?.connected)
   const axis = (index: number) => {
@@ -341,16 +403,16 @@ function readInput() {
   }
 }
 
-function createDlsIk(robot: URDFRobot) {
+export function createDlsIk(robot: URDFRobot) {
   const joints = JOINT_NAMES.map((name) => robot.joints[name]).filter((joint): joint is URDFJoint => Boolean(joint))
   const axes = joints.map((joint) => joint.axis.clone())
   const pEE = new THREE.Vector3()
   const qEE = new THREE.Quaternion()
 
-  const solve = (target: THREE.Vector3, targetQuat: THREE.Quaternion) => {
+  const solve = (target: THREE.Vector3, targetQuat: THREE.Quaternion, maxIterations = 2) => {
     const end = robot.links[END_LINK]
     const angles = joints.map((joint) => joint.angle)
-    for (let iteration = 0; iteration < 6; iteration += 1) {
+    for (let iteration = 0; iteration < maxIterations; iteration += 1) {
       robot.updateMatrixWorld(true)
       end.getWorldPosition(pEE)
       end.getWorldQuaternion(qEE)

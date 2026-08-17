@@ -1,10 +1,10 @@
-import { useRef } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { OBJECT_DEFS } from '../game/types'
 import { gridToWorld, objectPortCells, objectPortCellsForSide, objectToWorld, occupiedCells, rotatedFootprint } from '../game/grid'
 import { rotationToDir } from '../game/dir'
-import { EquipmentModel } from './EquipmentModel'
+import { EquipmentModel, RuntimeDetailSignal } from './EquipmentModel'
 import type { FactoryObject, PortSide } from '../game/types'
 import type { MachineRuntime, SourceRuntimeSnapshot } from '../game/simulation'
 
@@ -13,13 +13,19 @@ import type { MachineRuntime, SourceRuntimeSnapshot } from '../game/simulation'
  * - machine：高精度公模（机械臂）+ 状态色底座 + 进度条
  * - conveyor/source：程序化几何（简单几何体，无需公模）
  */
-export function FactoryObjectMesh({
+export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   obj,
   objects,
   selected,
   active = false,
   runtime,
   sourceRuntime,
+  suppressEquipmentModel = false,
+  showPortMarkers = true,
+  castShadows = true,
+  suppressPanda = false,
+  suppressConveyor = false,
+  suppressInspectionImports = false,
   onClick,
 }: {
   obj: FactoryObject
@@ -28,6 +34,12 @@ export function FactoryObjectMesh({
   active?: boolean
   runtime?: MachineRuntime
   sourceRuntime?: SourceRuntimeSnapshot
+  suppressEquipmentModel?: boolean
+  showPortMarkers?: boolean
+  castShadows?: boolean
+  suppressPanda?: boolean
+  suppressConveyor?: boolean
+  suppressInspectionImports?: boolean
   onClick: (id: string) => void
 }) {
   const def = OBJECT_DEFS[obj.type]
@@ -39,7 +51,6 @@ export function FactoryObjectMesh({
   const conveyorLinks = def.role === 'conveyor' && obj.type === 'conveyor'
     ? getConveyorLinks(obj, objects)
     : null
-
   // 选中态低强度发光脉冲
   useFrame(({ clock }) => {
     if (!group.current || !selected) return
@@ -48,11 +59,24 @@ export function FactoryObjectMesh({
     group.current.scale.setScalar(1 + pulse * 0.03)
   })
 
+  useEffect(() => {
+    if (!selected) group.current?.scale.setScalar(1)
+  }, [selected])
+
+  useLayoutEffect(() => {
+    group.current?.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) return
+      if (node.userData.daiyuOriginalCastShadow === undefined) node.userData.daiyuOriginalCastShadow = node.castShadow
+      node.castShadow = castShadows && Boolean(node.userData.daiyuOriginalCastShadow)
+    })
+  }, [castShadows])
+
   const isMachine = def.role === 'machine'
 
   return (
     <group
       ref={group}
+      name={`factory-object:${obj.type}:${obj.id}`}
       position={[x, 0, z]}
       rotation={[0, obj.rotation === 90 ? -Math.PI / 2 : obj.rotation === 180 ? Math.PI : obj.rotation === 270 ? Math.PI / 2 : 0, 0]}
       onClick={(e) => {
@@ -62,7 +86,7 @@ export function FactoryObjectMesh({
     >
       {isMachine ? (
         <>
-        <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} />
+        {!suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} suppressInspectionImports={suppressInspectionImports} />}
           {/* 状态色底座（显示机器状态，模型上方不遮挡） */}
           <mesh position={[0, 0.025, 0]} receiveShadow>
             <boxGeometry args={[fp.w, 0.04, fp.d]} />
@@ -78,9 +102,19 @@ export function FactoryObjectMesh({
           </mesh>
         </>
       ) : def.role === 'conveyor' || def.role === 'storage' ? (
-        <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} />
+        !suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} suppressInspectionImports={suppressInspectionImports} />
       ) : (
-        <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} />
+        !suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} suppressInspectionImports={suppressInspectionImports} />
+      )}
+
+      {suppressEquipmentModel && obj.type === 'press' && (
+        <RuntimeDetailSignal accent={def.accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="press" />
+      )}
+      {suppressEquipmentModel && obj.type === 'washing' && (
+        <RuntimeDetailSignal accent={def.accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="wash" />
+      )}
+      {suppressEquipmentModel && obj.type === 'storage' && (
+        <RuntimeDetailSignal accent={def.accent} active={active} kind="storage" />
       )}
 
       {/* 机器进度条（加工/收料/出料阶段） */}
@@ -101,13 +135,15 @@ export function FactoryObjectMesh({
         </>
       )}
 
-      <PortMarkers
-        obj={obj}
-        input={def.inputPort}
-        output={def.outputPort}
-        hideInput={Boolean(conveyorLinks?.inputConnected)}
-        hideOutput={Boolean(conveyorLinks?.outputConnected)}
-      />
+      {showPortMarkers && (
+        <PortMarkers
+          obj={obj}
+          input={def.inputPort}
+          output={def.outputPort}
+          hideInput={Boolean(conveyorLinks?.inputConnected)}
+          hideOutput={Boolean(conveyorLinks?.outputConnected)}
+        />
+      )}
 
       {/* 选中描边（按足迹高度） */}
       {selected && (
@@ -118,9 +154,9 @@ export function FactoryObjectMesh({
       )}
     </group>
   )
-}
+})
 
-function getConveyorLinks(obj: FactoryObject, objects: FactoryObject[]) {
+export function getConveyorLinks(obj: FactoryObject, objects: FactoryObject[]) {
   const sharesCell = (cells: { x: number; z: number }[], target: { x: number; z: number }[]) => cells.some((a) => target.some((b) => a.x === b.x && a.z === b.z))
   const incoming = objects.find((other) => other.id !== obj.id && sharesCell(objectPortCells(other, 'output'), objectPortCells(obj, 'input')))
   const outgoing = objects.find((other) => other.id !== obj.id && sharesCell(objectPortCells(obj, 'output'), occupiedCells(other)))
@@ -261,9 +297,6 @@ function ConveyorMotion({ active, height }: { active: boolean; height: number })
 
 /** 传送带方向指示（小三角箭头） */
 function ConveyorArrow({ height }: { height: number }) {
-  // FactoryObjectMesh already rotates the whole conveyor to its flow
-  // direction. Keep the arrow in local +X so vertical segments are not
-  // rotated a second time into a reversed left-pointing arrow.
   return (
     <group position={[0, height + 0.035, 0]}>
       <mesh position={[0.1, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>

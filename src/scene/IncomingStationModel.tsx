@@ -10,6 +10,9 @@ interface IncomingStationModelProps {
   accent: string
   active?: boolean
   runtime?: SourceRuntimeSnapshot
+  castShadows?: boolean
+  suppressPanda?: boolean
+  suppressConveyor?: boolean
 }
 
 /**
@@ -17,13 +20,13 @@ interface IncomingStationModelProps {
  * the vehicle unloads on the left, the arm picks from that stack, and the
  * short roller belt carries the pallet out through the source output port.
  */
-export function IncomingStationModel({ color, accent, active = false, runtime }: IncomingStationModelProps) {
+export function IncomingStationModel({ color, accent, active = false, runtime, castShadows = true, suppressPanda = false, suppressConveyor = false }: IncomingStationModelProps) {
   const transferring = runtime?.state === 'picking' || runtime?.state === 'placing'
   const blocked = runtime?.state === 'blocked'
 
   return (
     <group>
-      <mesh position={[0, 0.08, 0]} castShadow receiveShadow>
+      <mesh position={[0, 0.08, 0]} castShadow={castShadows} receiveShadow>
         <boxGeometry args={[2.85, 0.16, 1.9]} />
         <meshStandardMaterial color="#566761" roughness={0.68} metalness={0.42} />
       </mesh>
@@ -34,16 +37,18 @@ export function IncomingStationModel({ color, accent, active = false, runtime }:
 
       {/* The station exposes the near central lane of its 3x2 footprint. */}
       <group position={[0.92, 0.17, -0.5]}>
-        <Suspense fallback={<FormalConveyorFallback color={color} accent={accent} />}>
-          <FormalConveyorSegment targetFootprint={1.05} targetHeight={0.52} />
-        </Suspense>
+        {!suppressConveyor && (
+          <Suspense fallback={<FormalConveyorFallback color={color} accent={accent} />}>
+            <FormalConveyorSegment targetFootprint={1.05} targetHeight={0.52} />
+          </Suspense>
+        )}
         <ConveyorSignal active={active && transferring} accent={accent} />
       </group>
 
       <MaterialStack />
 
       <group position={[-0.25, 0.18, -0.05]} scale={1.05}>
-        <PandaArmModel behavior="infeed" active={active} progress={runtime?.progress ?? 0} />
+        {!suppressPanda && <PandaArmModel behavior="infeed" active={active} progress={runtime?.progress ?? 0} castShadows={castShadows} />}
       </group>
 
       <mesh position={[-0.25, 0.205, -0.05]} rotation={[-Math.PI / 2, 0, 0]}>
