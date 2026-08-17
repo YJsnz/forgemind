@@ -11,6 +11,8 @@ import { isMachineType, isTransportType, objectRole } from './game/types'
 import { AssistantOrb } from './components/AssistantOrb'
 import { AssistantRuntime } from './components/AssistantRuntime'
 import { AssistantVoiceButton } from './components/AssistantVoiceButton'
+import { ForgeMindIntro } from './components/ForgeMindIntro'
+import './forgemind-intro.css'
 
 const VIEW_META: Record<FactoryView, { code: string; label: string; title: string; description: string }> = {
   overview: {
@@ -42,6 +44,7 @@ const VIEW_META: Record<FactoryView, { code: string; label: string; title: strin
 const VIEW_ORDER: FactoryView[] = ['overview', 'build', 'flow', 'diagnostics']
 
 function App() {
+  const [portalOpen, setPortalOpen] = useState(true)
   const [view, setView] = useState<FactoryView>('overview')
   const objects = useForgeMindStore((s) => s.objects)
   const items = useForgeMindStore((s) => s.items)
@@ -49,6 +52,8 @@ function App() {
   const snapshot = useForgeMindStore((s) => s.simSnapshot)
   const playing = useForgeMindStore((s) => s.simPlaying)
   const buildType = useForgeMindStore((s) => s.buildType)
+  const selectedId = useForgeMindStore((s) => s.selectedId)
+  const select = useForgeMindStore((s) => s.select)
   const setBuildType = useForgeMindStore((s) => s.setBuildType)
   const undo = useForgeMindStore((s) => s.undo)
   const redo = useForgeMindStore((s) => s.redo)
@@ -113,6 +118,10 @@ function App() {
 
   const meta = VIEW_META[view]
   const activeTool = buildType ? '建造工具已启用' : '浏览与选择'
+
+  if (portalOpen) {
+    return <ForgeMindIntro onEnterWorkspace={() => setPortalOpen(false)} />
+  }
 
   // 未进厂：电梯舱登录界面（舱门打开 + BT 音效 + 推镜进厂在 store phase 中驱动）
   if (phase !== 'factory') {
@@ -200,6 +209,16 @@ function App() {
           <section className="fm-viewport" data-building={buildType ? 'true' : 'false'} aria-label="3D 工厂视口">
             <FactoryCanvas view={view} />
 
+            {selectedId && (
+              <aside className="fm-device-drawer glass3d" aria-label="设备详情">
+                <div className="fm-device-drawer-bar">
+                  <span>DEVICE / LIVE INSPECTOR</span>
+                  <button type="button" onClick={() => select(null)} aria-label="关闭设备详情">×</button>
+                </div>
+                <InfoPanel />
+              </aside>
+            )}
+
             <div className="fm-viewport-header">
               <div>
                 <div className="fm-eyebrow"><span>{meta.code}</span> / LIVE VIEW</div>
@@ -271,8 +290,6 @@ function App() {
           <div className="fm-panel-rule" />
           <div className="fm-panel-scroll">
             <SimPanel />
-            <div className="fm-panel-rule" />
-            <InfoPanel />
           </div>
         </aside>
       </div>

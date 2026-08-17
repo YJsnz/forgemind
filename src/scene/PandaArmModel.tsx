@@ -16,8 +16,10 @@ export const HOME_JOINTS: Record<string, number> = {
   panda_joint7: 0.785,
 }
 export const DEADZONE = 0.16
-export const MAX_JOINT_STEP = 0.014
-export const DAMPING = 0.12
+/** 统一关节运动上限：避免 IK 每帧大幅改关节造成视觉抽搐。 */
+export const MAX_JOINT_STEP = 0.010
+/** 更强阻尼让机械臂接近目标时不在相邻解之间来回切换。 */
+export const DAMPING = 0.18
 const previousPadButtons: boolean[] = []
 
 type RobotMode = 'auto' | 'manual'
@@ -410,6 +412,16 @@ export function createDlsIk(robot: URDFRobot) {
   const qEE = new THREE.Quaternion()
 
   const solve = (target: THREE.Vector3, targetQuat: THREE.Quaternion, maxIterations = 2) => {
+    solveInternal(target, targetQuat, maxIterations)
+  }
+
+  // 摄像头环绕时只约束末端位置。相机的真实朝向由外部 camera.lookAt
+  // 控制，避免固定 Panda 末端姿态让圆周上的某些点变成不可达姿态。
+  const solvePosition = (target: THREE.Vector3, maxIterations = 2) => {
+    solveInternal(target, null, maxIterations)
+  }
+
+  const solveInternal = (target: THREE.Vector3, targetQuat: THREE.Quaternion | null, maxIterations: number) => {
     const end = robot.links[END_LINK]
     const angles = joints.map((joint) => joint.angle)
     for (let iteration = 0; iteration < maxIterations; iteration += 1) {
@@ -417,8 +429,10 @@ export function createDlsIk(robot: URDFRobot) {
       end.getWorldPosition(pEE)
       end.getWorldQuaternion(qEE)
       const positionError = target.clone().sub(pEE)
-      const rotationError = quatToVector(targetQuat.clone().multiply(qEE.clone().invert()))
-      if (positionError.length() < 0.002 && rotationError.length() < 0.02) break
+      const rotationError = targetQuat
+        ? quatToVector(targetQuat.clone().multiply(qEE.clone().invert()))
+        : new THREE.Vector3()
+      if (positionError.length() < 0.004 && rotationError.length() < 0.02) break
       const jacobian = joints.map((joint, index) => {
         const origin = new THREE.Vector3()
         const worldAxis = axes[index].clone()
@@ -439,7 +453,7 @@ export function createDlsIk(robot: URDFRobot) {
       })
     }
   }
-  return { solve }
+  return { solve, solvePosition }
 }
 
 function quatToVector(quaternion: THREE.Quaternion) {

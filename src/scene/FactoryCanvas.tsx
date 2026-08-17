@@ -71,9 +71,7 @@ export function FactoryScene({ view, visible = true }: { view: FactoryView; visi
   const staticWashingObjects = useMemo(() => objects.filter((object) => object.type === 'washing'), [objects])
   const staticStorageObjects = useMemo(() => objects.filter((object) => object.type === 'storage'), [objects])
   const sourceObjects = useMemo(() => objects.filter((object) => object.type === 'source'), [objects])
-  const inspectionObjects = useMemo(() => objects.filter((object) => object.type === 'inspection'), [objects])
   const sourceIds = useMemo(() => new Set(sourceObjects.map((object) => object.id)), [sourceObjects])
-  const inspectionIds = useMemo(() => new Set(inspectionObjects.map((object) => object.id)), [inspectionObjects])
   const batchedPandaObjects = useMemo(
     () => objects.filter((object) => {
       if (object.type !== 'source') return false
@@ -146,8 +144,6 @@ export function FactoryScene({ view, visible = true }: { view: FactoryView; visi
         <DaiyuStaticModelBatch type="storage" objects={staticStorageObjects} castShadows={castDetailedShadows} onSelect={select} />
         <DaiyuPandaBatch objects={batchedPandaObjects} castShadows={castDetailedShadows} onSelect={select} />
         <DaiyuEmbeddedModelBatch batchName="source-conveyor" path="/models/industrial/roller_conveyor_segment.glb" targetFootprint={1.05} targetHeight={0.52} localPosition={[0.92, 0.17, -0.5]} rotationOffsetY={Math.PI / 2} stripDirectionTexture objects={sourceObjects} castShadows={castDetailedShadows} onSelect={select} />
-        <DaiyuEmbeddedModelBatch batchName="inspection-sensor" path="/models/industrial/sensor_pack.glb" targetFootprint={1.296} targetHeight={1.023} localPosition={[0, 0.04, 0]} objects={inspectionObjects} castShadows={castDetailedShadows} onSelect={select} />
-        <DaiyuEmbeddedModelBatch batchName="inspection-cabinet" path="/models/industrial/control_cabinet.glb" targetFootprint={0.468} targetHeight={1.116} localPosition={[0.62, 0.04, -0.3]} objects={inspectionObjects} castShadows={castDetailedShadows} onSelect={select} />
         {individuallyRenderedObjects.map((o) => (
           <FactoryObjectMesh
             key={o.id}
@@ -162,7 +158,6 @@ export function FactoryScene({ view, visible = true }: { view: FactoryView; visi
             castShadows={castDetailedShadows}
             suppressPanda={batchedPandaIds.has(o.id)}
             suppressConveyor={sourceIds.has(o.id)}
-            suppressInspectionImports={inspectionIds.has(o.id)}
             onClick={select}
           />
         ))}

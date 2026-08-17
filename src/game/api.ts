@@ -11,6 +11,11 @@ import type { AssistantToolCall, AssistantToolCatalog } from './assistantProtoco
 const SPRING_BASE = 'http://localhost:8080'
 const AI_BASE = 'http://localhost:8000'
 
+function backendHeaders(): Record<string, string> {
+  const token = localStorage.getItem('forgemind.token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 async function withTimeout<T>(p: Promise<T>, ms = 2500): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
@@ -25,7 +30,7 @@ async function withTimeout<T>(p: Promise<T>, ms = 2500): Promise<T> {
 
 /** 从 Spring Boot 拉取工厂存档 */
 export async function fetchRemoteSave(): Promise<FactorySave> {
-  const res = await withTimeout(fetch(`${SPRING_BASE}/api/factory`))
+  const res = await withTimeout(fetch(`${SPRING_BASE}/api/factory`, { headers: backendHeaders() }))
   if (!res.ok) throw new Error(`后端返回 ${res.status}`)
   return (await res.json()) as FactorySave
 }
@@ -35,7 +40,7 @@ export async function pushRemoteSave(save: FactorySave): Promise<void> {
   const res = await withTimeout(
     fetch(`${SPRING_BASE}/api/factory`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...backendHeaders() },
       body: JSON.stringify(save),
     }),
   )

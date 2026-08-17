@@ -30,7 +30,7 @@ export default {
       },
       fontFamily: {
         mono: ['"JetBrains Mono"', 'Consolas', 'monospace'],
-        sans: ['MiSans', 'system-ui', 'sans-serif'],
+        sans: ['Inter', 'sans-serif'],
       },
     },
   },

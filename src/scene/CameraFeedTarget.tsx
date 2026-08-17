@@ -57,6 +57,11 @@ export function CameraFeedTarget() {
     renderCamNow.updateProjectionMatrix()
     renderCamNow.updateMatrixWorld(true)
 
+    // 视觉检测不拍摄摄像头臂自身，避免连杆遮挡货物；主视图仍正常显示完整机械臂。
+    const occluder = inspectionRegistry.cameraOccluder
+    const occluderVisible = occluder?.visible
+    if (occluder) occluder.visible = false
+
     // 检测画面关阴影 + 关色调映射：避免机械臂阴影/ACES 压暗被视觉检测误判
     const hadShadows = renderer.shadowMap.enabled
     const hadTone = renderer.toneMapping
@@ -67,6 +72,7 @@ export function CameraFeedTarget() {
     renderer.setRenderTarget(null)
     renderer.shadowMap.enabled = hadShadows
     renderer.toneMapping = hadTone
+    if (occluder && occluderVisible !== undefined) occluder.visible = occluderVisible
 
     const buffer = bufferRef.current
     if (buffer) {

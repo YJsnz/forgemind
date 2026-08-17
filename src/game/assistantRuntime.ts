@@ -132,11 +132,23 @@ function createSpeechQueue() {
 function extractSpeechFragments(buffer: string): { fragments: string[]; remainder: string } {
   const fragments: string[] = []
   let remainder = buffer
+  const targetLength = 14
+  const maxLength = 18
   while (true) {
-    // 逗号级切分让 BT 音色在模型仍生成后半句时就能开始合成；播放队列保持顺序。
-    const match = /[，。！？!?；]/.exec(remainder)
-    if (!match || match.index === undefined) break
-    const end = match.index + match[0].length
+    // 标点优先；没有标点时按短语长度切分，让 TTS 在模型继续生成时立即开始。
+    const punctuation = /[，。！？!?；]/.exec(remainder)
+    let end = -1
+    if (punctuation && punctuation.index !== undefined && punctuation.index < maxLength) {
+      end = punctuation.index + punctuation[0].length
+    } else if (remainder.length >= targetLength) {
+      const window = remainder.slice(0, maxLength)
+      const boundaries = [...window.matchAll(/[、，,；;：:]/g)]
+      const boundary = boundaries[boundaries.length - 1]
+      end = boundary && boundary.index !== undefined && boundary.index >= 6
+        ? boundary.index + boundary[0].length
+        : targetLength
+    }
+    if (end < 0) break
     const fragment = remainder.slice(0, end).trim()
     remainder = remainder.slice(end)
     if (fragment) fragments.push(fragment)

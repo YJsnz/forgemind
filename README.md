@@ -7,20 +7,22 @@ AI 驱动的智能工厂数字孪生设计与仿真平台。学习答辩项目�
 - **前端**：React 18 + TypeScript + Vite + Three.js（React Three Fiber）+ Zustand
 - **样式**：TailwindCSS + 自定义设计 token（《明日方舟：终末地》工业机能风）
 - **仿真内核**：纯 TS（`src/game/simulation.ts`），与 React/Three 解耦，是唯一真相源
-- **后端双栈**（可选演进，已建骨架）：
-  - **Spring Boot 3**（Java 17，`backend/`）—— 工厂结构/配方 CRUD，JSON 文件存储
-  - **FastAPI**（Python 3.10，`ai-service/`）—— 离线 AI / LLM 编排占位
+- **后端双栈**：
+  - **Spring Boot 3 + MySQL 8.4**（Java 17，`backend/`）—— 用户、工厂结构、物品和配方持久化
+  - **FastAPI**（Python 3.10，`ai-service/`）—— 本地 Ollama AI 编排、工具协议、ASR/TTS 网关
 
 ## 快速开始
 
-Windows 推荐直接双击项目根目录的 `start-forgemind.bat`。脚本会检测并复用已运行的 Ollama、BT TTS、AI 服务和前端，只为缺失的服务打开终端窗口；启动完成后自动打开 `http://127.0.0.1:5173`。
+Windows 推荐直接双击项目根目录的 `start-forgemind.bat`。脚本会先启动并等待 Docker MySQL 健康，再检测并复用 Ollama、BT TTS、AI 服务、Spring Boot 和前端，只为缺失的服务打开终端窗口；启动完成后自动打开 `http://127.0.0.1:5173`。
 
 ```powershell
 .\start-forgemind.bat                 # 前端 + Ollama + BT TTS + AI 服务
 .\start-forgemind.bat -NoBrowser       # 启动但不自动打开浏览器
-.\start-forgemind.bat -SkipSpring     # 跳过 Spring Boot 8080
+.\start-forgemind.bat -SkipSpring     # 跳过 Spring Boot 8080（也不要求 MySQL）
+.\start-forgemind.bat -SkipMySql      # 跳过 Docker MySQL，适合已有外部数据库
 .\start-forgemind.bat -IncludeVoiceChat # 额外启动独立终端语音助手
-.\stop-forgemind.bat                  # 停止 ForgeMind 服务，默认保留 Ollama
+.\stop-forgemind.bat                  # 停止 ForgeMind 服务，默认保留 MySQL 和 Ollama
+.\stop-forgemind.bat -StopMySql       # 停止 MySQL 容器，但保留数据卷
 ```
 
 如果 BT TTS 不在默认目录 `D:\local\bt7274-space`，可先设置：
@@ -39,6 +41,9 @@ npm run build    # 前端生产构建
 ### 启动后端（可选）
 
 ```bash
+# MySQL 8.4（Docker）
+docker compose up -d mysql
+
 # Spring Boot（端口 8080）
 cd backend && mvn package && java -jar target/forgemind-backend-0.1.0.jar
 
@@ -48,6 +53,10 @@ cd ai-service && py -3.10 -m venv .venv && .venv/Scripts/pip install -r requirem
 ```
 
 前端左侧「⬆ 推后端 / ⬇ 拉后端」按钮可把存档同步到 Spring Boot（后端离线时回退本地 JSON）。
+
+视觉检测工作台是独立页面：开发环境访问 `http://127.0.0.1:5173/inspection.html`，生产构建会输出 `dist/inspection.html`。主界面的“**双臂视觉质检单元**”设备详情已提供检测入口，会在新标签页打开该工作台。它包含虚拟相机取景、OpenCV 检测结果、语音播报状态和合格/异常隔离路由。
+
+数据库表由 Spring Boot 启动时的 Flyway 迁移自动创建，详细表职责见 [后端数据库设计](docs/ForgeMind-后端数据库设计.md)。
 
 ## 设计文档
 

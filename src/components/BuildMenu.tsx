@@ -81,7 +81,7 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
                   <strong>{item.label}</strong>
                   <small>{item.subtitle}</small>
                   <em className={item.assetPath ? 'is-split-asset' : 'is-procedural'}>
-                    {type === 'assembler' ? '7 轴 Panda / 开放单元' : item.assetKind === 'center-split' ? '中心拆分资产' : item.assetKind === 'detailed-process' ? '独立高精度工艺资产' : '工艺结构模型'}
+                    {type === 'assembler' ? '7 轴 Panda / 开放单元' : item.assetKind === 'runtime-assembly' ? '双臂运行时组合模型' : item.assetKind === 'center-split' ? '中心拆分资产' : item.assetKind === 'detailed-process' ? '独立高精度工艺资产' : '工艺结构模型'}
                   </em>
                 </span>
                 <span className="fm-equipment-meta">{item.footprint.w}×{item.footprint.d}<br />{item.power}</span>
@@ -97,7 +97,7 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
           <span className="fm-detail-code">{selected.model}</span>
         </div>
         <div className={`fm-asset-source ${selected.assetPath ? 'is-split-asset' : 'is-procedural'}`}>
-          <span>{selectedType === 'assembler' ? '7-AXIS PANDA / OPEN CELL' : selected.assetKind === 'center-split' ? 'CENTER CELL / SPLIT ASSET' : selected.assetKind === 'detailed-process' ? 'DETAILED PROCESS ASSET' : 'PROCESS MODEL / PROCEDURAL'}</span>
+          <span>{selectedType === 'assembler' ? '7-AXIS PANDA / OPEN CELL' : selected.assetKind === 'runtime-assembly' ? 'DUAL-ARM / RUNTIME ASSEMBLY' : selected.assetKind === 'center-split' ? 'CENTER CELL / SPLIT ASSET' : selected.assetKind === 'detailed-process' ? 'DETAILED PROCESS ASSET' : 'PROCESS MODEL / PROCEDURAL'}</span>
           <code>{selected.assetPath ?? '本设备在中心模型中无对应节点'}</code>
         </div>
         <p>{selected.function}</p>
@@ -111,6 +111,7 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
           <div><span>INPUT</span><strong>{selected.inputs.join(' · ')}</strong></div>
           <div><span>OUTPUT</span><strong>{selected.outputs.join(' · ')}</strong></div>
         </div>
+        {selectedType === 'inspection' && <div className="fm-build-inspection-note"><span>WORKFLOW</span><strong>放置后可从设备详情进入 360° 检测工作台</strong></div>}
         <button className={`fm-place-button ${buildType === selectedType ? 'is-cancel' : ''}`} onClick={() => setBuildType(buildType === selectedType ? null : selectedType)}>
           {buildType === selectedType ? '退出当前设备' : `放置 ${selected.label}`}
         </button>

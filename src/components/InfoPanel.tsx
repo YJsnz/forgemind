@@ -37,11 +37,21 @@ export function InfoPanel() {
       {machine && <label className="fm-inspector-field"><span>生产配方 / RECIPE</span><select value={obj.recipeId ?? ''} onChange={(event) => bindRecipe(obj.id, event.target.value || null)}><option value="">未绑定配方</option>{recipes.map((recipe) => <option key={recipe.id} value={recipe.id}>{recipe.name}</option>)}</select></label>}
       {source && <label className="fm-inspector-field"><span>输出物品 / OUTPUT ITEM</span><select value={obj.itemId ?? ''} onChange={(event) => bindItem(obj.id, event.target.value || null)}><option value="">未绑定物品</option>{items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
       <div className="fm-inspector-io"><div><span>INPUT / BLUE</span><b>{def.inputs.join(' · ') || '无'}</b><small>后侧进料口</small></div><div><span>OUTPUT / AMBER</span><b>{def.outputs.join(' · ') || '无'}</b><small>前侧出料口</small></div></div>
+      {obj.type === 'inspection' && <InspectionEntry />}
       {(obj.type === 'assembler' || obj.type === 'machine') && <RobotWorkPanel />}
       <div className="fm-port-legend"><span><i className="fm-port-dot input" />入口</span><span><i className="fm-port-dot output" />出口</span></div>
       <div className="fm-inspector-actions"><button onClick={() => rotateObject(obj.id)}>旋转 90°</button><button className="danger" onClick={() => remove(obj.id)}>拆除设备</button></div>
     </div>
   )
+}
+
+function InspectionEntry() {
+  return <section className="fm-inspection-entry">
+    <div className="fm-inspection-entry-head"><div><span className="fm-eyebrow">LIVE INSPECTION</span><strong>视觉检测工作台</strong></div><span className="fm-inspection-entry-led" /></div>
+    <p>进入独立检测页，查看夹取臂、摄像头臂和 360° 环绕扫描流程。</p>
+    <div className="fm-inspection-entry-tags"><span>双臂协同</span><span>安全隔离</span><span>手动接管</span></div>
+    <a className="fm-inspection-entry-button" href="/inspection.html" target="_blank" rel="noreferrer">进入检测详情 <b>↗</b></a>
+  </section>
 }
 
 function RobotWorkPanel() {

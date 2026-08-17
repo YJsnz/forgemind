@@ -1,6 +1,7 @@
 # dependencies
 node_modules/
 **/.venv/
+**/.venv-*/
 **/venv/
 *.pyc
 **/__pycache__/

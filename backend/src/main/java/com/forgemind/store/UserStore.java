@@ -2,7 +2,6 @@ package com.forgemind.store;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.forgemind.model.User;
-import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -12,10 +11,9 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 用户 JSON 文件存储，写法对齐 JsonStore。
- * 单文件 data/users.json，读时缺失返回空列表。
+ * 旧版 JSON 用户存储，仅保留给历史数据查看或人工迁移使用。
+ * 当前认证由 AuthService + MySQL 完成；此类不再注册为 Spring Bean。
  */
-@Component
 public class UserStore {
 
     private static final Path DATA_PATH = Paths.get("data", "users.json");

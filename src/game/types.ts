@@ -39,7 +39,7 @@ export interface ObjectDef {
   function: string
   model: string
   assetPath?: string
-  assetKind?: 'center-split' | 'detailed-process'
+  assetKind?: 'center-split' | 'detailed-process' | 'runtime-assembly'
   footprint: Footprint
   color: string
   accent: string
@@ -110,7 +110,7 @@ export const OBJECT_DEFS: Record<BuildType, ObjectDef> = {
   smelter: equipment('smelter', 'machine', '加工', '数控加工中心', 'CNC MACHINING CENTER Mk.I', '完成铣削、钻孔和攻丝，输出带有质量状态的机加工件。', 'Enclosed CNC cell', { w: 3, d: 2 }, '#657782', '#d2ad50', 1.9, '18 / min', '22 kW', ['钢坯 / 铝坯'], ['机加工壳体']),
   press: equipment('press', 'machine', '加工', '液压冲压机', 'HYDRAULIC PRESS Mk.I', '使用模具完成板材冲压和折弯，配置安全光栅与液压站。', 'Hydraulic forming press', { w: 2, d: 2 }, '#677e89', '#d2ad50', 1.6, '36 / min', '24 kW', ['板材'], ['冲压壳体']),
   assembler: equipment('assembler', 'machine', '装配', '机器人装配单元', 'ROBOTIC ASSEMBLY CELL Mk.I', '由六轴机器人、夹具和扭矩工具组成的自动装配单元。', 'ABB / IRB robotic cell', { w: 3, d: 3 }, '#5d7185', '#e4b52b', 1.85, '12 / min', '28 kW', ['机加工件', '标准件'], ['电机总成']),
-  inspection: equipment('inspection', 'machine', '装配', '机器视觉检测站', 'VISION INSPECTION CELL Mk.I', '对尺寸、外观和装配缺陷进行在线检测，并将结果写入质量追溯。', 'Camera + light tunnel', { w: 2, d: 2 }, '#536f72', '#7ed4d1', 1.55, '20 / min', '6 kW', ['待检产品'], ['合格品 / 不合格品']),
+  inspection: equipment('inspection', 'machine', '装配', '双臂视觉质检单元', 'DUAL-ARM VISION QA CELL Mk.I', '由夹取臂托举工件、摄像头臂进行 360° 环绕检测，识别尺寸、外观和装配缺陷，并将结果写入质量追溯。', 'Dual-arm camera inspection cell', { w: 2, d: 2 }, '#536f72', '#7ed4d1', 1.55, '20 / min', '6 kW', ['待检产品'], ['合格品 / 不合格品']),
   washing: equipment('washing', 'machine', '加工', '清洗去毛刺单元', 'DEBURR & WASH CELL Mk.I', '去除切削毛刺并清洗切削液，作为机加工后的标准工序。', 'Wash and deburr cell', { w: 2, d: 2 }, '#5c7477', '#71c8c0', 1.45, '18 / min', '16 kW', ['机加工件'], ['洁净零件']),
   agv: equipment('agv', 'storage', '物流', 'AGV 叉车搬运车', 'AGV FORKLIFT Mk.I', '在原料库、线边库和成品库之间执行托盘搬运任务。', 'Autonomous forklift', { w: 2, d: 2 }, '#6e7370', '#dfb842', 1.35, '8 trips / h', '5 kW', ['托盘任务'], ['托盘任务']),
   storage: equipment('storage', 'storage', '物流', '成品缓存仓', 'FINISHED GOODS BUFFER Mk.I', '按批次缓存已检验产品，等待入库或出货。', 'Pallet buffer rack', { w: 2, d: 2 }, '#6c7674', '#d7b44a', 1.35, '240 / min', '4 kW', ['合格品'], ['待出货托盘']),
@@ -128,7 +128,6 @@ export const BUILD_ASSET_PATHS: Partial<Record<BuildType, string>> = {
   conveyor: '/models/industrial/roller_conveyor_segment.glb',
   smelter: '/models/industrial/cnc_machining_center.glb',
   assembler: '/models/panda/panda.urdf + robot_cell.glb / open cell, no fence',
-  inspection: '/models/industrial/sensor_pack.glb + control_cabinet.glb',
   press: '/models/industrial/hydraulic_press_detail.glb',
   washing: '/models/industrial/wash_deburr_detail.glb',
   storage: '/models/industrial/pallet_buffer_detail.glb',
@@ -136,7 +135,7 @@ export const BUILD_ASSET_PATHS: Partial<Record<BuildType, string>> = {
   merger: '/models/industrial/flow_node_detail.glb',
 }
 
-const CENTER_SPLIT_TYPES = new Set<BuildType>(['machine', 'conveyor', 'smelter', 'assembler', 'inspection'])
+const CENTER_SPLIT_TYPES = new Set<BuildType>(['machine', 'conveyor', 'smelter', 'assembler'])
 
 for (const [type, assetPath] of Object.entries(BUILD_ASSET_PATHS)) {
   if (assetPath) {
@@ -145,11 +144,21 @@ for (const [type, assetPath] of Object.entries(BUILD_ASSET_PATHS)) {
   }
 }
 
+// 视觉检测单元由两套 Panda URDF 和程序化相机头组成，不再使用旧的
+// sensor_pack / control_cabinet 组合模型。
+OBJECT_DEFS.inspection.assetPath = '/models/panda/panda.urdf × 2 + procedural camera head'
+OBJECT_DEFS.inspection.assetKind = 'runtime-assembly'
+
 export const EQUIPMENT_ORDER: BuildType[] = [
   'source', 'oreMiner', 'smelter', 'press', 'washing', 'assembler', 'inspection', 'conveyor', 'splitter', 'merger', 'agv', 'storage', 'machine',
 ]
 
 export const BUILD_BOUND = 24
+
+/** Runtime guard used by save parsing and external payload boundaries. */
+export function isBuildType(value: unknown): value is BuildType {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(OBJECT_DEFS, value)
+}
 
 export function objectRole(type: BuildType): ObjectRole {
   return OBJECT_DEFS[type].role

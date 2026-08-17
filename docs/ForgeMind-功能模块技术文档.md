@@ -21,8 +21,8 @@
 | 场景和模型系统 | `src/scene/`、`public/models/` | 已实现 | 高精度工艺设备、Panda URDF、物料可视化、登录舱 |
 | 黛玉渲染层 | `src/engine/daiyu/` | 已实现 | 精确实例化、预热、运行时审计和 4060 预算策略 |
 | 本地 JSON 存档 | `src/game/save.ts` | 已实现 | 导出、导入、运行时校验和浏览器下载 |
-| Spring Boot 存档/认证后端 | `backend/` | 已实现骨架 | JSON 文件 CRUD、BCrypt 密码、内存会话 token |
-| AI 服务 | `ai-service/main.py` | 接口占位 | FastAPI 健康检查和 AI 助手契约，当前返回 stub |
+| Spring Boot 存档/认证后端 | `backend/` | 已实现 | MySQL/Flyway 持久化、BCrypt 密码、数据库会话 token、按用户隔离工厂 |
+| AI 服务 | `ai-service/main.py` | 已实现（本地编排） | FastAPI 健康检查、Ollama 助手、NDJSON 流式回复、工具目录、ASR/TTS 网关 |
 | 离线语音助手 | `voice-chat/voice_chat.py` | 独立可运行 | 本地 ASR → Ollama → TTS → 播放闭环，尚未接入网页 UI |
 | 仿真回归工具链 | `scripts/` | 已实现 | 闭环、转弯、分流、汇流、背压和 A-01 基地验证 |
 
@@ -121,7 +121,7 @@ stateDiagram-v2
 | `register` | `POST /api/auth/register` | 注册并返回 token |
 | `login` | `POST /api/auth/login` | 登录并返回 token |
 | `fetchMe` | `GET /api/auth/me` | 用 Bearer token 获取当前用户 |
-| `logout` | `POST /api/auth/logout` | 删除服务端内存会话 |
+| `logout` | `POST /api/auth/logout` | 删除服务端数据库会话 |
 
 请求默认 5 秒超时。成功 token 写入 `localStorage['forgemind.token']`；应用挂载时调用 `restoreSession`，续登失败会清理 token 并回到电梯舱。
 
@@ -139,10 +139,10 @@ stateDiagram-v2
 
 ### 4.4 后端安全边界
 
-Spring Boot 当前使用 BCrypt 保存密码哈希；会话 token 是 UUID，并保存在 `AuthController` 的进程内 `ConcurrentHashMap`。因此：
+Spring Boot 当前使用 BCrypt 保存密码哈希；会话 token 是 UUID，服务端只把 token 的 SHA-256 摘要保存到 MySQL，默认有效期 30 天。因此：
 
 - 密码不会明文落盘。
-- 后端重启后所有 token 失效。
+- 后端重启后 token 仍可续用，过期会话会在校验时清理。
 - 当前没有完整 Spring Security 过滤链、刷新 token、角色权限和限流。
 - `@CrossOrigin(origins = "*")` 适合本地演示，不适合生产部署。
 
@@ -425,7 +425,7 @@ interface ItemLot {
 
 ### 11.1 本地存档格式
 
-`FactorySave` 当前版本为 1：
+`FactorySave` 当前版本为 2：
 
 ```ts
 interface FactorySave {
@@ -450,9 +450,9 @@ interface FactorySave {
 
 未知字段会被忽略，关键字段错误会抛出中文错误，`LeftPanel` 将错误显示给用户。
 
-### 11.3 当前兼容性注意
+### 11.3 存档版本与兼容性
 
-当前 `parseObjects` 的类型白名单仍只包含 `machine`、`conveyor` 和 `source`，而当前设备目录已经扩展到 `smelter`、`press`、`assembler`、`inspection`、`washing`、`agv`、`storage`、`splitter` 和 `merger`。因此完整 A-01 场景导出后再次导入，可能被校验器拒绝。该问题不影响内存中的建造和仿真，但应作为下一次存档版本升级的优先修复项。
+当前存档版本为 v2。解析器会接受 v1 并迁移为 v2，同时拒绝缺失、非法或未来版本；对象类型校验直接复用完整 `BuildType` 目录，因此 A-01 的全量设备可以导出后再次导入。对象、物品和配方 ID 也会检查重复，避免导入后出现引用歧义。
 
 ### 11.4 Spring Boot 同步
 
@@ -468,16 +468,17 @@ interface FactorySave {
 
 ## 12. Spring Boot 后端模块
 
-### 12.1 技术栈和数据文件
+### 12.1 技术栈和持久化
 
 - Java 17。
 - Spring Boot 3.3.5。
 - `spring-boot-starter-web`。
+- `spring-boot-starter-jdbc` + MySQL Connector/J。
+- Flyway 数据库迁移。
 - `spring-security-crypto`，只用于 BCrypt。
-- `data/factory.json` 保存工厂结构。
-- `data/users.json` 保存用户记录。
+- MySQL 数据库 `forgemind` 保存用户、会话、工厂、楼层、物品、配方、设备布局和预留快照。
 
-`JsonStore` 和 `UserStore` 在文件不存在时返回空结构，并在写入时自动创建 `data` 目录。
+数据库初始化脚本位于 `backend/src/main/resources/db/migration/`；当前已执行 v1–v4 迁移。高频 `ItemLot` 和机器运行态仍由仿真引擎持有，不写入实时 CRUD 表。设备绑定 ID 在后端按同一工厂范围校验，避免复合主键外键无法正确表达可空绑定的问题。
 
 ### 12.2 REST 接口
 
@@ -488,7 +489,7 @@ interface FactorySave {
 | `POST` | `/api/auth/register` | 用户名至少 2 个字符，密码至少 6 位 |
 | `POST` | `/api/auth/login` | BCrypt 校验后签发 UUID token |
 | `GET` | `/api/auth/me` | `Authorization: Bearer <token>` |
-| `POST` | `/api/auth/logout` | 删除内存 token |
+| `POST` | `/api/auth/logout` | 删除数据库会话 |
 
 工厂接口：
 
@@ -509,7 +510,11 @@ interface FactorySave {
 | 方法 | 路径 | 返回 |
 | --- | --- | --- |
 | `GET` | `/api/ai/health` | `{"status":"ok","service":"forgemind-ai"}` |
-| `POST` | `/api/ai/assistant` | `answer/source/note` 结构化响应 |
+| `GET` | `/api/ai/tools` | 版本化工具目录 |
+| `POST` | `/api/ai/assistant` | 调用本地 Ollama，返回 `answer/source/note/action` 结构化响应 |
+| `POST` | `/api/ai/assistant/stream` | 返回 NDJSON 增量文本和最终动作信封 |
+| `POST` | `/api/ai/asr` | Paraformer WAV 语音识别 |
+| `POST` | `/api/ai/tts` | BT TTS 代理，失败时回退 Sherpa VITS |
 
 请求模型：
 
@@ -523,7 +528,7 @@ interface FactorySave {
 }
 ```
 
-当前助手返回 `source: "stub"`，不会调用真实 LLM，也不会改变工厂对象或仿真状态。前端客户端为 `src/game/api.ts::askAssistant`，已经预留上下文参数和超时处理。
+助手优先调用本地 Ollama `qwen2.5:7b`，不可用时返回 `fallback`；服务端只做工具目录和基础参数校验，不直接改变工厂对象或仿真状态，前端执行层还会进行一次完整校验和确认门控。前端客户端为 `src/game/api.ts::askAssistant`，并支持流式回复。
 
 ### 13.2 设计边界
 
@@ -647,9 +652,10 @@ npm run dev
 
 访问 `http://localhost:5173`。没有后端时可以继续使用建造、物品、配方、仿真和本地 JSON 存档；登录接口会显示后端连接错误。
 
-### 17.2 启动 Spring Boot
+### 17.2 启动 MySQL 与 Spring Boot
 
 ```bash
+docker compose up -d mysql
 cd backend
 mvn package
 java -jar target/forgemind-backend-0.1.0.jar
@@ -683,22 +689,21 @@ py -3.10 -m venv .venv
 
 ### 已知边界
 
-- Spring Boot 认证 token 是内存态，重启失效。
+- MySQL 使用 Docker 持久卷；删除 `forgemind_mysql_data` 会清空开发数据。
 - AI FastAPI 当前只返回 stub，未接真实 LLM。
 - 离线语音助手是独立 Python 程序，未接入网页工作区。
-- 本地存档解析器的对象类型白名单需要扩展到完整设备目录。
+- 本地和后端存档校验均覆盖当前完整设备目录；新增设备类型时仍需同步更新前后端白名单和回归样例。
 - 机器多输出配方的数据结构已支持，但运行时下游路由仍使用第一个输出。
 - A-01 中部分 KPI 是演示读数，不等同于仿真统计。
 - 4060 Laptop 与 5 GiB LLM 同时运行的长时间稳定性仍需实机认证。
 
 ### 推荐演进顺序
 
-1. 修复存档版本校验，支持全部 `BuildType` 并加入迁移函数。
-2. 将后端存档从单文件 JSON 升级为带用户/工厂归属的持久化存储。
-3. 为 AI 增加 action schema、副本仿真、差异报告和用户确认流程。
-4. 将语音助手改造成异步服务，并与 AI 助手共用安全命令协议。
-5. 增加自动化浏览器验收、显存采样、温度采样和 LLM 并行压力测试。
-6. 在模型资产不变的前提下评估 HLOD、WebGPU 和离线纹理压缩。
+1. 补充工厂成员邀请、角色权限和多工厂选择 API。
+2. 为 AI 增加 action schema、副本仿真、差异报告和用户确认流程。
+3. 将语音助手改造成异步服务，并与 AI 助手共用安全命令协议。
+4. 增加自动化浏览器验收、显存采样、温度采样和 LLM 并行压力测试。
+5. 在模型资产不变的前提下评估 HLOD、WebGPU 和离线纹理压缩。
 
 ## 19. 代码索引
 
@@ -720,8 +725,7 @@ py -3.10 -m venv .venv
 | `src/scene/EquipmentModel.tsx` | 设备模型映射、加载和程序化回退 |
 | `src/scene/PandaArmModel.tsx` | Panda URDF、IK、自动/手动控制 |
 | `backend/src/main/java/com/forgemind/web/` | 认证和工厂 REST 控制器 |
-| `ai-service/main.py` | FastAPI AI 服务占位 |
+| `ai-service/main.py` | FastAPI AI/ASR/TTS 编排服务 |
 | `voice-chat/voice_chat.py` | 本地 ASR/LLM/TTS 语音闭环 |
 | `scripts/sim-regression.ts` | 仿真回归测试 |
 | `scripts/base-a01-check.ts` | A-01 布局和 300 秒生产闭环检查 |
-

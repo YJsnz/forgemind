@@ -25,7 +25,6 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   castShadows = true,
   suppressPanda = false,
   suppressConveyor = false,
-  suppressInspectionImports = false,
   onClick,
 }: {
   obj: FactoryObject
@@ -39,7 +38,6 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   castShadows?: boolean
   suppressPanda?: boolean
   suppressConveyor?: boolean
-  suppressInspectionImports?: boolean
   onClick: (id: string) => void
 }) {
   const def = OBJECT_DEFS[obj.type]
@@ -86,7 +84,7 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
     >
       {isMachine ? (
         <>
-        {!suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} suppressInspectionImports={suppressInspectionImports} />}
+        {!suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />}
           {/* 状态色底座（显示机器状态，模型上方不遮挡） */}
           <mesh position={[0, 0.025, 0]} receiveShadow>
             <boxGeometry args={[fp.w, 0.04, fp.d]} />
@@ -102,9 +100,9 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
           </mesh>
         </>
       ) : def.role === 'conveyor' || def.role === 'storage' ? (
-        !suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} suppressInspectionImports={suppressInspectionImports} />
+        !suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
       ) : (
-        !suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} suppressInspectionImports={suppressInspectionImports} />
+        !suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
       )}
 
       {suppressEquipmentModel && obj.type === 'press' && (

@@ -20,10 +20,9 @@ interface EquipmentModelProps {
   castShadows?: boolean
   suppressPanda?: boolean
   suppressConveyor?: boolean
-  suppressInspectionImports?: boolean
 }
 
-export function EquipmentModel({ type, color, accent, height, active = false, runtime, sourceRuntime, conveyorCorner = false, conveyorCornerInput = 'left', castShadows = true, suppressPanda = false, suppressConveyor = false, suppressInspectionImports = false }: EquipmentModelProps) {
+export function EquipmentModel({ type, color, accent, height, active = false, runtime, sourceRuntime, conveyorCorner = false, conveyorCornerInput = 'left', castShadows = true, suppressPanda = false, suppressConveyor = false }: EquipmentModelProps) {
   switch (type) {
     case 'machine':
       return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/industrial/realvirtual_high_detail.glb" targetFootprint={1.3} targetHeight={height} /></Suspense>
@@ -38,7 +37,7 @@ export function EquipmentModel({ type, color, accent, height, active = false, ru
     case 'assembler':
       return <ImportedAssemblyCell targetFootprint={2.6} targetHeight={height} active={runtime?.state === 'loading' || runtime?.state === 'processing' || runtime?.state === 'output'} />
     case 'inspection':
-      return <Suspense fallback={<InspectionCell color={color} accent={accent} />}><ImportedInspectionCell color={color} accent={accent} targetFootprint={1.8} targetHeight={height} castShadows={castShadows} suppressImports={suppressInspectionImports} /></Suspense>
+      return <Suspense fallback={<InspectionCell color={color} accent={accent} />}><ImportedInspectionCell accent={accent} castShadows={castShadows} /></Suspense>
     case 'washing':
       return <Suspense fallback={<WashCell color={color} accent={accent} runtime={runtime} />}><DetailedAsset path="/models/industrial/wash_deburr_detail.glb" targetFootprint={1.7} targetHeight={height} accent={accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="wash" /></Suspense>
     case 'agv':
@@ -318,15 +317,64 @@ function WorkcellPlinth() {
   </group>
 }
 
-function ImportedInspectionCell({ color, accent, targetFootprint, targetHeight, castShadows, suppressImports }: { color: string; accent: string; targetFootprint: number; targetHeight: number; castShadows: boolean; suppressImports: boolean }) {
+function ImportedInspectionCell({ accent, castShadows }: { accent: string; castShadows: boolean; color?: string; targetFootprint?: number; targetHeight?: number; suppressImports?: boolean }) {
+  return <InspectionDualArmCell accent={accent} castShadows={castShadows} />
+}
+
+/** 主工厂中的视觉质检结构：左侧夹取、右侧小型摄像头臂，货物位于两臂之间。 */
+function InspectionDualArmCell({ accent, castShadows }: { accent: string; castShadows: boolean }) {
   return <group>
-    <InspectionCell color={color} accent={accent} />
-    {!suppressImports && <group position={[0, 0.04, 0]}>
-      <ImportedModel path="/models/industrial/sensor_pack.glb" targetFootprint={targetFootprint * 0.72} targetHeight={targetHeight * 0.66} castShadows={castShadows} />
-      <group position={[0.62, 0, -0.3]}>
-        <ImportedModel path="/models/industrial/control_cabinet.glb" targetFootprint={targetFootprint * 0.26} targetHeight={targetHeight * 0.72} castShadows={castShadows} />
-      </group>
-    </group>}
+    <mesh position={[0, 0.07, 0]} castShadow={castShadows} receiveShadow>
+      <boxGeometry args={[1.9, 0.14, 1.9]} />
+      <meshStandardMaterial color="#53615e" roughness={0.68} metalness={0.4} />
+    </mesh>
+    <mesh position={[0, 0.145, 0]} receiveShadow>
+      <boxGeometry args={[1.72, 0.018, 1.72]} />
+      <meshStandardMaterial color="#b7c2bd" roughness={0.52} metalness={0.32} />
+    </mesh>
+    <mesh position={[0, 0.16, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <ringGeometry args={[0.48, 0.51, 32]} />
+      <meshBasicMaterial color={accent} transparent opacity={0.82} />
+    </mesh>
+
+    <group position={[-0.42, 0.16, 0.16]}>
+      <PandaArmModel active={false} castShadows={castShadows} />
+      <mesh position={[0.17, 0.88, 0.05]} castShadow={castShadows}>
+        <boxGeometry args={[0.13, 0.08, 0.15]} />
+        <meshStandardMaterial color="#c98b4b" roughness={0.72} />
+      </mesh>
+    </group>
+
+    <group position={[0.42, 0.16, -0.16]} scale={0.74}>
+      <PandaArmModel active={false} castShadows={castShadows} />
+      <CameraHead accent={accent} position={[0.17, 0.91, 0.02]} />
+    </group>
+
+    <mesh position={[-0.72, 0.42, 0.58]} castShadow={castShadows}>
+      <boxGeometry args={[0.22, 0.62, 0.18]} />
+      <meshStandardMaterial color="#2d3735" roughness={0.48} metalness={0.68} />
+    </mesh>
+    <mesh position={[-0.72, 0.54, 0.675]}>
+      <planeGeometry args={[0.13, 0.13]} />
+      <meshStandardMaterial color="#142322" emissive={accent} emissiveIntensity={0.36} />
+    </mesh>
+  </group>
+}
+
+function CameraHead({ accent, position }: { accent: string; position: [number, number, number] }) {
+  return <group position={position}>
+    <mesh castShadow>
+      <boxGeometry args={[0.12, 0.1, 0.16]} />
+      <meshStandardMaterial color="#252d2f" roughness={0.34} metalness={0.72} />
+    </mesh>
+    <mesh position={[0, 0, -0.095]} rotation={[Math.PI / 2, 0, 0]}>
+      <cylinderGeometry args={[0.045, 0.045, 0.035, 20]} />
+      <meshStandardMaterial color="#111719" roughness={0.16} metalness={0.86} />
+    </mesh>
+    <mesh position={[0, 0, -0.116]} rotation={[Math.PI / 2, 0, 0]}>
+      <torusGeometry args={[0.045, 0.009, 8, 24]} />
+      <meshBasicMaterial color={accent} />
+    </mesh>
   </group>
 }
 
@@ -402,8 +450,6 @@ useGLTF.preload('/models/industrial/robot_cell.glb')
 useGLTF.preload('/models/industrial/roller_conveyor.glb')
 useGLTF.preload('/models/industrial/roller_conveyor_segment.glb')
 useGLTF.preload('/models/industrial/safety_fence.glb')
-useGLTF.preload('/models/industrial/control_cabinet.glb')
-useGLTF.preload('/models/industrial/sensor_pack.glb')
 useGLTF.preload('/models/industrial/hydraulic_press_detail.glb')
 useGLTF.preload('/models/industrial/wash_deburr_detail.glb')
 useGLTF.preload('/models/industrial/pallet_buffer_detail.glb')

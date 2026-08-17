@@ -39,9 +39,13 @@ function frameToBase64(width: number, height: number, pixels: Uint8Array): strin
  */
 export async function runInspection(): Promise<void> {
   const frame = inspectionRegistry.frame
-  if (!frame) return
   const emit = (json: VisionResult) => {
+    inspectionRegistry.lastVerdict = json.verdict === 'pass' ? 'pass' : json.verdict === 'fail' ? 'fail' : 'error'
     window.dispatchEvent(new CustomEvent('forgemind:inspection-result', { detail: json }))
+  }
+  if (!frame) {
+    emit({ verdict: 'error', defects: [], confidence: 0, note: '相机画面尚未就绪' })
+    return
   }
   try {
     const res = await fetch(VISION_URL, {
@@ -54,7 +58,6 @@ export async function runInspection(): Promise<void> {
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const json = (await res.json()) as VisionResult
-    inspectionRegistry.lastVerdict = json.verdict === 'fail' ? 'fail' : json.verdict === 'pass' ? 'pass' : null
     emit(json)
   } catch {
     emit({ verdict: 'error', defects: [], confidence: 0, note: 'AI 服务不可用' })

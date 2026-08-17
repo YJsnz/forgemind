@@ -137,7 +137,7 @@ LLM 通过工具调用产出「控制意图」。定义如下动作库：
 
 ### 4.4 ai-service 编排接口（8000）
 
-`ai-service/main.py` 目前是 stub（`POST /api/ai/assistant`，返回占位）。集成方实现为：
+`ai-service/main.py` 已提供本地 Ollama 编排（`POST /api/ai/assistant`，并支持 `/api/ai/assistant/stream`）。集成方应继续遵循当前版本化工具协议，不直接复用本节早期的动作字段：
 
 ```
 POST /api/ai/assistant

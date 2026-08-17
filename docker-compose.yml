@@ -1,0 +1,23 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: forgemind-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: forgemind
+      MYSQL_USER: forgemind
+      MYSQL_PASSWORD: forgemind
+      MYSQL_ROOT_PASSWORD: forgemind-root
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - forgemind_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  forgemind_mysql_data:

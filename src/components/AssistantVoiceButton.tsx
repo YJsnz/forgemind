@@ -1,6 +1,13 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { dispatchAssistantState, requestAssistant } from '../game/assistantRuntime'
-import { startAssistantRecorder, transcribeAssistantWav } from '../game/assistantVoice'
+import {
+  ASSISTANT_WAKE_WORD,
+  removeAssistantWakeWord,
+  startAssistantRecorder,
+  startKeywordWakeListener,
+  transcribeAssistantWav,
+  type KeywordWakeListener,
+} from '../game/assistantVoice'
 
 interface RecorderHandle {
   stop: () => Promise<Blob>
@@ -9,29 +16,123 @@ interface RecorderHandle {
 export function AssistantVoiceButton() {
   const [recording, setRecording] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [wakeEnabled, setWakeEnabled] = useState(false)
   const recorderRef = useRef<RecorderHandle | null>(null)
+  const wakeRef = useRef<KeywordWakeListener | null>(null)
+  const recordingRef = useRef(false)
+  const busyRef = useRef(false)
+  const wakeTriggeredRef = useRef(false)
+  const wakeAutoEnabledRef = useRef(true)
+  const autoStopRef = useRef<number | null>(null)
 
-  const toggle = async () => {
-    if (busy) return
-    if (recording) {
-      setRecording(false)
-      setBusy(true)
+  const setBusyState = (next: boolean) => {
+    busyRef.current = next
+    setBusy(next)
+  }
+
+  const stopWake = async () => {
+    const listener = wakeRef.current
+    wakeRef.current = null
+    setWakeEnabled(false)
+    if (listener) await listener.stop()
+  }
+
+  const finishRecording = async () => {
+    if (!recordingRef.current) return
+    recordingRef.current = false
+    setRecording(false)
+    setBusyState(true)
+    try {
+      const recorder = recorderRef.current
+      recorderRef.current = null
+      if (!recorder) return
+      const text = await transcribeAssistantWav(await recorder.stop())
+      await requestAssistant(text)
+    } catch (error) {
+      dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })
+    } finally {
+      setBusyState(false)
+      await rearmWake()
+    }
+  }
+
+  const handleWake = async (transcript: string) => {
+    if (wakeTriggeredRef.current || recordingRef.current || busyRef.current) return
+    wakeTriggeredRef.current = true
+    await stopWake()
+    const command = removeAssistantWakeWord(transcript)
+    if (command) {
+      setBusyState(true)
+      dispatchAssistantState({ phase: 'thinking', message: '已唤醒，正在处理指令' })
       try {
-        const recorder = recorderRef.current
-        recorderRef.current = null
-        if (!recorder) return
-        const text = await transcribeAssistantWav(await recorder.stop())
-        await requestAssistant(text)
+        await requestAssistant(command)
       } catch (error) {
         dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })
       } finally {
-        setBusy(false)
+        setBusyState(false)
+        await rearmWake()
       }
       return
     }
 
     try {
       recorderRef.current = await startAssistantRecorder()
+      recordingRef.current = true
+      setRecording(true)
+      dispatchAssistantState({ phase: 'listening', message: `已唤醒，请说出指令（${ASSISTANT_WAKE_WORD}）` })
+      autoStopRef.current = window.setTimeout(() => { void finishRecording() }, 5000)
+    } catch (error) {
+      dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })
+      await rearmWake()
+    }
+  }
+
+  const enableWake = async () => {
+    try {
+      wakeTriggeredRef.current = false
+      const listener = await startKeywordWakeListener((transcript) => handleWake(transcript))
+      wakeRef.current = listener
+      setWakeEnabled(true)
+      dispatchAssistantState({ phase: 'idle', message: `等待唤醒词：${ASSISTANT_WAKE_WORD}` })
+    } catch (error) {
+      const message = readableVoiceError(error)
+      dispatchAssistantState({
+        phase: message === '麦克风权限未开启' ? 'idle' : 'error',
+        message: message === '麦克风权限未开启' ? '请允许麦克风，关键字唤醒将自动开启' : message,
+      })
+    }
+  }
+
+  const toggleWake = async () => {
+    if (recording || busy) return
+    if (wakeEnabled) {
+      wakeAutoEnabledRef.current = false
+      await stopWake()
+      dispatchAssistantState({ phase: 'idle', message: '关键字唤醒已关闭' })
+      return
+    }
+    wakeAutoEnabledRef.current = true
+    await enableWake()
+  }
+
+  const rearmWake = async () => {
+    if (!wakeAutoEnabledRef.current || wakeRef.current || recordingRef.current || busyRef.current) return
+    await enableWake()
+  }
+
+  const toggle = async () => {
+    if (busy) return
+    if (recording) {
+      if (autoStopRef.current !== null) window.clearTimeout(autoStopRef.current)
+      autoStopRef.current = null
+      await finishRecording()
+      return
+    }
+
+    try {
+      if (wakeEnabled) await stopWake()
+      recorderRef.current = await startAssistantRecorder()
+      recordingRef.current = true
       setRecording(true)
       dispatchAssistantState({ phase: 'listening', message: '正在接收语音输入' })
     } catch (error) {
@@ -39,17 +140,38 @@ export function AssistantVoiceButton() {
     }
   }
 
+  // 默认开启；浏览器首次访问麦克风时会先请求用户授权。
+  useEffect(() => {
+    void enableWake()
+    return () => {
+      if (autoStopRef.current !== null) window.clearTimeout(autoStopRef.current)
+      void wakeRef.current?.stop()
+    }
+  }, [])
+
   return (
-    <button
-      className={`fm-assistant-mic ${recording ? 'is-recording' : ''} ${busy ? 'is-busy' : ''}`}
-      type="button"
-      onClick={() => void toggle()}
-      aria-label={recording ? '结束语音输入' : '开始语音输入'}
-      title={recording ? '结束语音输入' : '开始语音输入'}
-    >
-      <span>{recording ? '■' : '◉'}</span>
-      <small>{recording ? '结束' : '语音'}</small>
-    </button>
+    <div className="fm-assistant-controls">
+      <button
+        className={`fm-assistant-mic ${recording ? 'is-recording' : ''} ${busy ? 'is-busy' : ''}`}
+        type="button"
+        onClick={() => void toggle()}
+        aria-label={recording ? '结束语音输入' : '开始语音输入'}
+        title={recording ? '结束语音输入' : '开始语音输入'}
+      >
+        <span>{recording ? '■' : '◉'}</span>
+        <small>{recording ? '结束' : '语音'}</small>
+      </button>
+      <button
+        className={`fm-assistant-wake ${wakeEnabled ? 'is-enabled' : ''} ${busy ? 'is-busy' : ''}`}
+        type="button"
+        onClick={() => void toggleWake()}
+        aria-label={wakeEnabled ? `关闭${ASSISTANT_WAKE_WORD}关键字唤醒` : `开启${ASSISTANT_WAKE_WORD}关键字唤醒`}
+        title={wakeEnabled ? `关闭${ASSISTANT_WAKE_WORD}关键字唤醒` : `开启${ASSISTANT_WAKE_WORD}关键字唤醒`}
+      >
+        <span>⌁</span>
+        <small>{wakeEnabled ? '已启用' : '唤醒'}</small>
+      </button>
+    </div>
   )
 }
 

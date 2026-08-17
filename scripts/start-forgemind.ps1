@@ -4,7 +4,8 @@ param(
     [switch]$SkipSpring,
     [switch]$IncludeVoiceChat,
     [switch]$NoBrowser,
-    [switch]$ForceRebuild
+    [switch]$ForceRebuild,
+    [switch]$SkipMySql
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,14 +14,41 @@ $aiPath = Join-Path $rootPath 'ai-service'
 $voicePath = Join-Path $rootPath 'voice-chat'
 $btPath = if ($env:FORGEMIND_BT_TTS_ROOT) { $env:FORGEMIND_BT_TTS_ROOT } else { 'D:\local\bt7274-space' }
 $ollamaModelsPath = if ($env:FORGEMIND_OLLAMA_MODELS) { $env:FORGEMIND_OLLAMA_MODELS } else { 'D:\local\ollama\models' }
+$ollamaModel = if ($env:FORGEMIND_OLLAMA_MODEL) { $env:FORGEMIND_OLLAMA_MODEL } else { 'qwen2.5:7b' }
+$composeFile = Join-Path $rootPath 'docker-compose.yml'
 
 function Test-LocalPort([int]$port) {
-    return [bool](Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $async = $client.BeginConnect('127.0.0.1', $port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne(500)) { return $false }
+        $client.EndConnect($async)
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $client.Dispose()
+    }
 }
 
 function Wait-LocalPort([int]$port, [int]$seconds = 30) {
     for ($index = 0; $index -lt $seconds; $index++) {
         if (Test-LocalPort $port) { return $true }
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
+function Get-MySqlHealth([string]$dockerPath) {
+    if (-not $dockerPath) { return $null }
+    $status = & $dockerPath inspect --format '{{.State.Health.Status}}' forgemind-mysql 2>$null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return ($status | Out-String).Trim()
+}
+
+function Wait-MySqlHealthy([string]$dockerPath, [int]$seconds = 60) {
+    for ($index = 0; $index -lt $seconds; $index++) {
+        if ((Get-MySqlHealth $dockerPath) -eq 'healthy') { return $true }
         Start-Sleep -Seconds 1
     }
     return $false
@@ -46,25 +74,83 @@ function Resolve-Executable([string[]]$Candidates) {
     return $null
 }
 
+function Test-PythonExecutable([string]$Candidate) {
+    if (-not $Candidate -or -not (Test-Path -LiteralPath $Candidate)) { return $false }
+    try {
+        & $Candidate -c 'import sys; print(sys.version_info[:2])' 1>$null 2>$null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    }
+}
+
+function Resolve-PythonExecutable([string[]]$Candidates) {
+    foreach ($candidate in $Candidates) {
+        if ($candidate -and (Test-PythonExecutable $candidate)) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+    return $null
+}
+
+function Test-OllamaModel([string]$Model) {
+    try {
+        $tags = Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 5
+        $prefix = "$Model" + ':'
+        return @($tags.models | Where-Object { $_.name -eq $Model -or $_.name.StartsWith($prefix) }).Count -gt 0
+    } catch {
+        return $false
+    }
+}
+
+function Stop-OllamaServer {
+    foreach ($process in @(Get-Process -Name 'ollama', 'ollama app' -ErrorAction SilentlyContinue)) {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    }
+    for ($index = 0; $index -lt 15; $index++) {
+        if (-not (Test-LocalPort 11434)) { return $true }
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
 function Wait-OllamaModel {
-    $warmBody = @{ model = 'qwen2.5:7b'; messages = @(); stream = $false; keep_alive = '30m' } | ConvertTo-Json -Compress
+    $warmBody = @{ model = $ollamaModel; messages = @(); stream = $false; keep_alive = '30m' } | ConvertTo-Json -Compress
     try {
         Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/chat' -Method Post -ContentType 'application/json' -Body $warmBody -TimeoutSec 120 | Out-Null
         return $true
     } catch {
-        Write-Warning "Qwen 预热失败：$($_.Exception.Message)"
+        Write-Warning "$ollamaModel 预热失败：$($_.Exception.Message)"
         return $false
     }
 }
 
 Write-Host 'ForgeMind 一键启动' -ForegroundColor Cyan
 Write-Host "项目目录: $rootPath"
+$startSpring = -not $SkipSpring
 
-$pythonPath = Resolve-Executable @(
+if (-not $SkipMySql -and $startSpring) {
+    $dockerPath = (Get-Command docker.exe -ErrorAction SilentlyContinue).Source
+    if (-not $dockerPath) { throw '找不到 Docker CLI，请先启动 Docker Desktop，或使用 -SkipMySql。' }
+    if (-not (Test-Path -LiteralPath $composeFile)) { throw "找不到 Docker Compose 配置：$composeFile" }
+    Write-Host '[0/4] 启动 MySQL 容器...' -ForegroundColor Yellow
+    & $dockerPath compose -f $composeFile up -d mysql
+    if ($LASTEXITCODE -ne 0) { throw 'MySQL 容器启动失败，请检查 Docker Desktop。' }
+    if (-not (Wait-MySqlHealthy $dockerPath 60)) { throw 'MySQL 在 60 秒内没有进入 healthy 状态。' }
+    Write-Host 'MySQL 已就绪。' -ForegroundColor Green
+} elseif ($SkipMySql) {
+    Write-Host '[0/4] 跳过 MySQL（-SkipMySql）。' -ForegroundColor DarkGray
+} else {
+    Write-Host '[0/4] 跳过 MySQL（-SkipSpring）。' -ForegroundColor DarkGray
+}
+
+$pythonPath = Resolve-PythonExecutable @(
     (Join-Path $aiPath '.venv\Scripts\python.exe'),
     (Join-Path $voicePath 'venv\Scripts\python.exe')
 )
-if (-not $pythonPath) { throw '找不到 Python 3.10：请先创建 ai-service\.venv。' }
+if (-not $pythonPath) {
+    throw '找不到可运行的 Python 环境：请重新创建 ai-service\.venv（旧环境可能仍指向已卸载的 Python 3.10）。'
+}
 
 $vitePath = Resolve-Executable @(
     (Join-Path $rootPath 'node_modules\.bin\vite.cmd'),
@@ -79,16 +165,25 @@ $ollamaPath = Resolve-Executable @(
     (Get-Command ollama.exe -ErrorAction SilentlyContinue).Source
 )
 $env:OLLAMA_FLASH_ATTENTION = '1'
+$env:OLLAMA_MODELS = $ollamaModelsPath
 if (-not (Test-LocalPort 11434)) {
     if (-not $ollamaPath) { throw '找不到 Ollama，请安装 Ollama。' }
-    $env:OLLAMA_MODELS = $ollamaModelsPath
     Write-Host '[1/4] 启动 Ollama...' -ForegroundColor Yellow
     Start-Process -FilePath $ollamaPath -ArgumentList 'serve' -WorkingDirectory $rootPath -WindowStyle Normal | Out-Null
     if (-not (Wait-LocalPort 11434 45)) { throw 'Ollama 在 45 秒内没有监听 11434。' }
-} else { Write-Host '[1/4] Ollama 已运行，复用 11434。' -ForegroundColor DarkGray }
+} elseif (Test-OllamaModel $ollamaModel) {
+    Write-Host "[1/4] Ollama 已运行，复用 $ollamaModel。" -ForegroundColor DarkGray
+} elseif ((Test-Path -LiteralPath (Join-Path $ollamaModelsPath 'manifests')) -and $ollamaPath) {
+    Write-Warning "当前 Ollama 实例找不到 $ollamaModel，正在切换到 $ollamaModelsPath ..."
+    if (-not (Stop-OllamaServer)) { throw '无法停止当前 Ollama 服务，无法切换到项目模型目录。' }
+    Start-Process -FilePath $ollamaPath -ArgumentList 'serve' -WorkingDirectory $rootPath -WindowStyle Normal | Out-Null
+    if (-not (Wait-LocalPort 11434 45)) { throw '切换模型目录后 Ollama 在 45 秒内没有监听 11434。' }
+} else {
+    Write-Warning "Ollama 已运行，但未找到模型 $ollamaModel；请执行 ollama pull $ollamaModel，或检查 FORGEMIND_OLLAMA_MODELS。"
+}
 
-Write-Host '[1.5/4] 预热 Qwen2.5:7b（首次启动会占用几秒，完成后保持 GPU 常驻）...' -ForegroundColor Yellow
-if (Wait-OllamaModel) { Write-Host 'Qwen2.5:7b 已加载。' -ForegroundColor Green }
+Write-Host "[1.5/4] 预热 $ollamaModel（首次启动会占用几秒，完成后保持 GPU 常驻）..." -ForegroundColor Yellow
+if (Wait-OllamaModel) { Write-Host "$ollamaModel 已加载。" -ForegroundColor Green }
 
 $btPython = Resolve-Executable @(
     (Join-Path $btPath 'venv\Scripts\python.exe'),
@@ -105,15 +200,14 @@ if (-not (Test-LocalPort 8001)) {
     }
 } else { Write-Host '[2/4] BT-7274 TTS 已运行，复用 8001。' -ForegroundColor DarkGray }
 
-$aiPython = Resolve-Executable @((Join-Path $aiPath '.venv\Scripts\python.exe'))
-if (-not $aiPython) { throw '找不到 ai-service\.venv\Scripts\python.exe，请先安装 AI 服务依赖。' }
+$aiPython = Resolve-PythonExecutable @((Join-Path $aiPath '.venv\Scripts\python.exe'))
+if (-not $aiPython) { throw '找不到可运行的 ai-service\.venv\Scripts\python.exe，请重新创建虚拟环境并安装 AI 服务依赖。' }
 if (-not (Test-LocalPort 8000)) {
     Write-Host '[3/4] 启动 FastAPI AI 服务...' -ForegroundColor Yellow
     Start-VisibleCommand -Title 'ForgeMind - AI Service' -WorkingDirectory $aiPath -Executable $aiPython -Arguments '-m uvicorn main:app --host 127.0.0.1 --port 8000 --reload'
     if (-not (Wait-LocalPort 8000 30)) { throw 'AI 服务在 30 秒内没有监听 8000。' }
 } else { Write-Host '[3/4] AI 服务已运行，复用 8000。' -ForegroundColor DarkGray }
 
-$startSpring = -not $SkipSpring
 if ($startSpring -and -not (Test-LocalPort 8080)) {
     $jarPath = Join-Path $rootPath 'backend\target\forgemind-backend-0.1.0.jar'
     $javaPath = (Get-Command java.exe -ErrorAction SilentlyContinue).Source

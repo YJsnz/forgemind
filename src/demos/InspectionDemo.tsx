@@ -22,13 +22,14 @@ function InspectionDemo() {
         <span className="id-brand">FORGEMIND</span>
         <span className="id-title">视觉检测工作台 · DEMO / VISUAL INSPECTION</span>
         <span className="id-spacer" />
+        <a className="id-back" href="/">← 返回基地</a>
         <span className="id-hint">手柄或 WASD+鼠标 · 摄像头臂末端视角实时渲染</span>
       </header>
       <div className="id-body">
         <div className="id-stage">
           <Canvas
             shadows
-            camera={{ position: [target.x + 4, 4.5, target.z + 5.5], fov: 45, near: 0.1, far: 200 }}
+            camera={{ position: [target.x + 2.2, 2.5, target.z + 3.2], fov: 42, near: 0.1, far: 120 }}
             gl={{ antialias: true, powerPreference: 'high-performance' }}
           >
             <color attach="background" args={['#c4ceca']} />
