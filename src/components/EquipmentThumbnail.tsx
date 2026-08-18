@@ -13,6 +13,7 @@ const ATLAS_POSITION: Record<BuildType, [number, number]> = {
   splitter: [0, 2],
   merger: [1, 2],
   agv: [2, 2],
+  drone: [1, 3],
   storage: [3, 2],
   machine: [0, 3],
 }

@@ -41,7 +41,9 @@ export function EquipmentModel({ type, color, accent, height, active = false, ru
     case 'washing':
       return <Suspense fallback={<WashCell color={color} accent={accent} runtime={runtime} />}><DetailedAsset path="/models/industrial/wash_deburr_detail.glb" targetFootprint={1.7} targetHeight={height} accent={accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="wash" /></Suspense>
     case 'agv':
-      return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/forklift_agv.glb" targetFootprint={1.7} targetHeight={height} /></Suspense>
+      return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/forgecore/forgecore_agv.glb" targetFootprint={1.85} targetHeight={height} /></Suspense>
+    case 'drone':
+      return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/forgecore/forgecore_drone.glb" targetFootprint={2.25} targetHeight={height} /></Suspense>
     case 'storage':
       return <Suspense fallback={<Storage color={color} accent={accent} />}><DetailedAsset path="/models/industrial/pallet_buffer_detail.glb" targetFootprint={1.7} targetHeight={height} accent={accent} active={active} kind="storage" /></Suspense>
     case 'splitter':
@@ -444,7 +446,8 @@ function targetSignalHeight(kind: 'press' | 'wash' | 'storage' | 'flow') {
   return 0.67
 }
 
-useGLTF.preload('/models/forklift_agv.glb')
+useGLTF.preload('/models/forgecore/forgecore_agv.glb')
+useGLTF.preload('/models/forgecore/forgecore_drone.glb')
 useGLTF.preload('/models/industrial/cnc_machining_center.glb')
 useGLTF.preload('/models/industrial/robot_cell.glb')
 useGLTF.preload('/models/industrial/roller_conveyor.glb')

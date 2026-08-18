@@ -9,7 +9,7 @@ AI 驱动的智能工厂数字孪生设计与仿真平台。学习答辩项目�
 - **仿真内核**：纯 TS（`src/game/simulation.ts`），与 React/Three 解耦，是唯一真相源
 - **后端双栈**：
   - **Spring Boot 3 + MySQL 8.4**（Java 17，`backend/`）—— 用户、工厂结构、物品和配方持久化
-  - **FastAPI**（Python 3.10，`ai-service/`）—— 本地 Ollama AI 编排、工具协议、ASR/TTS 网关
+  - **FastAPI**（Python 3.10，`ai-service/`）—— DeepSeek / 本地 Ollama AI 编排、工具协议、ASR/TTS 网关
 
 ## 快速开始
 
@@ -62,8 +62,17 @@ cd ai-service && py -3.10 -m venv .venv && .venv/Scripts/pip install -r requirem
 
 - [原方案（67 节）](docs/AI%20驱动的智能工厂数字孪生设计与仿真平台项目方案(1).md)
 - [补充设计（权威，9 节）](docs/ForgeMind-补充设计.md)
+- [A-02 与 Generative Factory 设计文档](docs/ForgeMind-A02与Generative-Factory设计文档.md)
 - [功能模块技术文档（当前实现）](docs/ForgeMind-功能模块技术文档.md)
-- [黛玉渲染引擎技术文档](docs/daiyu-render-engine.md)
+- [宝钗渲染引擎技术文档](docs/daiyu-render-engine.md)
+- [黛玉智能工厂思考引擎技术文档](docs/daiyu-intelligence-engine.md)
+
+## 双引擎架构
+
+- **宝钗（Baochai）渲染引擎**：负责高精度模型、材质、动画、批处理、预热、运行时性能预算和三维场景呈现。
+- **黛玉（Daiyu）智能工厂思考引擎**：负责从生产需求和当前工厂状态中生成 Recipe Graph、设备配置、可接通布局、物流路线、仿真评估、诊断建议、What-if 和 ROI 方案。
+
+两套能力保持现有代码结构，通过工厂对象、布局和仿真快照协作。`src/engine/daiyu/` 等历史路径暂不改名，仅作为兼容标识；产品正式命名以本文档为准。
 
 ## 已实现功能（7 天）
 
@@ -76,6 +85,19 @@ cd ai-service && py -3.10 -m venv .venv && .venv/Scripts/pip install -r requirem
 | Day 5 | 传送带分段模型 + ItemLot 在途运输 + 头堵背压 + Source 产出 |
 | Day 6 | 利用率 / 在途 / 产出统计 + 终末地视觉打磨 |
 | Day 7 | 演示闭环 + 集成测试 + 修复 |
+
+## 当前增量状态（2026-08-18）
+
+- 新增主界面「生产控制台」（`flow` 视图）：提供工厂俯视地图、设备登记、四段物流流向、产出/消耗统计，以及仿真启动、暂停、倍率和重置操作。
+- 网页端语音入口已接入：浏览器麦克风 → 本地 Paraformer ASR → Ollama 智能管家 → BT TTS（Sherpa VITS 备用）；支持手动录音和 `BT` 关键字唤醒。
+- 智能管家已接入 `1.0.0` 工具协议。查询、定位和仿真控制可直接执行；重置仿真、修改配方和绑定来料需要用户确认，服务端与前端各做一次动作校验。
+- 设备详情面板完成信息分组和机器人工作区交互优化；页面切换、生产地图节点和语音状态加入 Anime.js 动效，并遵守 `prefers-reduced-motion`。
+- 新增 A-02 独立工厂场地与「AI 工厂诊断 / Generative Factory」闭环：自然语言需求 → Recipe Graph → 设备估算 → 端口路由 → 碰撞校验 → 副本仿真 → Top 3 方案；已有 A-01 会优先进入 Adjustment Engine，返回当前基线、最小重布线和完整重构三类候选，审核后再应用。
+- 生成器已支持产品 Profile：电机与齿轮箱使用不同物品、配方、终端成品和诊断目标；调整候选会显示改造差异、改造成本和 Pareto 等级。
+- Generative Factory 已升级为可迭代的生成调整引擎：自动估算并行设备、基于 Beam Search 迭代候选、What-if 对照 CNC / 装配 / AGV 变更，并在候选卡片显示 CAPEX、月度收益、回本期和 12 个月 ROI。
+- 生成器默认使用规则解析 + 本地仿真；AI 约束提取可通过 `FORGEMIND_LLM_PROVIDER=deepseek` 切换到 DeepSeek，未配置服务时自动降级，不把 API Key 暴露到浏览器。
+
+生产控制台中的「生产效率」当前仍是演示读数；设备利用率、在途物料、产出和消耗以仿真快照为准。
 
 ## 模型（高精度公模）
 
@@ -107,13 +129,15 @@ src/
 │  ├─ grid.ts / dir.ts / rng.ts / item.ts / save.ts / types.ts
 ├─ store/          # Zustand（低频 UI + 编辑 + 仿真快照）
 ├─ scene/          # Three.js 场景：画布、网格地面、对象、ItemLot、ghost、交互
-└─ components/     # UI 面板：建造/物品/配方/信息/仿真控制
+├─ components/     # UI 面板：建造/物品/配方/信息/生产控制台/语音入口
+└─ utils/          # UI 动效和无障碍降级工具
 ```
 
 ## 集成测试
 
 ```bash
 npm run sim:regression            # 完整回归：闭环 / 转弯 / 分流 / 汇流 / 头堵
+npm run generative:regression     # 生成布局 / 端口连接 / 副本仿真回归
 ```
 
 也可以单独运行快速检查：

@@ -185,6 +185,13 @@ function sourceTransferLifecycle(): void {
   assert(sawGridLot, 'source did not hand the item to the grid conveyor')
 }
 
+function longAdvance(): void {
+  const engine = new SimulationEngine(17)
+  engine.init([], [])
+  engine.advance(1800)
+  assert(Math.abs(engine.getSnapshot().timeSec - 1800) < 0.05, `长时仿真被截断为 ${engine.getSnapshot().timeSec}s`)
+}
+
 const cases: Array<[string, () => void]> = [
   ['基础闭环', closedLoop],
   ['90° 转弯线路', turningRoute],
@@ -195,6 +202,7 @@ const cases: Array<[string, () => void]> = [
 
 cases.push(['large-machine-middle-lanes', largeMachineMiddleLanes])
 cases.push(['source-transfer-lifecycle', sourceTransferLifecycle])
+cases.push(['long-advance-no-truncation', longAdvance])
 
 const passed = cases.filter(([name, fn]) => runCase(name, fn)).length
 console.log(`\n仿真回归：${passed}/${cases.length} 通过`)

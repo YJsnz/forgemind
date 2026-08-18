@@ -1,4 +1,4 @@
-import { isBuildType, type FactoryObject, type Rotation } from './types'
+import { isBuildType, type AgvProgram, type AgvRouteWaypoint, type FactoryObject, type Rotation } from './types'
 import type { Item, Recipe, RecipePort } from './item'
 
 /**
@@ -115,8 +115,30 @@ function parseObjects(v: unknown): FactoryObject[] {
       rotation: rotation as Rotation,
       recipeId: typeof x.recipeId === 'string' ? x.recipeId : undefined,
       itemId: typeof x.itemId === 'string' ? x.itemId : undefined,
+      agvProgram: parseAgvProgram(x.agvProgram),
     }
   })
+}
+
+function parseAgvProgram(value: unknown): AgvProgram | undefined {
+  if (!isRecord(value)) return undefined
+  const route = Array.isArray(value.route) ? value.route.flatMap((entry): AgvRouteWaypoint[] => {
+    if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.label !== 'string' || !isRecord(entry.position)) return []
+    if (!isFiniteNumber(entry.position.x) || !isFiniteNumber(entry.position.z)) return []
+    const action = entry.action === 'load' || entry.action === 'unload' || entry.action === 'pass' ? entry.action : 'pass'
+    return [{ id: entry.id, label: entry.label, objectId: typeof entry.objectId === 'string' ? entry.objectId : null, position: { x: entry.position.x, z: entry.position.z }, action }]
+  }) : undefined
+  const policy = value.policy === 'shortest' || value.policy === 'priority' || value.policy === 'balanced' ? value.policy : 'balanced'
+  return {
+    enabled: value.enabled === true,
+    sourceObjectId: typeof value.sourceObjectId === 'string' ? value.sourceObjectId : null,
+    destinationObjectId: typeof value.destinationObjectId === 'string' ? value.destinationObjectId : null,
+    itemId: typeof value.itemId === 'string' ? value.itemId : null,
+    loadQuantity: isFiniteNumber(value.loadQuantity) ? Math.max(1, Math.round(value.loadQuantity)) : 100,
+    route,
+    priority: isFiniteNumber(value.priority) ? Math.max(0, Math.min(9, Math.round(value.priority))) : 0,
+    policy,
+  }
 }
 
 function parseItems(v: unknown): Item[] {
@@ -140,6 +162,7 @@ function parseItems(v: unknown): Item[] {
       color: typeof x.color === 'string' ? x.color : '#4fc3f7',
       size: typeof x.size === 'number' ? x.size : 1,
       note: typeof x.note === 'string' ? x.note : undefined,
+      modelPath: typeof x.modelPath === 'string' ? x.modelPath : undefined,
     }
   })
 }

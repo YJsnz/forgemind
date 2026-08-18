@@ -135,6 +135,7 @@ function modelGlyph(type: BuildType): string {
     case 'inspection': return '◎'
     case 'washing': return '≋'
     case 'agv': return '▰'
+    case 'drone': return '◇'
     case 'conveyor': return '⇢'
     case 'splitter': return '⑂'
     case 'merger': return '⑃'

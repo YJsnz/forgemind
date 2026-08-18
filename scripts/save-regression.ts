@@ -18,6 +18,7 @@ assert.equal(roundTripped.objects.length, BASE_A01_OBJECTS.length)
 assert.deepEqual(new Set(roundTripped.objects.map((object) => object.type)), new Set<BuildType>([
   'source', 'oreMiner', 'agv', 'conveyor', 'smelter', 'press', 'washing',
   'machine', 'assembler', 'inspection', 'splitter', 'storage',
+  'drone',
 ]))
 
 const migrated = parseSave(serializeSave({ ...save, version: 1 }))

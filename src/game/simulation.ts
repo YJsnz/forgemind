@@ -1,8 +1,10 @@
-import { isTransportType, objectRole, type FactoryObject } from './types'
+import { isTransportType, objectRole, type AgvProgram, type AgvRouteAction, type AgvRouteWaypoint, type FactoryObject } from './types'
 import type { Recipe } from './item'
 import { mulberry32 } from './rng'
 import { rotationToDir, cellKey } from './dir'
-import { objectPortCell, objectPortCells, occupiedCells } from './grid'
+import { objectPortCell, objectPortCells, objectToWorld, occupiedCells } from './grid'
+import { agvDockCandidates, findAgvPath, type AgvDynamicObstacle, type AgvNavigationPoint } from './agvNavigation'
+import { WAREHOUSE_AGV_ROUTE } from './warehouse'
 
 /**
  * 仿真引擎（补充设计 §3 内核）—— 唯一真相源。
@@ -68,6 +70,7 @@ export interface SimulationSnapshot {
   machines: MachineRuntime[]
   sources: SourceRuntimeSnapshot[]
   itemLots: ItemLot[]
+  agvs: AgvRuntimeSnapshot[]
   stats: SimStats
 }
 
@@ -97,6 +100,59 @@ interface ConveyorRuntime {
   branchCursor: number
 }
 
+export type AgvPhase = 'to-warehouse' | 'to-line' | 'to-source' | 'to-destination'
+export type AgvMotionStatus = 'idle' | 'moving' | 'waiting'
+
+export interface AgvRuntimeSnapshot {
+  objectId: string
+  position: AgvNavigationPoint
+  headingY: number
+  phase: AgvPhase
+  motionStatus: AgvMotionStatus
+  path: AgvNavigationPoint[]
+  waypointIndex: number
+  cargoItemId: string | null
+  cargoQuantity: number
+  completedTrips: number
+  distanceTravelled: number
+  decision: AgvDecision
+  blockedSeconds: number
+  yieldCount: number
+  currentWaypointLabel: string
+}
+
+export type AgvDecision = 'idle' | 'moving' | 'yielding' | 'replanning' | 'recovering'
+
+interface AgvRuntime {
+  objectId: string
+  position: AgvNavigationPoint
+  headingY: number
+  phase: AgvPhase
+  motionStatus: AgvMotionStatus
+  path: AgvNavigationPoint[]
+  waypointIndex: number
+  routeIndex: number
+  cargoItemId: string | null
+  cargoQuantity: number
+  completedTrips: number
+  distanceTravelled: number
+  retryTimer: number
+  program: AgvProgram | null
+  decision: AgvDecision
+  blockedSeconds: number
+  yieldCount: number
+  currentWaypointLabel: string
+  pathMode: 'mission' | 'recovery' | 'yield'
+}
+
+interface AgvMissionTarget {
+  position: AgvNavigationPoint
+  candidates?: AgvNavigationPoint[]
+  kind: 'warehouse' | 'line-side' | 'source' | 'destination'
+  action: AgvRouteAction
+  label: string
+}
+
 export class SimulationEngine {
   readonly seed: number
   readonly rng: () => number
@@ -106,6 +162,7 @@ export class SimulationEngine {
 
   private machines = new Map<string, MachineRuntime>()
   private conveyors = new Map<string, ConveyorRuntime>()
+  private agvs = new Map<string, AgvRuntime>()
   private sources = new Map<string, SourceRuntime>()
   private recipes = new Map<string, Recipe>()
   /** cellKey -> FactoryObject（用于查下游） */
@@ -115,6 +172,7 @@ export class SimulationEngine {
 
   private stats: SimStats = { consumed: {}, produced: {} }
   private lotCounter = 0
+  private factoryObjects: FactoryObject[] = []
 
   constructor(seed: number) {
     this.seed = seed >>> 0
@@ -128,11 +186,13 @@ export class SimulationEngine {
     this.stats = { consumed: {}, produced: {} }
     this.machines.clear()
     this.conveyors.clear()
+    this.agvs.clear()
     this.sources.clear()
     this.recipes.clear()
     this.objectByCell.clear()
     this.objectById.clear()
     this.lotCounter = 0
+    this.factoryObjects = objects
 
     for (const r of recipes) this.recipes.set(r.id, r)
 
@@ -150,7 +210,9 @@ export class SimulationEngine {
           inputBuffer: {},
           processingTime: 0,
         })
-      } else if (isTransportType(o.type)) {
+      } else if (o.type === 'agv') {
+        this.agvs.set(o.id, createAgvRuntime(o))
+      } else if (isTransportType(o.type) && o.type !== 'drone') {
         this.conveyors.set(o.id, { objectId: o.id, lot: null, branchCursor: 0 })
       } else if (objectRole(o.type) === 'source') {
         this.sources.set(o.id, {
@@ -162,17 +224,18 @@ export class SimulationEngine {
         })
       }
     }
+
+    for (const runtime of this.agvs.values()) this.planAgvPath(runtime)
   }
 
   advance(dtSec: number): void {
     if (dtSec <= 0) return
     this.accumulator += dtSec
-    let guard = 0
-    while (this.accumulator >= SIM_STEP && guard < 1000) {
+    const steps = Math.floor(this.accumulator / SIM_STEP)
+    for (let index = 0; index < steps; index += 1) {
       this.step(SIM_STEP)
-      this.accumulator -= SIM_STEP
-      guard++
     }
+    this.accumulator -= steps * SIM_STEP
   }
 
   private step(dt: number): void {
@@ -180,6 +243,7 @@ export class SimulationEngine {
     this.stepSources(dt)
     this.stepConveyors(dt)
     this.stepMachines(dt)
+    this.stepAgvs(dt)
   }
 
   // —— Source：定时产出到下游 ——
@@ -455,6 +519,255 @@ export class SimulationEngine {
     }
   }
 
+  private stepAgvs(dt: number): void {
+    for (const runtime of [...this.agvs.values()].sort((left, right) => left.objectId.localeCompare(right.objectId))) {
+      const mission = this.agvMission(runtime)
+      if (mission.length === 0) {
+        runtime.path = []
+        runtime.waypointIndex = 0
+        runtime.motionStatus = 'idle'
+        runtime.decision = 'idle'
+        runtime.currentWaypointLabel = '任务已停用'
+        continue
+      }
+
+      runtime.retryTimer = Math.max(0, runtime.retryTimer - dt)
+      if (runtime.path.length === 0) {
+        runtime.motionStatus = 'waiting'
+        runtime.decision = runtime.blockedSeconds > 0 ? 'replanning' : 'yielding'
+        if (runtime.retryTimer > 0) continue
+        if (this.planAgvPath(runtime)) {
+          runtime.motionStatus = 'moving'
+          runtime.decision = 'moving'
+        } else {
+          runtime.retryTimer = runtime.blockedSeconds > 2.5 ? 1.2 : 0.5
+        }
+        continue
+      }
+
+      if (runtime.waypointIndex >= runtime.path.length) {
+        if (runtime.pathMode === 'recovery') {
+          runtime.path = []
+          runtime.waypointIndex = 0
+          runtime.pathMode = 'mission'
+          runtime.blockedSeconds = 0
+          runtime.decision = 'replanning'
+          continue
+        }
+        if (runtime.pathMode === 'yield') {
+          runtime.path = []
+          runtime.waypointIndex = 0
+          runtime.pathMode = 'mission'
+          runtime.blockedSeconds = 0
+          runtime.retryTimer = 0.35
+          runtime.motionStatus = 'waiting'
+          runtime.decision = 'yielding'
+          continue
+        }
+        const arrivedTarget = mission[runtime.routeIndex % mission.length]
+        this.applyAgvArrival(runtime, arrivedTarget)
+        runtime.routeIndex = (runtime.routeIndex + 1) % mission.length
+        runtime.path = []
+        runtime.waypointIndex = 0
+        runtime.motionStatus = 'waiting'
+        runtime.blockedSeconds = 0
+        runtime.decision = 'moving'
+        continue
+      }
+
+      const target = runtime.path[runtime.waypointIndex]
+      const dx = target.x - runtime.position.x
+      const dz = target.z - runtime.position.z
+      const distance = Math.hypot(dx, dz)
+      const travel = Math.min(distance, AGV_SPEED * dt)
+      const nextPosition = distance <= 0.0001 || travel >= distance
+        ? target
+        : { x: runtime.position.x + dx / distance * travel, z: runtime.position.z + dz / distance * travel }
+      const blocker = this.blockingAgv(runtime, nextPosition)
+      if (blocker) {
+        const yielding = this.shouldYield(runtime, blocker)
+        if (yielding && runtime.decision !== 'yielding' && runtime.decision !== 'replanning') runtime.yieldCount += 1
+        runtime.blockedSeconds += dt
+        runtime.motionStatus = 'waiting'
+        runtime.decision = yielding ? (runtime.blockedSeconds >= 0.8 ? 'replanning' : 'yielding') : 'replanning'
+        if (runtime.retryTimer <= 0) {
+          if (yielding && runtime.blockedSeconds >= 0.45) {
+            const yieldPath = this.planYieldPath(runtime, blocker)
+            if (yieldPath) {
+              runtime.path = yieldPath
+              runtime.waypointIndex = 1
+              runtime.pathMode = 'yield'
+              runtime.retryTimer = 0
+              runtime.decision = 'yielding'
+            } else {
+              runtime.retryTimer = 0.35
+            }
+          } else if (runtime.blockedSeconds >= 3) {
+            const escapePath = this.planEscapePath(runtime, blocker)
+            if (escapePath) {
+              runtime.path = escapePath
+              runtime.waypointIndex = 1
+              runtime.pathMode = 'recovery'
+              runtime.retryTimer = 0
+              runtime.decision = 'recovering'
+            } else {
+              runtime.path = []
+              runtime.waypointIndex = 0
+              runtime.retryTimer = 1.25
+              runtime.decision = 'recovering'
+            }
+          } else {
+            // The right-of-way vehicle keeps its current mission path. The
+            // yielding vehicle is responsible for backing out of the conflict
+            // zone; clearing both paths here creates a mutual replanning deadlock.
+            runtime.retryTimer = 0.25
+          }
+        }
+        continue
+      }
+
+      runtime.blockedSeconds = 0
+      if (distance <= 0.0001 || travel >= distance) {
+        runtime.position = { ...target }
+        runtime.waypointIndex += 1
+        runtime.distanceTravelled += distance
+      } else {
+        runtime.position = {
+          x: runtime.position.x + dx / distance * travel,
+          z: runtime.position.z + dz / distance * travel,
+        }
+        runtime.distanceTravelled += travel
+      }
+      if (distance > 0.0001) runtime.headingY = Math.atan2(dz, dx)
+      runtime.motionStatus = 'moving'
+      runtime.decision = 'moving'
+    }
+  }
+
+  private planAgvPath(runtime: AgvRuntime): boolean {
+    const mission = this.agvMission(runtime)
+    if (mission.length === 0) return false
+    const target = mission[runtime.routeIndex % mission.length]
+    const nextPath = (target.candidates ?? [target.position])
+      .map((candidate) => findAgvPath(this.factoryObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime)))
+      .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1))
+    if (!nextPath || nextPath.length <= 1) return false
+    runtime.path = nextPath
+    runtime.waypointIndex = 1
+    runtime.pathMode = 'mission'
+    runtime.phase = target.kind === 'warehouse' ? 'to-warehouse' : target.kind === 'line-side' ? 'to-line' : target.kind === 'source' ? 'to-source' : 'to-destination'
+    runtime.currentWaypointLabel = target.label
+    runtime.retryTimer = 0
+    return true
+  }
+
+  private agvMission(runtime: AgvRuntime): AgvMissionTarget[] {
+    const program = runtime.program
+    if (program && !program.enabled) return []
+    const source = program?.sourceObjectId ? this.objectById.get(program.sourceObjectId) : undefined
+    const destination = program?.destinationObjectId ? this.objectById.get(program.destinationObjectId) : undefined
+    if (program?.enabled && source && destination) {
+      const configuredRoute = program.route?.filter((waypoint) => waypoint.position && waypoint.action)
+      if (configuredRoute && configuredRoute.length >= 2) return configuredRoute.map((waypoint) => this.missionTargetFromWaypoint(waypoint))
+      return [
+        this.missionTargetFromWaypoint({ id: 'source', label: '起点装货', objectId: source.id, position: agvDockCandidates(source)[0], action: 'load' }),
+        this.missionTargetFromWaypoint({ id: 'destination', label: '终点卸货', objectId: destination.id, position: agvDockCandidates(destination)[0], action: 'unload' }),
+      ]
+    }
+    return WAREHOUSE_AGV_ROUTE.map((point, index) => ({
+      position: point.position,
+      kind: point.kind,
+      action: point.kind === 'warehouse' ? 'load' : 'unload',
+      label: point.label,
+      ...(index === 0 ? { candidates: [point.position] } : {}),
+    }))
+  }
+
+  private missionTargetFromWaypoint(waypoint: AgvRouteWaypoint): AgvMissionTarget {
+    const object = waypoint.objectId ? this.objectById.get(waypoint.objectId) : undefined
+    const candidates = object ? agvDockCandidates(object) : undefined
+    return {
+      position: candidates?.[0] ?? waypoint.position,
+      candidates,
+      kind: waypoint.action === 'load' ? 'source' : waypoint.action === 'unload' ? 'destination' : 'line-side',
+      action: waypoint.action,
+      label: waypoint.label,
+    }
+  }
+
+  private applyAgvArrival(runtime: AgvRuntime, target: AgvMissionTarget) {
+    if (target.action === 'load') {
+      runtime.cargoItemId = runtime.program?.itemId ?? 'item_steel_blank'
+      runtime.cargoQuantity = runtime.program?.loadQuantity ?? 100
+    } else if (target.action === 'unload') {
+      if (runtime.cargoQuantity > 0) runtime.completedTrips += 1
+      runtime.cargoItemId = null
+      runtime.cargoQuantity = 0
+    }
+  }
+
+  private dynamicObstaclesFor(runtime: AgvRuntime): AgvDynamicObstacle[] {
+    const obstacles: AgvDynamicObstacle[] = []
+    for (const other of this.agvs.values()) {
+      if (other.objectId === runtime.objectId || other.motionStatus === 'idle') continue
+      obstacles.push({ position: other.position, radius: 0.1 })
+      const next = other.path[other.waypointIndex]
+      if (next) obstacles.push({ position: next, radius: 0.1 })
+    }
+    return obstacles
+  }
+
+  private blockingAgv(runtime: AgvRuntime, position: AgvNavigationPoint): AgvRuntime | undefined {
+    return [...this.agvs.values()]
+      .filter((other) => other.objectId !== runtime.objectId && other.motionStatus !== 'idle')
+      .find((other) => Math.hypot(other.position.x - position.x, other.position.z - position.z) < 1.55)
+  }
+
+  private planEscapePath(runtime: AgvRuntime, blocker: AgvRuntime): AgvNavigationPoint[] | null {
+    const awayX = Math.sign(runtime.position.x - blocker.position.x) || 1
+    const awayZ = Math.sign(runtime.position.z - blocker.position.z) || 1
+    const candidates = [
+      { x: runtime.position.x + awayX * 3, z: runtime.position.z },
+      { x: runtime.position.x, z: runtime.position.z + awayZ * 3 },
+      { x: runtime.position.x - awayX * 3, z: runtime.position.z },
+      { x: runtime.position.x, z: runtime.position.z - awayZ * 3 },
+    ]
+    return candidates
+      .map((candidate) => findAgvPath(this.factoryObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime)))
+      .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1)) ?? null
+  }
+
+  private planYieldPath(runtime: AgvRuntime, blocker: AgvRuntime): AgvNavigationPoint[] | null {
+    const next = runtime.path[runtime.waypointIndex]
+    const moveX = (next ? Math.sign(next.x - runtime.position.x) : 0) || Math.sign(runtime.position.x - blocker.position.x) || 1
+    const moveZ = (next ? Math.sign(next.z - runtime.position.z) : 0) || Math.sign(runtime.position.z - blocker.position.z) || 0
+    const away = { x: -moveX, z: -moveZ }
+    const targets = [
+      ...runtime.path
+        .slice(0, runtime.waypointIndex)
+        .reverse()
+        .filter((point) => Math.hypot(point.x - runtime.position.x, point.z - runtime.position.z) > 0.8),
+      { x: runtime.position.x + away.x * 2, z: runtime.position.z + away.z * 2 },
+      { x: runtime.position.x + away.x * 3, z: runtime.position.z + away.z * 3 },
+      { x: runtime.position.x + away.z * 2, z: runtime.position.z - away.x * 2 },
+      { x: runtime.position.x - away.z * 2, z: runtime.position.z + away.x * 2 },
+    ]
+    const dynamicObstacles = this.dynamicObstaclesFor(runtime)
+    return targets
+      .filter((target) => Math.hypot(target.x - blocker.position.x, target.z - blocker.position.z) >= 1.8)
+      .map((target) => findAgvPath(this.factoryObjects, runtime.position, target, runtime.objectId, dynamicObstacles))
+      .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1)) ?? null
+  }
+
+  private shouldYield(runtime: AgvRuntime, blocker: AgvRuntime) {
+    // Priority is explicit, while trip count provides aging: a vehicle that
+    // has already completed more work gives way to a waiting vehicle instead
+    // of monopolising a shared dock forever.
+    const priority = (runtime.program?.priority ?? 0) * 100 - runtime.completedTrips
+    const blockerPriority = (blocker.program?.priority ?? 0) * 100 - blocker.completedTrips
+    return priority < blockerPriority || (priority === blockerPriority && runtime.objectId > blocker.objectId)
+  }
+
   /** A transfer is valid only when the upstream output faces the downstream input. */
   private isConnected(upstream: FactoryObject, downstream: FactoryObject): boolean {
     const inputCells = objectPortCells(downstream, 'input')
@@ -490,10 +803,55 @@ export class SimulationEngine {
         progress: s.transferTimer > 0 ? Math.min(s.transferTimer / SOURCE_TRANSFER_TIME, 1) : 0,
       })),
       itemLots: lots,
+      agvs: Array.from(this.agvs.values()).map((runtime) => ({
+        objectId: runtime.objectId,
+        position: { ...runtime.position },
+        headingY: runtime.headingY,
+        phase: runtime.phase,
+        motionStatus: runtime.motionStatus,
+        path: runtime.path.map((point) => ({ ...point })),
+        waypointIndex: runtime.waypointIndex,
+        cargoItemId: runtime.cargoItemId,
+        cargoQuantity: runtime.cargoQuantity,
+        completedTrips: runtime.completedTrips,
+        distanceTravelled: runtime.distanceTravelled,
+        decision: runtime.decision,
+        blockedSeconds: runtime.blockedSeconds,
+        yieldCount: runtime.yieldCount,
+        currentWaypointLabel: runtime.currentWaypointLabel,
+      })),
       stats: {
         consumed: { ...this.stats.consumed },
         produced: { ...this.stats.produced },
       },
     }
+  }
+}
+
+const AGV_SPEED = 2.2
+
+function createAgvRuntime(object: FactoryObject): AgvRuntime {
+  const position = objectToWorld(object)
+  const direction = rotationToDir(object.rotation)
+  return {
+    objectId: object.id,
+    position,
+    headingY: Math.atan2(direction.dz, direction.dx),
+    phase: 'to-warehouse',
+    motionStatus: 'waiting',
+    path: [],
+    waypointIndex: 0,
+    routeIndex: 0,
+    cargoItemId: null,
+    cargoQuantity: 0,
+    completedTrips: 0,
+    distanceTravelled: 0,
+    retryTimer: 0,
+    program: object.agvProgram ? { ...object.agvProgram } : null,
+    decision: 'idle',
+    blockedSeconds: 0,
+    yieldCount: 0,
+    currentWaypointLabel: '待规划',
+    pathMode: 'mission',
   }
 }

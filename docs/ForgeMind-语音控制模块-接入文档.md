@@ -2,13 +2,13 @@
 
 > **实现更新（协议 1.0.0）：** 当前权威动作目录已迁移到 `contracts/forgemind-assistant-tools.json`，安全校验与执行说明见《ForgeMind-智能管家工具协议》。`ai-service` 已接入本地 Ollama `qwen2.5:7b`；本文 §4 的 `line_id:int`、单线调速和单机暂停是早期设计，尚无当前仿真内核支持，不应直接用于执行。
 
-> 给集成方的完整接口契约。模块已具备：本地 LLM、语音识别（ASR）、BT-7274 语音合成（TTS）、中文→结构化控制意图的工具调用。集成方需要：把「意图→动作」接到仿真执行层，并在 ai-service 里编排。
+> 当前实现接入文档。模块已具备：本地 LLM、语音识别（ASR）、BT-7274 语音合成（TTS）、中文→结构化控制意图的工具调用，以及网页端手动录音/`BT` 关键字唤醒。动作由 `contracts/forgemind-assistant-tools.json` 定义，前端执行层负责二次校验、确认和写回。
 
 ## 0. 一句话架构
 
 ```
 前端/调用方
-  └─(HTTP)→ ai-service(端口8000, 待集成方实现编排)          ← 编排中枢
+  └─(HTTP)→ ai-service(端口8000)                           ← 编排中枢
               ├─→ Ollama qwen2.5:7b (11434)  本地LLM，输出文本或结构化动作
               ├─→ BT-7274 TTS (8001)         Bert-VITS2，中文语音合成
               └─→ sherpa ASR (可复用 voice_chat.py 的 transcribe)
@@ -24,7 +24,7 @@
 |---|---|---|---|---|
 | Ollama (LLM) | 11434 | `start_voice_demo.bat` 或手动 | `OLLAMA_MODELS=D:\local\ollama\models` | 独立（Ollama 自带） |
 | BT-7274 TTS | 8001 | `cd D:\local\bt7274-space && venv\Scripts\python bt_tts_server.py` | `D:\local\bt7274-space` | `D:\local\bt7274-space\venv` |
-| ai-service (编排) | 8000 | 见 §5，待集成方实现 | `D:\Code\factory\ai-service` | 需自行建 venv（Python 3.10） |
+| ai-service (编排) | 8000 | 见 §5，已实现 | `D:\Code\factory\ai-service` | 需自行建 venv（Python 3.10） |
 | 语音助手(参考) | — | `cd D:\Code\factory\voice-chat && venv\Scripts\python voice_chat.py` | `D:\Code\factory\voice-chat` | `D:\Code\factory\voice-chat\venv` |
 
 **一键启动**：`D:\Code\factory\voice-chat\start_voice_demo.bat`（自动起 Ollama + BT TTS + 语音助手）。
@@ -45,7 +45,7 @@
   "model": "qwen2.5:7b",
   "messages": [
     {"role": "system", "content": "你是机甲AI BT-7274…（见 §6 系统提示）"},
-    {"role": "user", "content": "把3号产线速度调到80%"}
+    {"role": "user", "content": "把仿真速度调到 2 倍"}
   ],
   "stream": true,
   "options": {"num_predict": 100}
@@ -63,7 +63,7 @@
 标准 OpenAI tools 格式，定义动作库 schema（§4）。模型会返回 `message.tool_calls`：
 ```json
 {"message": {"role": "assistant", "tool_calls": [
-  {"function": {"name": "control_factory", "arguments": "{\"action\":\"set_conveyor_speed\",\"line_id\":3,\"speed\":80}"}}
+  {"function": {"name": "set_simulation_speed", "arguments": "{\"speed\":2}"}}
 ]}}
 ```
 
@@ -96,19 +96,24 @@ FastAPI，CPU 推理，模型常驻内存。
 
 ---
 
-## 4. 控制层契约（集成方要实现的核心）
+## 4. 控制层契约（当前实现）
 
 LLM 通过工具调用产出「控制意图」。定义如下动作库：
 
-### 4.1 动作库（action enum）
+### 4.1 当前动作库
 
-| action | 参数 | 说明 |
+权威目录是 `contracts/forgemind-assistant-tools.json`，协议版本为 `1.0.0`。当前实现支持：
+
+| name | 风险/确认 | 说明 |
 |---|---|---|
-| `set_conveyor_speed` | `line_id:int, speed:number(0-100)` | 调整产线/传送带速度 |
-| `pause_machine` | `machine_id:int` | 暂停设备 |
-| `resume_machine` | `machine_id:int` | 恢复设备 |
-| `change_recipe` | `machine_id:int, recipe:string` | 切换配方 |
-| `query_status` | `target?:string` | 查询状态（只读，无副作用） |
+| `query_factory_status` | 只读 / 否 | 查询仿真时间、运行状态、在途物料和产出 |
+| `inspect_object` | 只读 / 否 | 读取指定对象配置和运行态 |
+| `select_object` | 可逆 / 否 | 在界面中定位对象 |
+| `set_simulation_running` | 可逆 / 否 | 启动或暂停全局仿真 |
+| `set_simulation_speed` | 可逆 / 否 | 设置 0.1–4 倍仿真倍率 |
+| `reset_simulation` | 运行态破坏 / 是 | 清空运行进度并重建仿真 |
+| `change_machine_recipe` | 配置变更 / 是 | 修改机器配方绑定 |
+| `bind_source_item` | 配置变更 / 是 | 修改来料站产出物品绑定 |
 
 工具 schema（传给 Ollama 的 `tools` 字段）建议**扁平化**（扁平结构模型输出更准，见 §2.2 教训）。
 
@@ -117,44 +122,43 @@ LLM 通过工具调用产出「控制意图」。定义如下动作库：
 每次调用需把仿真当前状态序列化成 JSON 放进 `messages`（作为 user/system 上下文），LLM 才有依据：
 ```json
 {
-  "factory": {
-    "objects": [{"id":"obj_1","type":"conveyor","pos":{"x":0,"z":0},"rotation":0}],
-    "lines": [{"id":"line_3","speed":80,"status":"running"}],
-    "machines": [{"id":"m_2","recipe":"冲压壳体","status":"running"}],
-    "stats": {"throughput": 120, "backpressure": 0.02}
-  }
+  "protocolVersion": "1.0.0",
+  "simulation": {"running": true, "speed": 1, "timeSec": 120, "inTransit": 2,
+    "consumed": {"item_blank": 8}, "produced": {"item_motor": 6}},
+  "objects": [{"id":"obj_1","type":"conveyor","role":"conveyor",
+    "pos":{"x":0,"z":0},"rotation":0,"recipeId":null,"itemId":null}],
+  "items": [], "recipes": []
 }
 ```
-> 真实结构对应 `src/game/save.ts` 的 `FactorySave`。集成方负责把前端/后端的真相源序列化成这个扁平结构。
+> 真实结构对应 `src/game/assistantProtocol.ts` 的 `FactoryAssistantContext`，不是 `FactorySave` 的直接替代品；上下文由前端从当前 store 和仿真快照生成。
 
-### 4.3 校验 + 副本仿真（§8.1 红线，必须做）
+### 4.3 校验与执行边界
 
 执行动作前：
-1. **枚举校验**：action 必须在 §4.1 枚举内。
-2. **参数校验**：`speed ∈ [0,100]`；`line_id/machine_id` 必须存在（对照状态上下文）。
-3. **副本仿真回算**（可选但推荐）：克隆状态、推进 N 帧，确认吞吐提升/无异常才真正执行；负增益则拒绝并回退。
-4. **拒绝时**：给用户自然语言解释（如「3号产线不存在，当前只有 1、2 号」），用 BT 语音播报。
+1. **协议校验**：工具调用必须是版本 `1.0.0` 的 JSON 对象，名称必须在权威目录内。
+2. **参数和引用校验**：前后端均检查字段集合、类型、对象 ID、对象角色，以及 recipe/item 引用是否存在。
+3. **确认门控**：重置仿真、修改配方和绑定来料在前端执行前进入待确认状态。
+4. **执行写回**：通过 `src/game/assistantExecutor.ts` 调用 Zustand actions，配置变更会触发仿真重建。
+5. **后续增强**：副本仿真回算、吞吐差异报告和负增益回退尚未实现，不能在当前接口上宣称已具备优化验证能力。
 
 ### 4.4 ai-service 编排接口（8000）
 
-`ai-service/main.py` 已提供本地 Ollama 编排（`POST /api/ai/assistant`，并支持 `/api/ai/assistant/stream`）。集成方应继续遵循当前版本化工具协议，不直接复用本节早期的动作字段：
+`ai-service/main.py` 已提供本地 Ollama 编排（`POST /api/ai/assistant`，并支持 `/api/ai/assistant/stream`）。调用方应遵循当前版本化工具协议，不直接复用本节早期的动作字段：
 
 ```
 POST /api/ai/assistant
-请求: {"question": "把3号产线速度调到80%", "context": {<工厂状态快照>}}
+请求: {"question": "现在工厂运行情况怎么样？", "context": {<工厂状态快照>}}
 响应: {
-  "answer": "收到，已调到80%。",          // 给用户的自然语言（可送 TTS）
+  "answer": "工厂运行中，在途物料 2 件，累计产出 6 件。", // 给用户的自然语言
   "source": "llm",
-  "action": {"action":"set_conveyor_speed","line_id":3,"speed":80},  // 执行器要消费的动作
-  "validated": true
+  "protocolVersion": "1.0.0",
+  "action": {"protocolVersion":"1.0.0","name":"query_factory_status","arguments":{}},
+  "validated": true,
+  "requiresConfirmation": false
 }
 ```
 
-可选扩展（语音入口）：
-```
-POST /api/ai/voice        // multipart 或 raw wav(16k mono) → 先 ASR 再走 /assistant
-POST /api/ai/asr          // raw wav(16k float32 mono) → {"text": "..."}  // ASR 参考代码见 §7
-```
+语音入口由网页端先调用 `POST /api/ai/asr`，再调用 `/api/ai/assistant/stream`；播报调用 `POST /api/ai/tts`。当前没有 `/api/ai/voice` 聚合接口。
 
 ---
 
@@ -190,11 +194,11 @@ POST /api/ai/asr          // raw wav(16k float32 mono) → {"text": "..."}  // A
 你：系统检测到传送带异常，建议排查。
 用户：介绍一下你自己
 你：我是BT七二七四，你的机甲AI，随时待命。
-用户：把3号产线速度调到80%
-你：收到，已调到80%。
+用户：把仿真速度调到 2 倍
+你：收到，仿真倍率已设为 2。
 ```
 
-> 控制场景建议再加一句：`当你需要执行动作时，调用 control_factory 工具返回结构化动作，并同时用一句话向驾驶员播报结果。`
+> 控制场景建议再加一句：`当你需要执行动作时，只能调用 contracts/forgemind-assistant-tools.json 中的工具；不要编造工具名或参数。需要确认的动作先向驾驶员说明并等待确认。`
 
 ---
 
@@ -215,7 +219,7 @@ POST /api/ai/asr          // raw wav(16k float32 mono) → {"text": "..."}  // A
 - 合成核心 `bt_tts.synth_array(text, **kw) -> (np.ndarray, 44100)`。
 
 ### 7.3 前端现有接入点 `D:\Code\factory\src\game\api.ts`
-已有 `askAssistant(question, context)` 调 `http://localhost:8000/api/ai/assistant`（带 2.5s 超时）。集成方只需让 ai-service 的这个接口返回 §4.4 的契约即可，前端不用大改。
+`src/game/api.ts` 提供 `askAssistant` 和 `streamAssistant`，后者消费 NDJSON 增量文本和最终动作信封。`src/game/assistantVoice.ts` 负责浏览器录音、16 kHz WAV 编码、ASR 与 `BT` 唤醒；`src/game/assistantRuntime.ts` 负责短句 TTS 队列和动作执行。
 
 ---
 
@@ -225,15 +229,15 @@ POST /api/ai/asr          // raw wav(16k float32 mono) → {"text": "..."}  // A
 `source | conveyor | splitter | merger | machine | smelter | press | assembler | inspection | washing | agv | storage`
 
 实体 `FactoryObject { id, type, pos, rotation, recipeId?, itemId? }`。
-机器类设备有 `recipeId`（可换配方）、`throughput`（可调速）、`status`（可暂停/恢复）。
-传送带类有速度概念。动作库 §4.1 就是按这些可控制面设计的。
+当前执行器实际支持查询/定位、仿真启停、倍率、重置、机器配方绑定和 source 物品绑定；不支持本节早期设计中的单线调速、单机暂停/恢复、`line_id` 或 `machine_id` 动作。动作库必须以 §4.1 和 JSON 合约为准。
 
 ---
 
-## 9. 集成自检清单（验收标准）
+## 9. 集成自检清单（当前状态）
 
-- [ ] ai-service `POST /api/ai/assistant` 返回 §4.4 契约，`action` 结构稳定
-- [ ] 所有动作经过枚举/参数/存在性校验，非法输入被拒绝并给出自然语言解释
-- [ ] 前端发"把3号产线速度调到80%" → 仿真里真实生效（或副本仿真回算通过后生效）
-- [ ] BT TTS 能播报结果，英文缩写（BT/AGV）能读成中文
-- [ ] 三个服务可被 `start_voice_demo.bat` 一键拉起
+- [x] ai-service `POST /api/ai/assistant` 和 `/stream` 返回 1.0.0 契约，`action` 结构稳定
+- [x] 所有动作经过服务端和前端的协议/参数/存在性校验，非法输入被拒绝并给出自然语言解释
+- [x] 网页端支持手动录音、`BT` 关键字唤醒、ASR、流式回答和 TTS 播放
+- [x] BT TTS 能播报结果；不可用时由 FastAPI 尝试回退本地 Sherpa VITS
+- [x] 三个服务可被 `start_voice_demo.bat` 一键拉起；网页端仍需浏览器麦克风授权
+- [ ] 副本仿真回算、吞吐差异报告和优化建议自动回退

@@ -156,10 +156,19 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
 
 export function getConveyorLinks(obj: FactoryObject, objects: FactoryObject[]) {
   const sharesCell = (cells: { x: number; z: number }[], target: { x: number; z: number }[]) => cells.some((a) => target.some((b) => a.x === b.x && a.z === b.z))
-  const incoming = objects.find((other) => other.id !== obj.id && sharesCell(objectPortCells(other, 'output'), objectPortCells(obj, 'input')))
-  const outgoing = objects.find((other) => other.id !== obj.id && sharesCell(objectPortCells(obj, 'output'), occupiedCells(other)))
-  const incomingConveyor = objects.find((other) => other.id !== obj.id && other.type === 'conveyor' && sharesCell(objectPortCells(other, 'output'), objectPortCells(obj, 'input')))
-  const outgoingConveyor = objects.find((other) => other.id !== obj.id && other.type === 'conveyor' && sharesCell(objectPortCells(obj, 'output'), occupiedCells(other)))
+  const isConnected = (upstream: FactoryObject, downstream: FactoryObject) => {
+    const inputCells = objectPortCells(downstream, 'input')
+    return sharesCell(objectPortCells(upstream, 'output'), occupiedCells(downstream))
+      && (inputCells.length === 0 || sharesCell(occupiedCells(upstream), inputCells))
+  }
+  // A belt is placed on the upstream output cell. Therefore the visual link
+  // must compare that output with the belt footprint, not with its external
+  // input marker. The latter is one cell further upstream and made every
+  // valid generated segment look disconnected.
+  const incoming = objects.find((other) => other.id !== obj.id && isConnected(other, obj))
+  const outgoing = objects.find((other) => other.id !== obj.id && isConnected(obj, other))
+  const incomingConveyor = objects.find((other) => other.id !== obj.id && other.type === 'conveyor' && isConnected(other, obj))
+  const outgoingConveyor = objects.find((other) => other.id !== obj.id && other.type === 'conveyor' && isConnected(obj, other))
   const directionBetween = (from: FactoryObject, to: FactoryObject) => ({
     dx: Math.sign(to.pos.x - from.pos.x),
     dz: Math.sign(to.pos.z - from.pos.z),

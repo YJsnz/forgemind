@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { animateIfAllowed } from '../utils/animeMotion'
 import { dispatchAssistantState, requestAssistant } from '../game/assistantRuntime'
 import {
   ASSISTANT_WAKE_WORD,
@@ -24,6 +25,7 @@ export function AssistantVoiceButton() {
   const wakeTriggeredRef = useRef(false)
   const wakeAutoEnabledRef = useRef(true)
   const autoStopRef = useRef<number | null>(null)
+  const controlsRef = useRef<HTMLDivElement>(null)
 
   const setBusyState = (next: boolean) => {
     busyRef.current = next
@@ -149,8 +151,21 @@ export function AssistantVoiceButton() {
     }
   }, [])
 
+  useEffect(() => {
+    const controls = controlsRef.current
+    if (!controls || (!recording && !wakeEnabled)) return
+    const activeButton = controls.querySelector<HTMLElement>(recording ? '.fm-assistant-mic' : '.fm-assistant-wake')
+    if (!activeButton) return
+    const animation = animateIfAllowed(activeButton, {
+      scale: [0.94, 1.06, 1],
+      duration: 420,
+      ease: 'out(3)',
+    })
+    return () => { animation?.cancel() }
+  }, [recording, wakeEnabled, busy])
+
   return (
-    <div className="fm-assistant-controls">
+    <div ref={controlsRef} className="fm-assistant-controls">
       <button
         className={`fm-assistant-mic ${recording ? 'is-recording' : ''} ${busy ? 'is-busy' : ''}`}
         type="button"

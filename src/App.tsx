@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { stagger } from 'animejs'
 import { FactoryCanvas, type FactoryView } from './scene/FactoryCanvas'
 import { BuildMenu } from './components/BuildMenu'
 import { InfoPanel } from './components/InfoPanel'
@@ -11,8 +12,16 @@ import { isMachineType, isTransportType, objectRole } from './game/types'
 import { AssistantOrb } from './components/AssistantOrb'
 import { AssistantRuntime } from './components/AssistantRuntime'
 import { AssistantVoiceButton } from './components/AssistantVoiceButton'
+import { ProductionWorkspace } from './components/ProductionWorkspace'
+import { ProductionRouteWorkspace } from './components/ProductionRouteWorkspace'
+import { WarehouseWorkspace } from './components/WarehouseWorkspace'
+import { GenerativeFactoryWorkspace } from './components/GenerativeFactoryWorkspace'
+import type { FactoryId } from './store/forgeMind'
 import { ForgeMindIntro } from './components/ForgeMindIntro'
 import './forgemind-intro.css'
+import './production.css'
+import './generative.css'
+import { animateIfAllowed } from './utils/animeMotion'
 
 const VIEW_META: Record<FactoryView, { code: string; label: string; title: string; description: string }> = {
   overview: {
@@ -46,6 +55,13 @@ const VIEW_ORDER: FactoryView[] = ['overview', 'build', 'flow', 'diagnostics']
 function App() {
   const [portalOpen, setPortalOpen] = useState(true)
   const [view, setView] = useState<FactoryView>('overview')
+  const [auxPanel, setAuxPanel] = useState<'productionRoute' | 'warehouse' | null>(null)
+  const [topMenu, setTopMenu] = useState<'help' | 'settings' | 'user' | null>(null)
+  const [showViewportTools, setShowViewportTools] = useState(true)
+  const [showInterfaceHints, setShowInterfaceHints] = useState(true)
+  const [reducedMotion, setReducedMotion] = useState(false)
+  const shellRef = useRef<HTMLDivElement>(null)
+  const topActionsRef = useRef<HTMLDivElement>(null)
   const objects = useForgeMindStore((s) => s.objects)
   const items = useForgeMindStore((s) => s.items)
   const recipes = useForgeMindStore((s) => s.recipes)
@@ -57,6 +73,8 @@ function App() {
   const setBuildType = useForgeMindStore((s) => s.setBuildType)
   const undo = useForgeMindStore((s) => s.undo)
   const redo = useForgeMindStore((s) => s.redo)
+  const factoryId = useForgeMindStore((s) => s.factoryId)
+  const setFactory = useForgeMindStore((s) => s.setFactory)
 
   const phase = useAuthStore((s) => s.phase)
   const user = useAuthStore((s) => s.user)
@@ -65,7 +83,20 @@ function App() {
 
   const changeView = (next: FactoryView) => {
     setView(next)
+    setAuxPanel(null)
     if (next !== 'build') setBuildType(null)
+  }
+
+  const changeFactory = (next: FactoryId) => {
+    setFactory(next)
+    setAuxPanel(null)
+    setBuildType(null)
+  }
+
+  const handleLogout = () => {
+    setTopMenu(null)
+    setAuxPanel(null)
+    void logout()
   }
 
   // 挂载时用本地 token 续登（无 token 则停留在电梯舱）
@@ -88,6 +119,8 @@ function App() {
 
       if (event.key === 'Escape') {
         event.preventDefault()
+        setTopMenu(null)
+        setAuxPanel(null)
         setBuildType(null)
         if (view !== 'overview') setView('overview')
         return
@@ -110,6 +143,44 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [redo, setBuildType, undo, view])
 
+  useEffect(() => {
+    if (!topMenu) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (target && !topActionsRef.current?.contains(target)) setTopMenu(null)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [topMenu])
+
+  useEffect(() => {
+    if (portalOpen || phase !== 'factory') return
+    const shell = shellRef.current
+    if (!shell) return
+    // Keep transform-based layout rules out of this batch. In particular, the
+    // dock uses translateX(-50%) for centering and should not be rewritten by
+    // a generic translateY entrance animation.
+    const surfaces = shell.querySelectorAll<HTMLElement>('.fm-viewport-header, .fm-viewport-tools, .fm-viewport-footer, .fm-production-workspace, .fm-route-workspace, .fm-warehouse-workspace')
+    const animation = animateIfAllowed(surfaces, {
+      opacity: [0, 1],
+      translateY: [6, 0],
+      delay: stagger(35, { start: 40 }),
+      duration: 380,
+      ease: 'out(4)',
+    })
+    const dock = shell.querySelector<HTMLElement>('.fm-dock-cluster')
+    const dockAnimation = dock && animateIfAllowed(dock, {
+      opacity: [0, 1],
+      delay: 140,
+      duration: 260,
+      ease: 'out(3)',
+    })
+    return () => {
+      animation?.cancel()
+      dockAnimation?.cancel()
+    }
+  }, [phase, portalOpen, view])
+
   const counts = useMemo(() => ({
     machines: objects.filter((o) => isMachineType(o.type)).length,
     conveyors: objects.filter((o) => isTransportType(o.type)).length,
@@ -117,7 +188,7 @@ function App() {
   }), [objects])
 
   const meta = VIEW_META[view]
-  const activeTool = buildType ? '建造工具已启用' : '浏览与选择'
+  const activeTool = auxPanel === 'productionRoute' ? '生产路线工作区已打开' : auxPanel === 'warehouse' ? '仓储工作区已打开' : buildType ? '建造工具已启用' : '浏览与选择'
 
   if (portalOpen) {
     return <ForgeMindIntro onEnterWorkspace={() => setPortalOpen(false)} />
@@ -134,7 +205,7 @@ function App() {
   }
 
   return (
-    <div className="fm-shell">
+    <div ref={shellRef} className="fm-shell" data-reduced-motion={reducedMotion ? 'true' : 'false'}>
       <SimulationRunner />
       <AssistantRuntime />
 
@@ -145,39 +216,82 @@ function App() {
           </div>
           <div>
             <img className="fm-brand-wordmark" src="/brand/forgemind-wordmark.png" alt="FORGEMIND" />
-            <div className="fm-brand-sub">DIGITAL FACTORY / 01</div>
+            <div className="fm-brand-sub">DIGITAL FACTORY / {factoryId.toUpperCase()}</div>
           </div>
         </div>
 
         <div className="fm-facility-status">
           <span className="fm-live-dot" />
-          <span>基地 A-01</span>
+          <div className="fm-facility-switcher" aria-label="工厂场地切换">
+            {(['a01', 'a02'] as FactoryId[]).map((id) => <button key={id} type="button" className={factoryId === id ? 'is-active' : ''} onClick={() => changeFactory(id)}><b>{id.toUpperCase()}</b><small>{id === 'a01' ? 'LIVE LINE' : 'AI LAB'}</small></button>)}
+          </div>
           <span className="fm-status-divider" />
-          <span className="fm-muted">数字孪生已同步</span>
+          <span className="fm-muted">{factoryId === 'a01' ? '数字孪生已同步' : '生成实验场已就绪'}</span>
         </div>
 
-        <nav className="fm-view-switcher" aria-label="视角切换">
-          {VIEW_ORDER.map((key) => {
-            const item = VIEW_META[key]
-            return (
-              <button
-                key={key}
-                className={`fm-view-tab ${view === key ? 'is-active' : ''}`}
-                   onClick={() => changeView(key)}
-                aria-pressed={view === key}
-              >
-                <span className="fm-view-code">{item.code}</span>
-                <span>{item.label}</span>
-              </button>
-            )
-          })}
-        </nav>
+        <div ref={topActionsRef} className="fm-top-actions">
+          <button
+            type="button"
+            className={`fm-icon-button ${topMenu === 'help' ? 'is-active' : ''}`}
+            title="帮助"
+            aria-label="打开帮助"
+            aria-expanded={topMenu === 'help'}
+            onClick={() => setTopMenu(topMenu === 'help' ? null : 'help')}
+          >?</button>
+          <button
+            type="button"
+            className={`fm-icon-button ${topMenu === 'settings' ? 'is-active' : ''}`}
+            title="设置"
+            aria-label="打开设置"
+            aria-expanded={topMenu === 'settings'}
+            onClick={() => setTopMenu(topMenu === 'settings' ? null : 'settings')}
+          >⚙</button>
+          <button
+            type="button"
+            className={`fm-user-chip ${topMenu === 'user' ? 'is-active' : ''}`}
+            aria-label="打开操作员菜单"
+            aria-expanded={topMenu === 'user'}
+            onClick={() => setTopMenu(topMenu === 'user' ? null : 'user')}
+          >
+            <span /> {user ? user.toUpperCase() : 'OPERATOR'} <b aria-hidden="true">⌄</b>
+          </button>
+          <button type="button" className="fm-icon-button" title="登出" aria-label="退出登录" onClick={handleLogout}>⏻</button>
 
-        <div className="fm-top-actions">
-          <button className="fm-icon-button" title="帮助">?</button>
-          <button className="fm-icon-button" title="设置">⚙</button>
-          <div className="fm-user-chip"><span /> {user ? user.toUpperCase() : 'OPERATOR'}</div>
-          <button className="fm-icon-button" title="登出" onClick={() => logout()}>⏻</button>
+          {topMenu === 'help' && (
+            <div className="fm-top-popover fm-help-popover" role="dialog" aria-label="帮助">
+              <div className="fm-top-popover-head"><div><span className="fm-top-popover-kicker">HELP / QUICK REFERENCE</span><h2>操作手册</h2></div><button type="button" onClick={() => setTopMenu(null)} aria-label="关闭帮助">×</button></div>
+              <p className="fm-top-popover-lead">在工厂视口中直接浏览、选择和调整设备。当前页面的快捷操作如下。</p>
+              <div className="fm-top-shortcut-list">
+                <div><span><kbd>拖动</kbd></span><small>旋转镜头</small></div>
+                <div><span><kbd>右键</kbd></span><small>平移镜头 / 锁定转角</small></div>
+                <div><span><kbd>滚轮</kbd></span><small>缩放镜头</small></div>
+                <div><span><kbd>ESC</kbd></span><small>退出建造或返回总览</small></div>
+                <div><span><kbd>CTRL</kbd><kbd>Z</kbd></span><small>撤回上一步操作</small></div>
+                <div><span><kbd>R</kbd></span><small>旋转待放置组件</small></div>
+              </div>
+              <div className="fm-top-popover-foot"><span className="fm-context-dot" /> 系统在线 · BUILD 0.1.0</div>
+            </div>
+          )}
+
+          {topMenu === 'settings' && (
+            <div className="fm-top-popover fm-settings-popover" role="dialog" aria-label="设置">
+              <div className="fm-top-popover-head"><div><span className="fm-top-popover-kicker">SYSTEM / DISPLAY</span><h2>界面设置</h2></div><button type="button" onClick={() => setTopMenu(null)} aria-label="关闭设置">×</button></div>
+              <div className="fm-settings-list">
+                <button type="button" className="fm-setting-row" aria-pressed={showViewportTools} onClick={() => setShowViewportTools(!showViewportTools)}><span><b>视口辅助信息</b><small>显示坐标、网格与镜头提示</small></span><i className={showViewportTools ? 'is-on' : ''}>{showViewportTools ? 'ON' : 'OFF'}</i></button>
+                <button type="button" className="fm-setting-row" aria-pressed={showInterfaceHints} onClick={() => setShowInterfaceHints(!showInterfaceHints)}><span><b>操作快捷提示</b><small>显示撤回、旋转和建造提示</small></span><i className={showInterfaceHints ? 'is-on' : ''}>{showInterfaceHints ? 'ON' : 'OFF'}</i></button>
+                <button type="button" className="fm-setting-row" aria-pressed={reducedMotion} onClick={() => setReducedMotion(!reducedMotion)}><span><b>减少界面动效</b><small>降低面板进入和状态切换动画</small></span><i className={reducedMotion ? 'is-on' : ''}>{reducedMotion ? 'ON' : 'OFF'}</i></button>
+              </div>
+              <div className="fm-top-popover-foot">设置仅在当前工作台会话中生效</div>
+            </div>
+          )}
+
+          {topMenu === 'user' && (
+            <div className="fm-top-popover fm-user-popover" role="dialog" aria-label="操作员信息">
+              <div className="fm-top-popover-head"><div><span className="fm-top-popover-kicker">OPERATOR / SESSION</span><h2>{user ? user.toUpperCase() : 'OPERATOR'}</h2></div><button type="button" onClick={() => setTopMenu(null)} aria-label="关闭操作员菜单">×</button></div>
+              <div className="fm-user-status"><span className="fm-live-dot" /><div><b>会话已授权</b><small>当前场地 · {factoryId.toUpperCase()}</small></div></div>
+              <button type="button" className="fm-top-popover-action" onClick={handleLogout}>退出当前会话 <span>⏻</span></button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -209,7 +323,7 @@ function App() {
           <section className="fm-viewport" data-building={buildType ? 'true' : 'false'} aria-label="3D 工厂视口">
             <FactoryCanvas view={view} />
 
-            {selectedId && (
+            {selectedId && view !== 'flow' && (
               <aside className="fm-device-drawer glass3d" aria-label="设备详情">
                 <div className="fm-device-drawer-bar">
                   <span>DEVICE / LIVE INSPECTOR</span>
@@ -219,7 +333,7 @@ function App() {
               </aside>
             )}
 
-            <div className="fm-viewport-header">
+            {view !== 'flow' && <div className="fm-viewport-header">
               <div>
                 <div className="fm-eyebrow"><span>{meta.code}</span> / LIVE VIEW</div>
                 <h1>{meta.title}</h1>
@@ -227,31 +341,37 @@ function App() {
               </div>
               <div className="fm-view-readout">
                 <span className="fm-readout-label">CAMERA</span>
-                <strong>{view === 'build' || view === 'diagnostics' ? 'TOP-DOWN' : view === 'flow' ? 'FLOW AXIS' : 'ISOMETRIC'}</strong>
+                <strong>{view === 'build' || view === 'diagnostics' ? 'TOP-DOWN' : 'ISOMETRIC'}</strong>
               </div>
-            </div>
+            </div>}
 
-            <div className="fm-viewport-tools">
+            {view !== 'flow' && showViewportTools && <div className="fm-viewport-tools">
               <span className="fm-coord-label">X 00.0 &nbsp; Y 00.0 &nbsp; Z 00.0</span>
               <span className="fm-grid-label">GRID / 1M</span>
               {view === 'overview' && <span className="fm-camera-hint"><b>CAMERA</b> DRAG / ORBIT · RMB / PAN · WHEEL / ZOOM</span>}
-            </div>
+            </div>}
 
-            <div className="fm-viewport-footer">
-              <div className="fm-key-hint fm-key-hint-undo"><kbd>CTRL</kbd><kbd>Z</kbd> 撤回 <kbd>CTRL</kbd><kbd>SHIFT</kbd><kbd>Z</kbd> 重做</div>
-              <div className="fm-key-hint"><kbd>R</kbd> 旋转组件 <kbd>ESC</kbd> 退出建造 <kbd>右键</kbd> 锁定传送带转角</div>
+            {view !== 'flow' && <div className="fm-viewport-footer">
+              {showInterfaceHints && <div className="fm-key-hint fm-key-hint-undo"><kbd>CTRL</kbd><kbd>Z</kbd> 撤回 <kbd>CTRL</kbd><kbd>SHIFT</kbd><kbd>Z</kbd> 重做</div>}
+              {showInterfaceHints && <div className="fm-key-hint"><kbd>R</kbd> 旋转组件 <kbd>ESC</kbd> 退出建造 <kbd>右键</kbd> 锁定传送带转角</div>}
               <div className={`fm-run-state ${playing ? 'is-running' : ''}`}><span /> {playing ? '仿真运行中' : '仿真已暂停'}</div>
-            </div>
+            </div>}
 
-            <div className={`fm-view-dock ${view !== 'overview' ? 'is-mode-open' : ''}`} aria-label="快速视角">
-              {VIEW_ORDER.map((key) => (
-                 <button key={key} className={view === key ? 'is-active' : ''} onClick={() => changeView(key)}>
-                  <span>{VIEW_META[key].code}</span>{VIEW_META[key].label}
-                </button>
-              ))}
-            </div>
+            {view !== 'flow' && <div className={`fm-dock-cluster ${view !== 'overview' ? 'is-mode-open' : ''}`} aria-label="快速视角与业务工作区">
+              <div className="fm-view-dock">
+                {VIEW_ORDER.map((key) => (
+                  <button key={key} className={view === key ? 'is-active' : ''} onClick={() => changeView(key)}>
+                    <span>{VIEW_META[key].code}</span>{VIEW_META[key].label}
+                  </button>
+                ))}
+              </div>
+              {view === 'overview' && <div className="fm-aux-dock">
+                <button type="button" className={auxPanel === 'productionRoute' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('productionRoute') }}><span>05</span>生产路线</button>
+                <button type="button" className={auxPanel === 'warehouse' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('warehouse') }}><span>06</span>仓储</button>
+              </div>}
+            </div>}
 
-            {view !== 'overview' && (
+            {view === 'flow' ? <ProductionWorkspace /> : view === 'diagnostics' ? <GenerativeFactoryWorkspace /> : view !== 'overview' && (
               <div className={`fm-mode-panel fm-mode-panel-${view} is-open`}>
                 {view === 'build' ? <BuildMenu compact /> : <ViewSummary view={view} counts={counts} />}
                 <div className="fm-mode-shortcuts" aria-label="快捷键">
@@ -262,6 +382,8 @@ function App() {
                 </div>
               </div>
             )}
+            {auxPanel === 'productionRoute' && <ProductionRouteWorkspace onClose={() => setAuxPanel(null)} />}
+            {auxPanel === 'warehouse' && <WarehouseWorkspace onClose={() => setAuxPanel(null)} />}
 
           </section>
 
@@ -279,7 +401,7 @@ function App() {
         <aside className="fm-right-panel" aria-label="数据面板">
           <div className="fm-panel-heading">
             <div><span className="fm-eyebrow">FACTORY STATUS</span><h2>基地运行舱</h2></div>
-            <span className="fm-panel-index">A-01</span>
+            <span className="fm-panel-index">{factoryId.toUpperCase()}</span>
           </div>
           <div className="fm-stat-grid">
             <MiniStat label="设施" value={objects.length} />

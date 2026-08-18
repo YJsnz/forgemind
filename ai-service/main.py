@@ -34,6 +34,10 @@ OLLAMA_BASE_URL = os.getenv("FORGEMIND_OLLAMA_URL", "http://127.0.0.1:11434").rs
 OLLAMA_MODEL = os.getenv("FORGEMIND_OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_TIMEOUT_SEC = float(os.getenv("FORGEMIND_OLLAMA_TIMEOUT", "120"))
 OLLAMA_KEEP_ALIVE = os.getenv("FORGEMIND_OLLAMA_KEEP_ALIVE", "30m")
+LLM_PROVIDER = os.getenv("FORGEMIND_LLM_PROVIDER", "ollama").lower()
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 TTS_BASE_URL = os.getenv("FORGEMIND_TTS_URL", "http://127.0.0.1:8001").rstrip("/")
 TTS_TIMEOUT_SEC = float(os.getenv("FORGEMIND_TTS_TIMEOUT", "45"))
 TTS_BACKEND = os.getenv("FORGEMIND_TTS_BACKEND", "bt").lower()
@@ -116,6 +120,19 @@ class AssistantReply(BaseModel):
     requires_confirmation: bool = Field(default=False, alias="requiresConfirmation")
 
 
+class FactorySpecRequest(BaseModel):
+    """自然语言工厂需求；只负责提取约束，不让模型直接生成布局对象。"""
+
+    brief: str
+    defaults: dict[str, Any] = Field(default_factory=dict)
+
+
+class FactorySpecReply(BaseModel):
+    spec: dict[str, Any]
+    source: Literal["deepseek", "qwen", "rule", "fallback"]
+    note: str | None = None
+
+
 @app.get("/api/ai/health")
 def health() -> dict:
     return {
@@ -123,6 +140,7 @@ def health() -> dict:
         "service": "forgemind-ai",
         "protocolVersion": PROTOCOL_VERSION,
         "tools": len(TOOL_NAMES),
+        "llm": {"provider": LLM_PROVIDER, "deepseekConfigured": bool(DEEPSEEK_API_KEY), "ollamaModel": OLLAMA_MODEL},
         "ollama": {"url": OLLAMA_BASE_URL, "model": OLLAMA_MODEL, "available": ollama_available()},
         "tts": {
             "backend": TTS_BACKEND,
@@ -136,6 +154,33 @@ def health() -> dict:
 def tools() -> dict[str, Any]:
     """向前端和本地 LLM 编排器公开同一份版本化工具目录。"""
     return TOOL_CATALOG
+
+
+@app.post("/api/ai/factory-spec", response_model=FactorySpecReply)
+def factory_spec(req: FactorySpecRequest) -> FactorySpecReply:
+    """把需求提取为受限 GenerationSpec；布局和仿真仍由前端确定性规划器负责。"""
+    brief = req.brief.strip()
+    defaults = normalize_factory_spec(req.defaults)
+    if not brief:
+        return FactorySpecReply(spec=defaults, source="rule", note="需求为空，使用表单约束。")
+
+    try:
+        if LLM_PROVIDER == "deepseek" and DEEPSEEK_API_KEY:
+            try:
+                raw = deepseek_factory_spec(brief, defaults)
+                return FactorySpecReply(spec=normalize_factory_spec(raw, defaults), source="deepseek", note="DeepSeek 已完成约束提取。")
+            except Exception as deepseek_exc:  # noqa: BLE001
+                # Keep local/offline demos useful when the remote provider is
+                # rate-limited, unavailable, or missing a compatible response.
+                try:
+                    raw = ollama_factory_spec(brief, defaults)
+                    return FactorySpecReply(spec=normalize_factory_spec(raw, defaults), source="qwen", note=f"DeepSeek 不可用，已切换本地 {OLLAMA_MODEL}。")
+                except Exception as ollama_exc:  # noqa: BLE001
+                    raise RuntimeError(f"DeepSeek 与本地 Qwen 均不可用：{deepseek_exc}; {ollama_exc}") from ollama_exc
+        raw = ollama_factory_spec(brief, defaults)
+        return FactorySpecReply(spec=normalize_factory_spec(raw, defaults), source="qwen", note=f"本地 {OLLAMA_MODEL} 已完成约束提取。")
+    except Exception as exc:  # noqa: BLE001
+        return FactorySpecReply(spec=defaults, source="fallback", note=f"模型不可用，使用规则解析：{exc}")
 
 
 class AsrReply(BaseModel):
@@ -358,6 +403,105 @@ def ollama_chat(question: str, context: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(message, dict):
         raise ValueError("Ollama 返回缺少 message")
     return message
+
+
+FACTORY_SPEC_PROMPT = """你是 ForgeMind 的工厂需求解析器。
+只从用户需求中提取生产约束，不设计机器、不生成布局、不解释过程。
+必须只返回 JSON 对象，字段只能是：product、targetThroughputPerHour、floorWidth、floorDepth、cncLimit、agvLimit、objective。
+objective 只能是 balanced、throughput、energy；缺失字段沿用默认值。
+"""
+
+
+def ollama_factory_spec(brief: str, defaults: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": FACTORY_SPEC_PROMPT},
+            {"role": "user", "content": json.dumps({"defaults": defaults, "brief": brief}, ensure_ascii=False)},
+        ],
+        "format": "json",
+        "stream": False,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
+        "options": {"num_predict": 160, "num_ctx": 2048, "temperature": 0.05},
+    }
+    with post_ollama(payload, timeout=OLLAMA_TIMEOUT_SEC) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    message = result.get("message")
+    if not isinstance(message, dict):
+        raise ValueError("Ollama 需求解析缺少 message")
+    return parse_json_object(message.get("content"))
+
+
+def deepseek_factory_spec(brief: str, defaults: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": FACTORY_SPEC_PROMPT},
+            {"role": "user", "content": json.dumps({"defaults": defaults, "brief": brief}, ensure_ascii=False)},
+        ],
+        "response_format": {"type": "json_object"},
+        "stream": False,
+        "temperature": 0.05,
+        "max_tokens": 160,
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        f"{DEEPSEEK_BASE_URL}/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=OLLAMA_TIMEOUT_SEC) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    choices = result.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise ValueError("DeepSeek 需求解析缺少 choices")
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        raise ValueError("DeepSeek 需求解析缺少 message")
+    return parse_json_object(message.get("content"))
+
+
+def parse_json_object(content: Any) -> dict[str, Any]:
+    if not isinstance(content, str):
+        raise ValueError("模型没有返回 JSON 文本")
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.strip("`").replace("json", "", 1).strip()
+    value = json.loads(text)
+    if not isinstance(value, dict):
+        raise ValueError("需求解析结果不是对象")
+    return value
+
+
+def normalize_factory_spec(value: dict[str, Any] | None, defaults: dict[str, Any] | None = None) -> dict[str, Any]:
+    source = {**(defaults or {
+        "product": "齿轮箱",
+        "targetThroughputPerHour": 120,
+        "floorWidth": 30,
+        "floorDepth": 20,
+        "cncLimit": 4,
+        "agvLimit": 3,
+        "objective": "energy",
+    }), **(value or {})}
+    objective = source.get("objective") if source.get("objective") in {"balanced", "throughput", "energy"} else "energy"
+    return {
+        "product": str(source.get("product") or "齿轮箱")[:80],
+        "targetThroughputPerHour": clamp_number(source.get("targetThroughputPerHour"), 120, 1, 100000),
+        "floorWidth": clamp_number(source.get("floorWidth"), 30, 10, 200),
+        "floorDepth": clamp_number(source.get("floorDepth"), 20, 10, 200),
+        "cncLimit": int(clamp_number(source.get("cncLimit"), 4, 1, 32)),
+        "agvLimit": int(clamp_number(source.get("agvLimit"), 3, 1, 32)),
+        "objective": objective,
+    }
+
+
+def clamp_number(value: Any, fallback: float, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = fallback
+    return max(minimum, min(maximum, number))
 
 
 def iter_assistant_events(question: str, context: dict[str, Any]):

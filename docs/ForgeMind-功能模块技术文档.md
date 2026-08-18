@@ -2,16 +2,17 @@
 
 **项目：** ForgeMind 智能工厂数字孪生平台  
 **文档版本：** 0.1.0  
-**整理日期：** 2026-08-15  
+**整理日期：** 2026-08-18
 **适用范围：** 当前仓库中已经实现、可运行或已经建立接口契约的功能模块
 
-本文档补充 [黛玉自研工厂渲染引擎技术文档](D:/Code/factory/docs/daiyu-render-engine.md)，重点说明 ForgeMind 除黛玉渲染层之外的业务、交互、仿真、数据和 AI 模块。文档中的“已实现”表示代码已经存在并可被当前应用调用；“骨架/占位”表示接口和数据契约已建立，但还没有接入完整生产能力。
+本文档补充 [宝钗自研工厂渲染引擎技术文档](D:/Code/factory/docs/daiyu-render-engine.md) 和 [黛玉智能工厂思考引擎技术文档](D:/Code/factory/docs/daiyu-intelligence-engine.md)，重点说明 ForgeMind 除双引擎之外的业务、交互、仿真、数据和 AI 模块。文档中的“已实现”表示代码已经存在并可被当前应用调用；“骨架/占位”表示接口和数据契约已建立，但还没有接入完整生产能力。本文档按 2026-08-18 的代码状态整理，演示读数和明确边界会单独标注。
 
 ## 1. 功能总览
 
 | 模块 | 主要入口 | 当前状态 | 核心职责 |
 | --- | --- | --- | --- |
 | 应用壳与工作区 | `src/App.tsx` | 已实现 | 登录态切换、四种工作视图、全局快捷键、指标栏 |
+| 生产控制台 | `src/components/ProductionWorkspace.tsx` | 已实现 | 俯视地图、设备登记、物流流向、产出统计和仿真控制 |
 | 认证与登录演出 | `src/store/auth.ts`、`src/scene/LoginCameraRig.tsx` | 已实现 | 注册、登录、续登、登出、舱门动画和欢迎音频 |
 | 工厂状态管理 | `src/store/forgeMind.ts` | 已实现 | 低频编辑状态、选择态、撤销重做、仿真快照 |
 | 网格建造系统 | `src/scene/BuildPlacer.tsx`、`src/game/grid.ts` | 已实现 | 放置、碰撞、旋转、拖拽输送带、转角识别 |
@@ -19,11 +20,13 @@
 | 物品与配方 | `src/game/item.ts`、`ItemPanel.tsx`、`RecipePanel.tsx` | 已实现 | 多输入/多输出配方、加工时长和引用关系维护 |
 | 离散事件仿真 | `src/game/simulation.ts`、`SimulationRunner.tsx` | 已实现 | 固定步生产物流、机器状态机、分流汇流、背压 |
 | 场景和模型系统 | `src/scene/`、`public/models/` | 已实现 | 高精度工艺设备、Panda URDF、物料可视化、登录舱 |
-| 黛玉渲染层 | `src/engine/daiyu/` | 已实现 | 精确实例化、预热、运行时审计和 4060 预算策略 |
+| 宝钗渲染引擎 | `src/engine/daiyu/` | 已实现 | 精确实例化、预热、运行时审计和 4060 预算策略 |
+| 黛玉智能工厂思考引擎 | `src/game/generativeFactory.ts` | 已实现 | 需求解析、产线生成、布局调整、路由校验、仿真评估、What-if 和 ROI |
 | 本地 JSON 存档 | `src/game/save.ts` | 已实现 | 导出、导入、运行时校验和浏览器下载 |
 | Spring Boot 存档/认证后端 | `backend/` | 已实现 | MySQL/Flyway 持久化、BCrypt 密码、数据库会话 token、按用户隔离工厂 |
 | AI 服务 | `ai-service/main.py` | 已实现（本地编排） | FastAPI 健康检查、Ollama 助手、NDJSON 流式回复、工具目录、ASR/TTS 网关 |
-| 离线语音助手 | `voice-chat/voice_chat.py` | 独立可运行 | 本地 ASR → Ollama → TTS → 播放闭环，尚未接入网页 UI |
+| 网页语音助手 | `src/components/AssistantVoiceButton.tsx`、`src/game/assistantVoice.ts` | 已实现（依赖本地服务） | 麦克风录音、`BT` 关键字唤醒、ASR、流式回答和 TTS 播放 |
+| 独立语音助手 | `voice-chat/voice_chat.py` | 独立可运行 | 不依赖网页的本地 ASR → Ollama → TTS → 播放闭环 |
 | 仿真回归工具链 | `scripts/` | 已实现 | 闭环、转弯、分流、汇流、背压和 A-01 基地验证 |
 
 ## 2. 系统总体架构
@@ -39,12 +42,18 @@ flowchart LR
   Store --> Save[本地 JSON 存档]
   Store --> API[前端 API 客户端]
   API --> Spring[Spring Boot 8080]
-  API --> AI[FastAPI 8000]
-  Voice[离线语音脚本] --> ASR[Paraformer ASR]
-  Voice --> Ollama[本地 Ollama LLM]
-  Voice --> TTS[BT TTS / Sherpa fallback]
-  Scene --> Daiyu[黛玉渲染层]
-  Daiyu --> GPU[Three.js / WebGL]
+  API --> AIService[FastAPI 8000]
+  BrowserVoice[网页麦克风 / BT 唤醒] --> AIService
+  AIService --> ASR[Paraformer ASR]
+  AIService --> Ollama[本地 Ollama LLM]
+  AIService --> TTS[BT TTS / Sherpa fallback]
+  Voice[独立语音脚本] --> ASR
+  UI --> Diagnostics[诊断 / Generative Factory]
+  Scene --> Baochai[宝钗渲染引擎]
+  Baochai --> GPU[Three.js / WebGL]
+  Diagnostics --> Daiyu[黛玉智能工厂思考引擎]
+  Daiyu --> Candidate[Layout / Simulation / ROI]
+  Candidate --> Store
 ```
 
 ### 2.1 分层原则
@@ -52,8 +61,9 @@ flowchart LR
 1. **业务数据层**：`FactoryObject`、`Item`、`Recipe` 描述工厂结构和工艺定义。
 2. **仿真层**：`SimulationEngine` 只处理离散生产逻辑，不依赖 React 或 Three.js。
 3. **状态协调层**：Zustand 保存编辑态和低频仿真快照；高频物料位置不进入响应式状态。
-4. **渲染层**：Three.js/R3F 将对象和快照映射为视觉；黛玉负责批处理、预热和运行时预算。
-5. **外部服务层**：Spring Boot 负责持久化与认证，FastAPI 负责未来 AI 编排，均不进入实时仿真主循环。
+4. **宝钗渲染引擎**：Three.js/R3F 将对象和快照映射为视觉；宝钗负责批处理、预热和运行时预算。
+5. **黛玉思考引擎**：读取 `FactoryState`、`GenerationSpec` 和仿真快照，生成可验证的布局候选、调整方案、诊断解释和经济性对照；它不直接操作 GPU 场景。
+6. **外部服务层**：Spring Boot 负责持久化与认证，FastAPI 负责 AI/ASR/TTS 编排，均不进入实时仿真主循环。
 
 ## 3. 应用壳与工作区模块
 
@@ -65,22 +75,24 @@ flowchart LR
 | --- | --- | --- | --- |
 | `overview` | 01 | 等距视角 | 查看基地布局和设备概况 |
 | `build` | 02 | 俯视 | 网格放置、旋转和线路编辑 |
-| `flow` | 03 | 流线视角 | 观察物料方向、入口出口和在途物料 |
-| `diagnostics` | 04 | 俯视 | 查看仿真状态、堵塞和利用率 |
+| `flow` | 03 | 生产控制台 | 俯视地图、设备登记、物流流向和产出统计 |
+| `diagnostics` | 04 | 俯视诊断 | 查看仿真状态、堵塞和利用率 |
 
 切换视图时，`changeView` 会自动退出建造工具，避免隐藏的 ghost 或拖拽状态继续影响场景。顶部导航、左侧工作区导航和视口快速切换 dock 共用同一个 `view` 状态。
 
 ### 3.2 指标和面板
 
-当前右侧面板由以下低频组件组成：
+当前右侧面板和工作区由以下低频组件组成：
 
 - `SimPanel`：逻辑时间、在途物品、机器平均利用率、播放/暂停、倍率和产出/消耗。
 - `InfoPanel`：选中设备的坐标、朝向、足迹、端口、配方或 source 输出绑定。
 - `BuildMenu`：按采集、加工、装配、物流分类显示设备目录。
 - `ItemPanel`：创建和删除物品类型。
 - `RecipePanel`：创建和删除多输入/多输出配方。
+- `ProductionWorkspace`：在 `flow` 视图中提供四个标签页：地图全览、设备详情、物流流向和产出统计；地图支持全部/加工设备/物流节点筛选、拖动浏览、节点选择和在途物料显示。
+- `AssistantVoiceButton`：提供手动录音和 `BT` 关键字唤醒；浏览器只在本地内存保留短音频窗口并发送到本地 ASR 服务。
 
-KPI 条中的生产效率、设备利用率和物流负载目前部分是演示指标，真正可追溯的实时量应以 `SimulationSnapshot.stats`、`MachineRuntime.processingTime` 和 `itemLots` 为准。
+生产控制台的设备总数、加工单元、物流节点、产出总量、在途物料和设备利用率来自当前 store/仿真快照。生产效率目前仍显示固定的演示读数（仿真启动后为 `92.3%`），不能作为真实 OEE 或产线效率结论；可追溯实时量应以 `SimulationSnapshot.stats`、`MachineRuntime.processingTime` 和 `itemLots` 为准。
 
 ### 3.3 全局快捷键
 
@@ -419,7 +431,7 @@ interface ItemLot {
 
 登录阶段不挂载 OrbitControls，避免舱门推镜与用户控制抢夺相机。正式工厂阶段根据视图选择相机预设，并以 960–1380 ms 的过渡时间插值到目标位置。建造模式暂时禁用 OrbitControls，避免拖拽线路时同时旋转视角。
 
-黛玉的批处理、预热、阴影和性能数据详见独立文档，不在本篇重复展开。
+宝钗的批处理、预热、阴影和性能数据详见独立文档，不在本篇重复展开；黛玉的生成、调整和评估链路见独立思考引擎文档。
 
 ## 11. 存档、导入导出与后端同步
 
@@ -528,19 +540,46 @@ interface FactorySave {
 }
 ```
 
-助手优先调用本地 Ollama `qwen2.5:7b`，不可用时返回 `fallback`；服务端只做工具目录和基础参数校验，不直接改变工厂对象或仿真状态，前端执行层还会进行一次完整校验和确认门控。前端客户端为 `src/game/api.ts::askAssistant`，并支持流式回复。
+助手优先调用本地 Ollama `qwen2.5:7b`，可返回普通文本或 `1.0.0` 工具动作；Ollama 不可用时才返回 `fallback`。服务端会对动作名称、协议版本、参数和上下文对象做基础校验，前端 `assistantProtocol.ts` 会再次校验并负责执行，因此 FastAPI 不直接改变工厂对象或仿真状态。前端客户端为 `src/game/api.ts`，支持 NDJSON 流式文本；`assistantRuntime.ts` 会按短句切分回复并并行请求 TTS，按顺序播放。
+
+当前动作目录位于 `contracts/forgemind-assistant-tools.json`，共 8 个动作：查询工厂状态、读取对象、选择对象、启停仿真、设置仿真倍率、重置仿真、修改机器配方和绑定 source 物品。查询/定位/仿真控制可直接执行；重置、改配方和改 source 绑定被标记为需要确认的高风险或配置变更动作。
 
 ### 13.2 设计边界
 
-AI 未来只能输出动作库中的结构化建议，例如调整线路、替换设备、改变配方参数；不能直接自由修改工厂。所有候选方案必须复制工厂状态，在副本仿真中验证产能、阻塞和资源约束后，再由用户确认写回。
+AI 只能输出动作目录中的结构化请求，不能直接自由修改工厂。当前已完成协议版本、白名单、参数、对象角色、物品/配方引用和确认门控；副本仿真、产能差异报告和“优化建议先验证再写回”仍属于后续能力。
 
 AI 服务不得进入 `SimulationRunner` 的每帧或每个固定步，否则会把 LLM 延迟引入实时链路。
 
-## 14. 离线语音助手模块
+## 14. 网页与离线语音助手模块
 
 ### 14.1 处理链路
 
-`voice-chat/voice_chat.py` 是独立的本地 Python 交互程序：
+网页端 `AssistantVoiceButton` 已接入主工作区，支持手动录音和默认开启的 `BT` 关键字唤醒。浏览器端负责采集单声道音频、重采样到 16 kHz、调用本地 ASR，并将识别文本交给统一的 `assistantRuntime`；回答以流式文本进入短句 TTS 队列，BT TTS 不可用时由 FastAPI 回退 Sherpa VITS。关键字监听只发送有明显能量的短窗口，不上传第三方服务。
+
+网页处理链路：
+
+```mermaid
+sequenceDiagram
+  participant U as 用户
+  participant B as 浏览器麦克风
+  participant A as FastAPI / ASR
+  participant L as Ollama
+  participant T as BT TTS
+  participant F as Sherpa VITS
+  participant UI as ForgeMind UI
+  U->>B: 手动录音或说 BT
+  B->>A: 16kHz mono WAV
+  A-->>B: 识别文本
+  B->>A: 问题 + 工厂上下文
+  A->>L: 工具调用/流式回答
+  L-->>B: NDJSON 文本 + 动作信封
+  B->>UI: 前端校验、执行或请求确认
+  B->>T: 按短句合成
+  T-->>B: WAV
+  B->>F: BT 不可用时回退
+```
+
+独立模式仍由 `voice-chat/voice_chat.py` 提供，不共享网页会话：
 
 ```mermaid
 sequenceDiagram
@@ -569,7 +608,7 @@ sequenceDiagram
 - 输入小于 0.3 秒或低于静音阈值 `0.01` 时丢弃。
 - 识别到“退出”或“再见”时结束循环。
 
-该模块当前不与 React 页面共享会话，也不向工厂仿真发送动作。若将来接入网页，应通过异步命令队列和权限校验接入，不能让语音文本直接执行任意设备操作。
+网页语音入口已能通过统一动作协议驱动当前支持的仿真控制和配置动作，但仍受协议白名单、对象引用校验和用户确认限制；独立 `voice-chat` 程序仍只提供对话播报，不直接向网页工厂发送动作。任何新语音动作都必须先加入协议目录和前端执行器，不能让语音文本直接执行任意设备操作。
 
 ## 15. 测试与验证工具链
 
@@ -601,12 +640,12 @@ npm run sim:backpressure
 
 ### 15.3 性能验证入口
 
-黛玉开发诊断参数：
+宝钗开发诊断参数（参数名保留 `daiyu` 历史标识）：
 
 - `?daiyuStress=300`：生成最多 600 个不写入 store 的压力对象。
 - `?daiyuDpr=1.86`：固定开发环境渲染 DPR，用于近 1080p 采样。
 
-性能指标、P95 帧时、场景审计和 4060 Laptop 实测结果统一记录在 [黛玉渲染引擎文档](D:/Code/factory/docs/daiyu-render-engine.md) 中。
+性能指标、P95 帧时、场景审计和 4060 Laptop 实测结果统一记录在 [宝钗渲染引擎文档](D:/Code/factory/docs/daiyu-render-engine.md) 中。
 
 ## 16. 端到端数据流和不变量
 
@@ -672,7 +711,7 @@ py -3.10 -m venv .venv
 .venv/Scripts/python -m uvicorn main:app --port 8000
 ```
 
-检查 `http://localhost:8000/api/ai/health`。此接口正常只代表 FastAPI 在线，不代表真实 LLM 已接入。
+检查 `http://localhost:8000/api/ai/health`。此接口正常只代表 FastAPI 在线；要得到 `source=llm` 的真实回答，还需要 Ollama 和 `qwen2.5:7b` 已启动。BT TTS 不可用时，服务会尝试使用本地 Sherpa VITS 备用模型。
 
 ### 17.4 典型问题定位
 
@@ -683,25 +722,25 @@ py -3.10 -m venv .venv
 | 传送带末端停住 | 下游是否满、是否没有配方、是否形成预期背压 |
 | 机械臂不显示 | Panda URDF/DAE 路径、模型请求、Daiyu 批次是否接管、浏览器控制台错误 |
 | 导入存档失败 | JSON 版本、对象类型白名单、配方引用的物品是否存在 |
-| 舱门动画卡顿 | 黛玉预热状态、Panda 是否在隐藏祖先下跳过 IK、DPR 和阴影预算 |
+| 舱门动画卡顿 | 宝钗预热状态、Panda 是否在隐藏祖先下跳过 IK、DPR 和阴影预算 |
 
 ## 18. 当前边界与后续路线
 
 ### 已知边界
 
 - MySQL 使用 Docker 持久卷；删除 `forgemind_mysql_data` 会清空开发数据。
-- AI FastAPI 当前只返回 stub，未接真实 LLM。
-- 离线语音助手是独立 Python 程序，未接入网页工作区。
+- AI FastAPI 已接入本地 Ollama 和动作协议；Ollama 不可用时仍会返回 fallback，不能把 fallback 当作真实模型结果。
+- 网页语音入口已经接入工作区，但依赖浏览器麦克风权限、Paraformer、Ollama 和 TTS 服务；独立 `voice-chat` 仍不共享网页会话。
 - 本地和后端存档校验均覆盖当前完整设备目录；新增设备类型时仍需同步更新前后端白名单和回归样例。
 - 机器多输出配方的数据结构已支持，但运行时下游路由仍使用第一个输出。
-- A-01 中部分 KPI 是演示读数，不等同于仿真统计。
+- A-01 中部分 KPI，以及生产控制台的固定“生产效率 92.3%”，是演示读数，不等同于仿真统计。
 - 4060 Laptop 与 5 GiB LLM 同时运行的长时间稳定性仍需实机认证。
 
 ### 推荐演进顺序
 
 1. 补充工厂成员邀请、角色权限和多工厂选择 API。
-2. 为 AI 增加 action schema、副本仿真、差异报告和用户确认流程。
-3. 将语音助手改造成异步服务，并与 AI 助手共用安全命令协议。
+2. 为 AI 增加副本仿真、差异报告和优化建议确认流程；当前 action schema、双层校验和确认门控已完成。
+3. 让独立语音助手复用网页端的版本化安全命令协议，并增加会话/权限边界。
 4. 增加自动化浏览器验收、显存采样、温度采样和 LLM 并行压力测试。
 5. 在模型资产不变的前提下评估 HLOD、WebGPU 和离线纹理压缩。
 
@@ -710,6 +749,8 @@ py -3.10 -m venv .venv
 | 路径 | 说明 |
 | --- | --- |
 | `src/App.tsx` | 应用壳、视图切换、KPI、快捷键和登录音频 |
+| `src/components/ProductionWorkspace.tsx` | 生产控制台的地图、设备登记、物流和产出标签页 |
+| `src/components/AssistantVoiceButton.tsx` | 网页端手动录音和 BT 关键字唤醒入口 |
 | `src/store/forgeMind.ts` | 编辑器、历史栈、物品/配方、仿真快照 |
 | `src/store/auth.ts` | 认证阶段和本地 token 续登 |
 | `src/game/types.ts` | 设备目录和 `FactoryObject` 类型 |
@@ -719,8 +760,12 @@ py -3.10 -m venv .venv
 | `src/game/SimulationRunner.tsx` | rAF 驱动器和 10Hz 快照桥接 |
 | `src/game/save.ts` | 本地存档序列化、解析和下载 |
 | `src/game/api.ts` | Spring Boot 存档和 FastAPI AI 客户端 |
+| `src/game/assistantProtocol.ts` | 智能管家 1.0.0 动作目录、上下文和前端校验 |
+| `src/game/assistantExecutor.ts` | 智能管家动作执行、确认门控和仿真控制桥接 |
+| `src/game/assistantVoice.ts` | 浏览器录音、WAV 编码、ASR 和关键字监听 |
+| `src/game/assistantRuntime.ts` | 流式回答、短句 TTS 队列和动作执行桥接 |
 | `src/scene/BuildPlacer.tsx` | 射线拾取、ghost、拖拽线路和快捷键 |
-| `src/scene/FactoryCanvas.tsx` | Canvas、相机、场景分组和黛玉接入 |
+| `src/scene/FactoryCanvas.tsx` | Canvas、相机、场景分组和宝钗接入 |
 | `src/scene/FactoryObjectMesh.tsx` | 单对象渲染、端口标记和转角视觉 |
 | `src/scene/EquipmentModel.tsx` | 设备模型映射、加载和程序化回退 |
 | `src/scene/PandaArmModel.tsx` | Panda URDF、IK、自动/手动控制 |

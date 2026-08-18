@@ -18,6 +18,7 @@ export type BuildType =
   | 'inspection'
   | 'washing'
   | 'agv'
+  | 'drone'
   | 'storage'
   | 'splitter'
   | 'merger'
@@ -62,6 +63,31 @@ export interface FactoryObject {
   rotation: Rotation
   recipeId?: string
   itemId?: string
+  agvProgram?: AgvProgram
+}
+
+export type AgvRouteAction = 'pass' | 'load' | 'unload'
+
+export interface AgvRouteWaypoint {
+  id: string
+  label: string
+  objectId: string | null
+  position: { x: number; z: number }
+  action: AgvRouteAction
+}
+
+export interface AgvProgram {
+  enabled: boolean
+  sourceObjectId: string | null
+  destinationObjectId: string | null
+  itemId: string | null
+  loadQuantity: number
+  /** Ordered route stations. Older saves may omit this and use source/destination. */
+  route?: AgvRouteWaypoint[]
+  /** Larger values receive right-of-way at a shared aisle. */
+  priority?: number
+  /** Traffic policy used when replanning around live vehicles. */
+  policy?: 'balanced' | 'shortest' | 'priority'
 }
 
 const equipment = (
@@ -113,6 +139,7 @@ export const OBJECT_DEFS: Record<BuildType, ObjectDef> = {
   inspection: equipment('inspection', 'machine', '装配', '双臂视觉质检单元', 'DUAL-ARM VISION QA CELL Mk.I', '由夹取臂托举工件、摄像头臂进行 360° 环绕检测，识别尺寸、外观和装配缺陷，并将结果写入质量追溯。', 'Dual-arm camera inspection cell', { w: 2, d: 2 }, '#536f72', '#7ed4d1', 1.55, '20 / min', '6 kW', ['待检产品'], ['合格品 / 不合格品']),
   washing: equipment('washing', 'machine', '加工', '清洗去毛刺单元', 'DEBURR & WASH CELL Mk.I', '去除切削毛刺并清洗切削液，作为机加工后的标准工序。', 'Wash and deburr cell', { w: 2, d: 2 }, '#5c7477', '#71c8c0', 1.45, '18 / min', '16 kW', ['机加工件'], ['洁净零件']),
   agv: equipment('agv', 'storage', '物流', 'AGV 叉车搬运车', 'AGV FORKLIFT Mk.I', '在原料库、线边库和成品库之间执行托盘搬运任务。', 'Autonomous forklift', { w: 2, d: 2 }, '#6e7370', '#dfb842', 1.35, '8 trips / h', '5 kW', ['托盘任务'], ['托盘任务']),
+  drone: equipment('drone', 'storage', '物流', '货运无人机', 'CARGO DRONE Mk.I', '在不同楼层的仓库与货架之间执行轻载空中运输任务。', 'ForgeCore cargo drone', { w: 3, d: 3 }, '#536e78', '#70d4d0', 1.8, '12 trips / h', '3 kW', ['运输任务'], ['运输任务']),
   storage: equipment('storage', 'storage', '物流', '成品缓存仓', 'FINISHED GOODS BUFFER Mk.I', '按批次缓存已检验产品，等待入库或出货。', 'Pallet buffer rack', { w: 2, d: 2 }, '#6c7674', '#d7b44a', 1.35, '240 / min', '4 kW', ['合格品'], ['待出货托盘']),
 }
 
@@ -130,6 +157,8 @@ export const BUILD_ASSET_PATHS: Partial<Record<BuildType, string>> = {
   assembler: '/models/panda/panda.urdf + robot_cell.glb / open cell, no fence',
   press: '/models/industrial/hydraulic_press_detail.glb',
   washing: '/models/industrial/wash_deburr_detail.glb',
+  agv: '/models/forgecore/forgecore_agv.glb',
+  drone: '/models/forgecore/forgecore_drone.glb',
   storage: '/models/industrial/pallet_buffer_detail.glb',
   splitter: '/models/industrial/flow_node_detail.glb',
   merger: '/models/industrial/flow_node_detail.glb',
@@ -150,7 +179,7 @@ OBJECT_DEFS.inspection.assetPath = '/models/panda/panda.urdf × 2 + procedural c
 OBJECT_DEFS.inspection.assetKind = 'runtime-assembly'
 
 export const EQUIPMENT_ORDER: BuildType[] = [
-  'source', 'oreMiner', 'smelter', 'press', 'washing', 'assembler', 'inspection', 'conveyor', 'splitter', 'merger', 'agv', 'storage', 'machine',
+  'source', 'oreMiner', 'smelter', 'press', 'washing', 'assembler', 'inspection', 'conveyor', 'splitter', 'merger', 'agv', 'drone', 'storage', 'machine',
 ]
 
 export const BUILD_BOUND = 24

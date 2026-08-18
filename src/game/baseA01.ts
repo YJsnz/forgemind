@@ -1,4 +1,5 @@
 import type { FactoryObject, Rotation } from './types'
+import { WAREHOUSE_RACKS } from './warehouse'
 
 const unit = (
   id: string,
@@ -6,7 +7,7 @@ const unit = (
   x: number,
   z: number,
   rotation: Rotation,
-  binding: Pick<FactoryObject, 'recipeId' | 'itemId'> = {},
+  binding: Pick<FactoryObject, 'recipeId' | 'itemId' | 'agvProgram'> = {},
 ): FactoryObject => ({ id, type, pos: { x, z }, rotation, ...binding })
 
 /**
@@ -18,7 +19,7 @@ const unit = (
 export const BASE_A01_OBJECTS: FactoryObject[] = [
   // 01 Receiving -> inbound AGV -> raw supermarket -> housing machining.
   unit('a01_infeed_steel', 'source', -23, 1, 0, { itemId: 'item_steel_blank' }),
-  unit('a01_agv_inbound', 'agv', -20, 1, 0),
+  unit('a01_agv_inbound', 'agv', -21, 4, 0, { agvProgram: { enabled: true, sourceObjectId: 'a01_warehouse_raw_rack_01', destinationObjectId: 'a01_raw_material_rack', itemId: 'item_steel_blank', loadQuantity: 100, priority: 2, policy: 'priority' } }),
   unit('a01_raw_material_rack', 'oreMiner', -18, 1, 0),
   unit('a01_cv_main_01', 'conveyor', -16, 1, 0),
   unit('a01_cv_main_02', 'conveyor', -15, 1, 0),
@@ -83,7 +84,7 @@ export const BASE_A01_OBJECTS: FactoryObject[] = [
   unit('a01_quality_splitter', 'splitter', 12, 1, 0),
   unit('a01_cv_finished', 'conveyor', 13, 1, 0),
   unit('a01_finished_buffer', 'storage', 14, 1, 0),
-  unit('a01_agv_outbound', 'agv', 16, 1, 0),
+  unit('a01_agv_outbound', 'agv', 16, 1, 0, { agvProgram: { enabled: true, sourceObjectId: 'a01_warehouse_raw_rack_02', destinationObjectId: 'a01_finished_buffer', itemId: 'item_steel_blank', loadQuantity: 100, priority: 1, policy: 'balanced' } }),
   unit('a01_cv_rework', 'conveyor', 12, 2, 90),
   unit('a01_rework_buffer', 'storage', 12, 3, 90),
   unit('a01_cv_quarantine', 'conveyor', 12, 0, 270),
@@ -91,8 +92,18 @@ export const BASE_A01_OBJECTS: FactoryObject[] = [
 
   // 06 Vehicles parked on the marked logistics aisle; these are visible fleet
   // capacity, not decorative machines embedded in the conveyor backbone.
-  unit('a01_agv_logistics_01', 'agv', -12, -14, 0),
-  unit('a01_agv_logistics_02', 'agv', 6, -14, 180),
+  unit('a01_agv_logistics_01', 'agv', -12, -14, 0, { agvProgram: { enabled: true, sourceObjectId: 'a01_warehouse_finished_rack_01', destinationObjectId: 'a01_raw_material_rack', itemId: 'item_steel_blank', loadQuantity: 100, priority: 0, policy: 'balanced' } }),
+  unit('a01_agv_logistics_02', 'agv', 6, -14, 180, { agvProgram: { enabled: true, sourceObjectId: 'a01_warehouse_raw_rack_01', destinationObjectId: 'a01_finished_buffer', itemId: 'item_steel_blank', loadQuantity: 100, priority: 0, policy: 'shortest' } }),
+  unit('a01_drone_logistics_01', 'drone', 18, -14, 180),
+
+  // 07 左侧仓储区：两组原料货架 + 两组成品缓存，东侧留出 AGV 装卸通道。
+  ...WAREHOUSE_RACKS.map((rack) => unit(
+    rack.id,
+    rack.tone === 'raw' ? 'oreMiner' : 'storage',
+    rack.pos.x,
+    rack.pos.z,
+    0,
+  )),
 ]
 
 export function createBaseA01Layout(): FactoryObject[] {

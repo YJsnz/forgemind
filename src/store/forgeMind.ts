@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { BuildType, FactoryObject, GridPos, Rotation } from '../game/types'
+import type { AgvProgram, BuildType, FactoryObject, GridPos, Rotation } from '../game/types'
 import { canPlace } from '../game/grid'
 import { DEFAULT_ITEMS, DEFAULT_RECIPES, type Item, type ItemCategory, type Recipe } from '../game/item'
 import { genId as itemGenId } from '../game/item'
@@ -7,6 +7,9 @@ import type { FactorySave } from '../game/save'
 import { SAVE_VERSION } from '../game/save'
 import type { SimulationSnapshot } from '../game/simulation'
 import { createBaseA01Layout } from '../game/baseA01'
+import { createBaseA02Layout } from '../game/baseA02'
+
+export type FactoryId = 'a01' | 'a02'
 
 /**
  * 低频 UI/编辑状态（补充设计 §5.3：只装低频状态；
@@ -29,6 +32,10 @@ export interface Ghost {
 }
 
 export interface ForgeMindState {
+  /** 当前工作场地：A-01 人工产线 / A-02 AI 生成实验场 */
+  factoryId: FactoryId
+  /** 场地布局缓存；切换场地时互不覆盖 */
+  factoryLayouts: Record<FactoryId, FactoryObject[]>
   /** 当前选中的建造工具类型；null = 无工具（浏览/选择模式） */
   buildType: BuildType | null
   /** 已放置对象 */
@@ -92,6 +99,8 @@ export interface ForgeMindState {
   bindRecipe: (objectId: string, recipeId: string | null) => void
   /** source 绑定产出物品 */
   bindItem: (objectId: string, itemId: string | null) => void
+  /** 配置 AGV 的起点、货物和终点任务 */
+  setAgvProgram: (objectId: string, program: AgvProgram | null) => void
 
   /** 设置仿真快照（仅 runner 调用，低频） */
   setSimSnapshot: (snap: SimulationSnapshot) => void
@@ -106,6 +115,10 @@ export interface ForgeMindState {
   importSave: (save: FactorySave) => void
   /** 清空全部（新建工厂） */
   clearAll: () => void
+  /** 切换工作场地，并恢复目标场地的独立布局与仿真快照 */
+  setFactory: (factoryId: FactoryId) => void
+  /** 由生成器或诊断副本一次性应用布局，并合并候选方案的物品与配方 */
+  applyLayout: (objects: FactoryObject[], layoutRecipes?: Recipe[], layoutItems?: Item[]) => void
 }
 
 const emptyGhost: Ghost = { type: 'machine', pos: null, rotation: 0, valid: false }
@@ -115,6 +128,7 @@ const emptySnapshot: SimulationSnapshot = {
   machines: [],
   sources: [],
   itemLots: [],
+  agvs: [],
   stats: { consumed: {}, produced: {} },
 }
 
@@ -126,8 +140,8 @@ interface FactoryHistoryEntry {
 const HISTORY_LIMIT = 80
 
 export const useForgeMindStore = create<ForgeMindState>((set, get) => {
-  let undoStack: FactoryHistoryEntry[] = []
-  let redoStack: FactoryHistoryEntry[] = []
+  const undoStacks: Record<FactoryId, FactoryHistoryEntry[]> = { a01: [], a02: [] }
+  const redoStacks: Record<FactoryId, FactoryHistoryEntry[]> = { a01: [], a02: [] }
 
   const capture = (state: Pick<ForgeMindState, 'objects' | 'selectedId'>): FactoryHistoryEntry => ({
     objects: state.objects,
@@ -135,13 +149,27 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
   })
 
   const pushHistory = (state: Pick<ForgeMindState, 'objects' | 'selectedId'>) => {
-    undoStack = [...undoStack, capture(state)].slice(-HISTORY_LIMIT)
-    redoStack = []
+    const factoryId = get().factoryId
+    undoStacks[factoryId] = [...undoStacks[factoryId], capture(state)].slice(-HISTORY_LIMIT)
+    redoStacks[factoryId] = []
   }
 
-  const historyFlags = () => ({ canUndo: undoStack.length > 0, canRedo: redoStack.length > 0 })
+  const historyFlags = () => {
+    const factoryId = get().factoryId
+    return { canUndo: undoStacks[factoryId].length > 0, canRedo: redoStacks[factoryId].length > 0 }
+  }
+
+  const snapshotByFactory: Record<FactoryId, SimulationSnapshot> = {
+    a01: emptySnapshot,
+    a02: emptySnapshot,
+  }
 
   return ({
+  factoryId: 'a01',
+  factoryLayouts: {
+    a01: createBaseA01Layout(),
+    a02: createBaseA02Layout(),
+  },
   buildType: null,
   objects: createBaseA01Layout(),
   ghost: emptyGhost,
@@ -243,9 +271,9 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
 
   undo: () =>
     set((s) => {
-      const previous = undoStack.pop()
+      const previous = undoStacks[s.factoryId].pop()
       if (!previous) return {}
-      redoStack.push(capture(s))
+      redoStacks[s.factoryId].push(capture(s))
       return {
         objects: previous.objects,
         selectedId: previous.selectedId,
@@ -258,9 +286,9 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
 
   redo: () =>
     set((s) => {
-      const next = redoStack.pop()
+      const next = redoStacks[s.factoryId].pop()
       if (!next) return {}
-      undoStack.push(capture(s))
+      undoStacks[s.factoryId].push(capture(s))
       return {
         objects: next.objects,
         selectedId: next.selectedId,
@@ -339,7 +367,23 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
       }
     }),
 
-  setSimSnapshot: (snap) => set({ simSnapshot: snap }),
+  setAgvProgram: (objectId, program) =>
+    set((s) => {
+      const object = s.objects.find((entry) => entry.id === objectId)
+      if (!object || object.type !== 'agv') return {}
+      const nextProgram = program ? { ...program, loadQuantity: Math.max(1, Math.round(program.loadQuantity)) } : undefined
+      if (JSON.stringify(object.agvProgram ?? null) === JSON.stringify(nextProgram ?? null)) return {}
+      pushHistory(s)
+      return {
+        objects: s.objects.map((entry) => (entry.id === objectId ? { ...entry, agvProgram: nextProgram } : entry)),
+        ...historyFlags(),
+      }
+    }),
+
+  setSimSnapshot: (snap) => {
+    snapshotByFactory[get().factoryId] = snap
+    set({ simSnapshot: snap })
+  },
   setSimPlaying: (p) => set({ simPlaying: p }),
   setSimSpeed: (x) => set({ simSpeed: x }),
   requestSimReset: () => set((s) => ({ simResetTick: s.simResetTick + 1 })),
@@ -356,9 +400,11 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
   },
 
   importSave: (save) => {
-    undoStack = []
-    redoStack = []
+    const factoryId = get().factoryId
+    undoStacks[factoryId] = []
+    redoStacks[factoryId] = []
     set({
+      factoryLayouts: { ...get().factoryLayouts, [factoryId]: save.objects },
       objects: save.objects,
       items: save.items,
       recipes: save.recipes,
@@ -375,9 +421,11 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
   },
 
   clearAll: () => {
-    undoStack = []
-    redoStack = []
+    const factoryId = get().factoryId
+    undoStacks[factoryId] = []
+    redoStacks[factoryId] = []
     set({
+      factoryLayouts: { ...get().factoryLayouts, [factoryId]: [] },
       objects: [],
       items: [],
       recipes: [],
@@ -392,5 +440,56 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
       canRedo: false,
     })
   },
+
+  setFactory: (factoryId) => {
+    set((s) => {
+      if (s.factoryId === factoryId) return {}
+      snapshotByFactory[s.factoryId] = s.simSnapshot
+      const nextSnapshot = snapshotByFactory[factoryId] ?? emptySnapshot
+      const nextObjects = s.factoryLayouts[factoryId] ?? []
+      return {
+        factoryId,
+        factoryLayouts: {
+          ...s.factoryLayouts,
+          [s.factoryId]: s.objects,
+        },
+        objects: nextObjects.map((object) => ({ ...object, pos: { ...object.pos } })),
+        selectedId: null,
+        buildType: null,
+        ghost: emptyGhost,
+        ghostPath: [],
+        ghostPathValid: [],
+        simSnapshot: nextSnapshot,
+        simPlaying: false,
+        simResetTick: s.simResetTick + 1,
+        canUndo: undoStacks[factoryId].length > 0,
+        canRedo: redoStacks[factoryId].length > 0,
+      }
+    })
+  },
+
+  applyLayout: (objects, layoutRecipes = [], layoutItems = []) =>
+    set((s) => {
+      pushHistory(s)
+      const mergeById = <T extends { id: string }>(current: T[], additions: T[]) => {
+        const byId = new Map(current.map((entry) => [entry.id, entry]))
+        additions.forEach((entry) => byId.set(entry.id, entry))
+        return Array.from(byId.values())
+      }
+      return {
+        objects: objects.map((object) => ({ ...object, pos: { ...object.pos } })),
+        recipes: mergeById(s.recipes, layoutRecipes),
+        items: mergeById(s.items, layoutItems),
+        selectedId: null,
+        buildType: null,
+        ghost: emptyGhost,
+        ghostPath: [],
+        ghostPathValid: [],
+        simSnapshot: emptySnapshot,
+        simPlaying: false,
+        simResetTick: s.simResetTick + 1,
+        ...historyFlags(),
+      }
+    }),
   })
 })

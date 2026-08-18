@@ -15,6 +15,8 @@ import { useForgeMindStore } from '../store/forgeMind'
 import { useAuthStore } from '../store/auth'
 import { DaiyuConveyorBatch, DaiyuEmbeddedModelBatch, DaiyuPandaBatch, DaiyuRuntime, DaiyuScenePrewarmer, DaiyuStaticModelBatch } from '../engine/daiyu'
 import type { BuildType, FactoryObject } from '../game/types'
+import { AgvRouteVisual } from './AgvRouteVisual'
+import { WarehouseZone } from './WarehouseZone'
 
 /**
  * 3D 工厂视口 —— 主画布。
@@ -57,6 +59,10 @@ export function FactoryScene({ view, visible = true }: { view: FactoryView; visi
     () => new Set(simSnapshot.itemLots.map((lot) => lot.conveyorId)),
     [simSnapshot.itemLots],
   )
+  const agvRuntimeMap = useMemo(
+    () => new Map(simSnapshot.agvs.map((agv) => [agv.objectId, agv])),
+    [simSnapshot.agvs],
+  )
   const batchedConveyors = useMemo(
     () => objects.filter((object) => object.type === 'conveyor' && !getConveyorLinks(object, objects).corner),
     [objects],
@@ -67,6 +73,7 @@ export function FactoryScene({ view, visible = true }: { view: FactoryView; visi
   }, [batchedConveyors, objects])
   const staticMachineObjects = useMemo(() => objects.filter((object) => object.type === 'machine'), [objects])
   const staticAgvObjects = useMemo(() => objects.filter((object) => object.type === 'agv'), [objects])
+  const staticDroneObjects = useMemo(() => objects.filter((object) => object.type === 'drone'), [objects])
   const staticPressObjects = useMemo(() => objects.filter((object) => object.type === 'press'), [objects])
   const staticWashingObjects = useMemo(() => objects.filter((object) => object.type === 'washing'), [objects])
   const staticStorageObjects = useMemo(() => objects.filter((object) => object.type === 'storage'), [objects])
@@ -82,8 +89,8 @@ export function FactoryScene({ view, visible = true }: { view: FactoryView; visi
   )
   const batchedPandaIds = useMemo(() => new Set(batchedPandaObjects.map((object) => object.id)), [batchedPandaObjects])
   const staticBatchedIds = useMemo(
-    () => new Set([...staticMachineObjects, ...staticAgvObjects, ...staticPressObjects, ...staticWashingObjects, ...staticStorageObjects].map((object) => object.id)),
-    [staticAgvObjects, staticMachineObjects, staticPressObjects, staticStorageObjects, staticWashingObjects],
+    () => new Set([...staticMachineObjects, ...staticAgvObjects, ...staticDroneObjects, ...staticPressObjects, ...staticWashingObjects, ...staticStorageObjects].map((object) => object.id)),
+    [staticAgvObjects, staticDroneObjects, staticMachineObjects, staticPressObjects, staticStorageObjects, staticWashingObjects],
   )
   const castDetailedShadows = objects.length <= 120
 
@@ -129,6 +136,9 @@ export function FactoryScene({ view, visible = true }: { view: FactoryView; visi
           position={[0, 0.005, 0]}
         />
 
+        <WarehouseZone />
+        <AgvRouteVisual agvs={simSnapshot.agvs} />
+
         {/* 已放置对象 */}
         <DaiyuConveyorBatch
           objects={batchedConveyors}
@@ -138,7 +148,8 @@ export function FactoryScene({ view, visible = true }: { view: FactoryView; visi
           onSelect={select}
         />
         <DaiyuStaticModelBatch type="machine" objects={staticMachineObjects} castShadows={castDetailedShadows} onSelect={select} />
-        <DaiyuStaticModelBatch type="agv" objects={staticAgvObjects} castShadows={castDetailedShadows} onSelect={select} />
+        <DaiyuStaticModelBatch type="agv" objects={staticAgvObjects} motion={agvRuntimeMap} castShadows={castDetailedShadows} onSelect={select} />
+        <DaiyuStaticModelBatch type="drone" objects={staticDroneObjects} castShadows={castDetailedShadows} onSelect={select} />
         <DaiyuStaticModelBatch type="press" objects={staticPressObjects} castShadows={castDetailedShadows} onSelect={select} />
         <DaiyuStaticModelBatch type="washing" objects={staticWashingObjects} castShadows={castDetailedShadows} onSelect={select} />
         <DaiyuStaticModelBatch type="storage" objects={staticStorageObjects} castShadows={castDetailedShadows} onSelect={select} />

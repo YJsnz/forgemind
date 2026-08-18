@@ -19,6 +19,8 @@ export interface Item {
   size: number
   /** 备注 */
   note?: string
+  /** ForgeCore core item GLB, copied into this app's public model registry. */
+  modelPath?: string
 }
 
 /** 配方单条输入 / 输出 */
@@ -58,17 +60,18 @@ export function genId(prefix: string): string {
 
 /** Starter industrial vocabulary used by the build workstation. */
 export const DEFAULT_ITEMS: Item[] = [
-  { id: 'item_steel_blank', name: '钢制毛坯', category: 'raw', color: '#87959a', size: 1 },
-  { id: 'item_steel_sheet', name: '冷轧钢板', category: 'raw', color: '#9ba8aa', size: 1 },
-  { id: 'item_copper_wire', name: '铜线盘', category: 'raw', color: '#c87948', size: 1 },
-  { id: 'item_fastener', name: '标准紧固件', category: 'raw', color: '#6d7b7b', size: 1 },
-  { id: 'item_fastener_kit', name: '紧固件齐套包', category: 'intermediate', color: '#7f8b88', size: 1 },
-  { id: 'item_machined_housing', name: '机加工壳体', category: 'intermediate', color: '#71868a', size: 1 },
-  { id: 'item_stamped_shell', name: '冲压壳体', category: 'intermediate', color: '#8a9ca0', size: 1 },
-  { id: 'item_clean_part', name: '洁净零件', category: 'intermediate', color: '#5f9c9c', size: 1 },
-  { id: 'item_coil', name: '定子线圈', category: 'intermediate', color: '#c28e35', size: 1 },
-  { id: 'item_motor', name: '电机总成', category: 'product', color: '#4c9fa0', size: 1 },
-  { id: 'item_inspected_motor', name: '已检电机', category: 'product', color: '#3f9d79', size: 1 },
+  { id: 'item_steel_blank', name: '钢制毛坯', category: 'raw', color: '#87959a', size: 1, modelPath: 'material/ingot.glb' },
+  { id: 'item_steel_sheet', name: '冷轧钢板', category: 'raw', color: '#9ba8aa', size: 1, modelPath: 'material/plate.glb' },
+  { id: 'item_copper_wire', name: '铜线盘', category: 'raw', color: '#c87948', size: 1, modelPath: 'material/wire-coil.glb' },
+  { id: 'item_screw', name: '螺丝', category: 'raw', color: '#6d7b7b', size: 1, modelPath: 'mechanical/bolt.glb' },
+  { id: 'item_fastener', name: '标准紧固件', category: 'raw', color: '#6d7b7b', size: 1, modelPath: 'mechanical/bolt.glb' },
+  { id: 'item_fastener_kit', name: '紧固件齐套包', category: 'intermediate', color: '#7f8b88', size: 1, modelPath: 'package/box.glb' },
+  { id: 'item_machined_housing', name: '机加工壳体', category: 'intermediate', color: '#71868a', size: 1, modelPath: 'material/chunk.glb' },
+  { id: 'item_stamped_shell', name: '冲压壳体', category: 'intermediate', color: '#8a9ca0', size: 1, modelPath: 'material/plate.glb' },
+  { id: 'item_clean_part', name: '洁净零件', category: 'intermediate', color: '#5f9c9c', size: 1, modelPath: 'mechanical/gear.glb' },
+  { id: 'item_coil', name: '定子线圈', category: 'intermediate', color: '#c28e35', size: 1, modelPath: 'material/coil.glb' },
+  { id: 'item_motor', name: '电机总成', category: 'product', color: '#4c9fa0', size: 1, modelPath: 'electronic/motor.glb' },
+  { id: 'item_inspected_motor', name: '已检电机', category: 'product', color: '#3f9d79', size: 1, modelPath: 'electronic/motor.glb' },
 ]
 
 export const DEFAULT_RECIPES: Recipe[] = [
