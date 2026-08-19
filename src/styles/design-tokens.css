@@ -19,4 +19,7 @@
   --fm-glow: 0 0 0 1px var(--fm-accent), 0 5px 20px rgba(231, 173, 24, 0.16);
   --fm-font-sans: 'MiSans', 'HarmonyOS Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
   --fm-font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  --fm-font-display: 'Forge Bigger', 'Arial Narrow', sans-serif;
+  --fm-font-title: 'Forge MaiCai', 'MiSans', 'Microsoft YaHei', sans-serif;
+  --fm-font-data: 'Forge Doto', 'JetBrains Mono', Consolas, monospace;
 }

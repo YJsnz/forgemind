@@ -2,7 +2,6 @@ package com.forgemind.store;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.forgemind.model.FactorySave;
-import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -10,10 +9,10 @@ import java.nio.file.Paths;
 import java.util.List;
 
 /**
- * JSON 文件存储（补充设计 §4.4：7 天冲刺不接数据库，静态结构用 JSON 持久化）。
- * 单文件 data/factory.json，读时缺失则返回空存档。
+ * 旧版 JSON 文件存储，仅保留给历史数据查看或人工迁移使用。
+ * 当前运行时由 FactoryDbStore 写入 MySQL；此类不再注册为 Spring Bean，避免
+ * 新接口误用本地单文件并造成多套数据源分叉。
  */
-@Component
 public class JsonStore {
 
     private static final Path DATA_PATH = Paths.get("data", "factory.json");

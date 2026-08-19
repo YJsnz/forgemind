@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { BUILD_ASSET_PATHS, OBJECT_DEFS } from '../game/types'
+import { getObjectDef } from '../game/types'
 import { dirToRotation } from '../game/dir'
 import { objectToWorld, rotatedFootprint } from '../game/grid'
 import { useForgeMindStore, type Ghost } from '../store/forgeMind'
@@ -14,14 +14,14 @@ export function GhostPreview({ ghost }: { ghost: Ghost }) {
     return <group>{ghostPath.map((pos, index) => <ConveyorGhost key={`${pos.x}:${pos.z}`} pos={pos} rotation={pathRotation(ghostPath, index, ghost.rotation)} valid={ghostPathValid[index] ?? ghost.valid} index={index} />)}</group>
   }
 
-  const def = OBJECT_DEFS[ghost.type]
+  const def = getObjectDef(ghost.type, ghost.resourceId)
   const fp = rotatedFootprint(def.footprint, ghost.rotation)
-  const { x, z } = objectToWorld({ type: ghost.type, pos: ghost.pos, rotation: ghost.rotation })
+  const { x, z } = objectToWorld({ type: ghost.type, resourceId: ghost.resourceId, pos: ghost.pos, rotation: ghost.rotation })
   const color = ghost.valid ? '#66bb6a' : '#ef5350'
-  const hasSplitAsset = Boolean(BUILD_ASSET_PATHS[ghost.type])
+  const hasSplitAsset = Boolean(def.assetPath)
 
   return <group position={[x, 0, z]} rotation={[0, rotationAngle(ghost.rotation), 0]}>
-    {hasSplitAsset ? <EquipmentModel type={ghost.type} color={def.color} accent={def.accent} height={def.height} /> : <PreviewVolume footprint={fp} height={def.height} color={color} />}
+    {hasSplitAsset ? <EquipmentModel type={ghost.type} resourceId={ghost.resourceId} color={def.color} accent={def.accent} height={def.height} /> : <PreviewVolume footprint={fp} height={def.height} color={color} />}
     <lineSegments><edgesGeometry args={[new THREE.BoxGeometry(fp.w, def.height, fp.d)]} /><lineBasicMaterial color={color} /></lineSegments>
   </group>
 }

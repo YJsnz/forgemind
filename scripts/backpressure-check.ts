@@ -16,15 +16,11 @@ const recipe: Recipe = {
   durationSec: 1.0,
 }
 
-// 传送带 [1,0] 是死路（朝 +X 但 [2,0] 无对象）——但我们在 [2,0] 再放一条朝 +X 的传送带
-// 更直接：物品进入 belt_out 后，belt_out 下游 [3,0] 是空格 → 按新语义会消失。
-// 要测背压，需要下游不是空格。这里构造：belt_out 朝 -X（反方向）指向机器，
-// 物品会尝试进入机器，但机器不 idle 时拒绝 → 头堵。
+// 没有绑定配方的机器会拒收物料，模拟下游停机造成的头堵。
 const objects: FactoryObject[] = [
-  { id: 'src', type: 'source', pos: { x: -1, z: 0 }, rotation: 0, itemId: ironId },
-  { id: 'belt_in', type: 'conveyor', pos: { x: 0, z: 0 }, rotation: 0 },
-  { id: 'machine', type: 'machine', pos: { x: 1, z: 0 }, rotation: 0, recipeId: 'r' },
-  { id: 'belt_out', type: 'conveyor', pos: { x: 2, z: 0 }, rotation: 180 }, // 朝 -X 指回机器
+  { id: 'src', type: 'source', pos: { x: -3, z: 0 }, rotation: 0, itemId: ironId },
+  { id: 'belt', type: 'conveyor', pos: { x: 0, z: 0 }, rotation: 0 },
+  { id: 'blocked-machine', type: 'machine', pos: { x: 1, z: 0 }, rotation: 0 },
 ]
 
 const engine = new SimulationEngine(1)
@@ -32,13 +28,13 @@ engine.init(objects, [recipe])
 engine.advance(20)
 
 const snap = engine.getSnapshot()
-const lotOnBeltOut = snap.itemLots.find((l) => l.conveyorId === 'belt_out')
-console.log('belt_out 上的物品:', lotOnBeltOut ? `offset=${lotOnBeltOut.offset.toFixed(2)}` : '无')
-console.log('在途物品总数:', snap.itemLots.length)
+const lot = snap.itemLots.find((l) => l.conveyorId === 'belt')
+console.log('belt 上的物品:', lot ? `offset=${lot.offset.toFixed(2)}` : '无')
 
 // 头堵时应停在下游末端 offset≈1，不消失
-if (snap.itemLots.length > 0) {
+if (lot && lot.offset === 1 && (snap.stats.produced[gearId] ?? 0) === 0) {
   console.log('✅ 背压生效：物品没有凭空消失')
 } else {
   console.log('❌ 背压失效：物品消失了')
+  process.exit(1)
 }

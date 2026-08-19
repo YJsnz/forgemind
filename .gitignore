@@ -1,8 +1,19 @@
 # dependencies
 node_modules/
 **/.venv/
+**/.venv-*/
+**/venv/
 *.pyc
 **/__pycache__/
+
+# local speech / assistant model weights (download separately)
+voice-chat/models/**/*.onnx
+voice-chat/models/**/*.onnx.data
+voice-chat/models/**/*.bin
+voice-chat/models/**/*.pt
+voice-chat/models/**/*.pth
+voice-chat/models/**/*.safetensors
+voice-chat/models/**/*.gguf
 
 # build output
 dist/
