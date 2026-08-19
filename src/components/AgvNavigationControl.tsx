@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AgvProgram, AgvRouteAction, AgvRouteWaypoint, FactoryObject } from '../game/types'
-import { OBJECT_DEFS } from '../game/types'
+import { getObjectDef } from '../game/types'
 import { useForgeMindStore } from '../store/forgeMind'
 
 const EMPTY_PROGRAM: AgvProgram = {
@@ -29,7 +29,7 @@ function programFor(object: FactoryObject | undefined, storage: FactoryObject[],
 function waypointFor(object: FactoryObject | undefined, action: AgvRouteAction, fallbackLabel: string): AgvRouteWaypoint {
   return {
     id: `${action}-${object?.id ?? fallbackLabel}`,
-    label: object ? OBJECT_DEFS[object.type].label : fallbackLabel,
+    label: object ? getObjectDef(object.type, object.resourceId).label : fallbackLabel,
     objectId: object?.id ?? null,
     position: object ? { x: object.pos.x + 0.5, z: object.pos.z + 0.5 } : { x: 0, z: 0 },
     action,
@@ -51,7 +51,7 @@ function routeWithEndpoints(draft: AgvProgram, storage: FactoryObject[]): AgvRou
 }
 
 function objectLabel(object: FactoryObject) {
-  return `${OBJECT_DEFS[object.type].label} · ${object.id.replace(/^a01_/, '')}`
+  return `${getObjectDef(object.type, object.resourceId).label} · ${object.id.replace(/^a01_/, '')}`
 }
 
 function phaseLabel(phase: string | undefined) {
@@ -155,7 +155,7 @@ export function AgvNavigationControl() {
             <div className="fm-agv-route-designer">
               <div className="fm-agv-route-designer-head"><div><span className="fm-production-label">ROUTE DESIGNER</span><b>自定义导航路线</b><small>可插入中间站；车辆会在动态障碍出现时保留任务顺序并重新规划。</small></div><strong>{(draft.route ?? []).length.toString().padStart(2, '0')} STOPS</strong></div>
               <div className="fm-agv-route-list">{(draft.route ?? []).map((waypoint, index) => <div className="fm-agv-route-stop" key={waypoint.id}><span className="fm-agv-route-index">{String(index + 1).padStart(2, '0')}</span><div><b>{waypoint.label}</b><small>{waypoint.objectId ?? '自由点位'} · {waypoint.action === 'load' ? '装货' : waypoint.action === 'unload' ? '卸货' : '经过'}</small></div><select value={waypoint.action} disabled={index === 0 || index === (draft.route?.length ?? 0) - 1} onChange={(event) => setDraft((current) => ({ ...current, route: (current.route ?? []).map((entry, entryIndex) => entryIndex === index ? { ...entry, action: event.target.value as AgvRouteAction } : entry) }))}><option value="pass">经过</option><option value="load">装货</option><option value="unload">卸货</option></select><button type="button" onClick={() => moveRouteStop(index, -1)} disabled={index <= 1}>↑</button><button type="button" onClick={() => moveRouteStop(index, 1)} disabled={index >= (draft.route?.length ?? 0) - 2}>↓</button><button type="button" onClick={() => removeRouteStop(index)} disabled={index === 0 || index === (draft.route?.length ?? 0) - 1}>×</button></div>)}</div>
-              <div className="fm-agv-route-add"><span>添加中间站</span>{storageObjects.filter((object) => !(draft.route ?? []).some((waypoint) => waypoint.objectId === object.id)).map((object) => <button type="button" key={object.id} onClick={() => addRouteStop(object)}>+ {OBJECT_DEFS[object.type].label}</button>)}</div>
+              <div className="fm-agv-route-add"><span>添加中间站</span>{storageObjects.filter((object) => !(draft.route ?? []).some((waypoint) => waypoint.objectId === object.id)).map((object) => <button type="button" key={object.id} onClick={() => addRouteStop(object)}>+ {getObjectDef(object.type, object.resourceId).label}</button>)}</div>
             </div>
 
             <div className="fm-agv-live-route"><span>LIVE ROUTE</span><b>{selectedItem?.name ?? '未选择货物'} × {draft.loadQuantity}</b><small>{runtime ? `${phaseLabel(runtime.phase)} · ${runtime.currentWaypointLabel} · ${runtime.decision === 'yielding' ? '正在避让车辆' : runtime.decision === 'replanning' ? '正在重新规划' : runtime.decision === 'recovering' ? '恢复动作中' : runtime.motionStatus === 'moving' ? '导航中' : '待命'} · 已完成 ${runtime.completedTrips} 趟 · ${runtime.distanceTravelled.toFixed(1)} m` : '启动仿真后显示实时路径'}</small></div>

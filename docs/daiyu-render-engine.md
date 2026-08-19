@@ -1,5 +1,7 @@
 # 宝钗（Baochai）自研工厂渲染引擎技术文档
 
+> 当前实现（2026-08-19）：渲染层已经覆盖自研 Daiyu runtime、工厂楼层容器、内置/用户导入模型、AGV 与无人机实体、传送带批处理和模型预览。资源导入的 JSON/GLB 校验与用户隔离不属于渲染引擎本身，分别由 `src/game/resourcePack.ts` 和 Spring Boot `/api/resources` 负责。标签、面板和楼层可见性仍需在场景层与 UI 层分别控制，不能把 HTML 面板当作三维遮挡系统。
+
 **项目：** ForgeMind 智能工厂数字孪生平台  
 **引擎名称：** 宝钗（Baochai）
 **当前版本：** 0.1.0  

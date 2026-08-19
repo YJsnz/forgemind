@@ -7,8 +7,94 @@ const unit = (
   x: number,
   z: number,
   rotation: Rotation,
-  binding: Pick<FactoryObject, 'recipeId' | 'itemId' | 'agvProgram'> = {},
+  binding: Pick<FactoryObject, 'recipeId' | 'itemId' | 'agvProgram' | 'floorId'> = {},
 ): FactoryObject => ({ id, type, pos: { x, z }, rotation, ...binding })
+
+const floorUnit = (
+  floorId: 2 | 3,
+  id: string,
+  type: FactoryObject['type'],
+  x: number,
+  z: number,
+  rotation: Rotation,
+  binding: Pick<FactoryObject, 'recipeId' | 'itemId' | 'agvProgram'> = {},
+): FactoryObject => unit(id, type, x, z, rotation, { ...binding, floorId })
+
+/** L2: component manufacturing and kitting floor supplied through the L1 drone dock. */
+export const FLOOR_L2_OBJECTS: FactoryObject[] = [
+  // Steel housing: machining -> wash/deburr -> clean-part buffer.
+  floorUnit(2, 'l2_infeed_steel', 'source', -23, -10, 0, { itemId: 'item_steel_blank' }),
+  floorUnit(2, 'l2_cv_steel_01', 'conveyor', -22, -10, 0),
+  floorUnit(2, 'l2_cv_steel_02', 'conveyor', -21, -10, 0),
+  floorUnit(2, 'l2_cnc_housing', 'smelter', -20, -10, 0, { recipeId: 'recipe_machining' }),
+  floorUnit(2, 'l2_cv_housing_01', 'conveyor', -17, -10, 0),
+  floorUnit(2, 'l2_cv_housing_02', 'conveyor', -16, -10, 0),
+  floorUnit(2, 'l2_wash_deburr', 'washing', -15, -10, 0, { recipeId: 'recipe_wash' }),
+  floorUnit(2, 'l2_cv_clean_01', 'conveyor', -13, -10, 0),
+  floorUnit(2, 'l2_cv_clean_02', 'conveyor', -12, -10, 0),
+  floorUnit(2, 'l2_clean_buffer', 'storage', -11, -10, 0),
+
+  // Steel sheet: stamping -> shell buffer.
+  floorUnit(2, 'l2_infeed_sheet', 'source', -4, 13, 270, { itemId: 'item_steel_sheet' }),
+  floorUnit(2, 'l2_cv_sheet_01', 'conveyor', -4, 12, 270),
+  floorUnit(2, 'l2_cv_sheet_02', 'conveyor', -4, 11, 270),
+  floorUnit(2, 'l2_press', 'press', -4, 9, 270, { recipeId: 'recipe_stamping' }),
+  floorUnit(2, 'l2_cv_shell_01', 'conveyor', -4, 7, 270),
+  floorUnit(2, 'l2_cv_shell_02', 'conveyor', -4, 6, 270),
+  floorUnit(2, 'l2_shell_buffer', 'storage', -4, 4, 270),
+
+  // Copper coil: winding -> coil buffer.
+  floorUnit(2, 'l2_infeed_copper', 'source', 7, -14, 0, { itemId: 'item_copper_wire' }),
+  floorUnit(2, 'l2_cv_copper_01', 'conveyor', 8, -14, 0),
+  floorUnit(2, 'l2_cv_copper_02', 'conveyor', 9, -14, 0),
+  floorUnit(2, 'l2_coil_winding', 'machine', 10, -14, 0, { recipeId: 'recipe_coil' }),
+  floorUnit(2, 'l2_cv_coil_01', 'conveyor', 11, -14, 0),
+  floorUnit(2, 'l2_cv_coil_02', 'conveyor', 12, -14, 0),
+  floorUnit(2, 'l2_coil_buffer', 'storage', 13, -14, 0),
+
+  // Fasteners: four-piece kitting cell -> kit buffer.
+  floorUnit(2, 'l2_infeed_fastener', 'source', -23, 10, 0, { itemId: 'item_fastener' }),
+  floorUnit(2, 'l2_cv_fastener_01', 'conveyor', -22, 10, 0),
+  floorUnit(2, 'l2_cv_fastener_02', 'conveyor', -21, 10, 0),
+  floorUnit(2, 'l2_kitting', 'machine', -20, 10, 0, { recipeId: 'recipe_fastener_kit' }),
+  floorUnit(2, 'l2_cv_kit_01', 'conveyor', -19, 10, 0),
+  floorUnit(2, 'l2_cv_kit_02', 'conveyor', -18, 10, 0),
+  floorUnit(2, 'l2_kit_buffer', 'storage', -17, 10, 0),
+]
+
+/** L3: drone-fed multi-input assembly, QA, packaging, and finished-goods dispatch. */
+export const FLOOR_L3_OBJECTS: FactoryObject[] = [
+  // Four independent drone-fed input lanes converge on the robotic assembly cell.
+  floorUnit(3, 'l3_infeed_clean_part', 'source', -8, 1, 0, { itemId: 'item_clean_part' }),
+  ...[-7, -6, -5, -4, -3, -2, -1, 0].map((x) => floorUnit(3, `l3_cv_clean_${x}`, 'conveyor', x, 1, 0)),
+  floorUnit(3, 'l3_infeed_shell', 'source', 3, 10, 270, { itemId: 'item_stamped_shell' }),
+  ...[9, 8, 7, 6, 5, 4].map((z) => floorUnit(3, `l3_cv_shell_${z}`, 'conveyor', 3, z, 270)),
+  floorUnit(3, 'l3_infeed_kit', 'source', 3, -7, 90, { itemId: 'item_fastener_kit' }),
+  ...[-6, -5, -4, -3, -2, -1].map((z) => floorUnit(3, `l3_cv_kit_${z}`, 'conveyor', 3, z, 90)),
+  floorUnit(3, 'l3_infeed_coil', 'source', 10, -10, 180, { itemId: 'item_coil' }),
+  // Coil input turns north outside the QA lane, then approaches the
+  // assembler's free rear dock at x=1,z=2.
+  floorUnit(3, 'l3_cv_coil_09', 'conveyor', 9, -10, 180),
+  floorUnit(3, 'l3_cv_coil_08', 'conveyor', 8, -10, 180),
+  floorUnit(3, 'l3_cv_coil_turn_01', 'conveyor', 8, -9, 90),
+  ...[-8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((z) => floorUnit(3, `l3_cv_coil_y${z}`, 'conveyor', 8, z, 90)),
+  floorUnit(3, 'l3_cv_coil_turn_02', 'conveyor', 8, 12, 180),
+  ...[7, 6, 5, 4, 3, 2, 1, 0].map((x) => floorUnit(3, `l3_cv_coil_x${x}`, 'conveyor', x, 12, 180)),
+  floorUnit(3, 'l3_cv_coil_turn_03', 'conveyor', 0, 11, 270),
+  ...[10, 9, 8, 7, 6, 5, 4, 3].map((z) => floorUnit(3, `l3_cv_coil_drop${z}`, 'conveyor', 0, z, 270)),
+  floorUnit(3, 'l3_cv_coil_approach', 'conveyor', 0, 2, 0),
+
+  floorUnit(3, 'l3_robotic_assembly', 'assembler', 2, 0, 0, { recipeId: 'recipe_motor' }),
+  floorUnit(3, 'l3_cv_assembly_out_01', 'conveyor', 5, 1, 0),
+  floorUnit(3, 'l3_cv_assembly_out_02', 'conveyor', 6, 1, 0),
+  floorUnit(3, 'l3_vision_inspection', 'inspection', 7, 1, 0, { recipeId: 'recipe_inspection' }),
+  floorUnit(3, 'l3_cv_qa_01', 'conveyor', 9, 1, 0),
+  floorUnit(3, 'l3_cv_qa_02', 'conveyor', 10, 1, 0),
+  floorUnit(3, 'l3_packaging', 'machine', 11, 1, 0, { recipeId: 'recipe_packaging' }),
+  floorUnit(3, 'l3_quality_splitter', 'splitter', 12, 1, 0),
+  floorUnit(3, 'l3_cv_finished', 'conveyor', 13, 1, 0),
+  floorUnit(3, 'l3_finished_buffer', 'storage', 14, 1, 0),
+]
 
 /**
  * Base A-01 follows a real one-way factory flow rather than a symmetrical game
@@ -19,6 +105,8 @@ const unit = (
 export const BASE_A01_OBJECTS: FactoryObject[] = [
   // 01 Receiving -> inbound AGV -> raw supermarket -> housing machining.
   unit('a01_infeed_steel', 'source', -23, 1, 0, { itemId: 'item_steel_blank' }),
+  unit('a01_cv_receiving_01', 'conveyor', -20, 1, 0),
+  unit('a01_cv_receiving_02', 'conveyor', -19, 1, 0),
   unit('a01_agv_inbound', 'agv', -21, 4, 0, { agvProgram: { enabled: true, sourceObjectId: 'a01_warehouse_raw_rack_01', destinationObjectId: 'a01_raw_material_rack', itemId: 'item_steel_blank', loadQuantity: 100, priority: 2, policy: 'priority' } }),
   unit('a01_raw_material_rack', 'oreMiner', -18, 1, 0),
   unit('a01_cv_main_01', 'conveyor', -16, 1, 0),
@@ -104,6 +192,9 @@ export const BASE_A01_OBJECTS: FactoryObject[] = [
     rack.pos.z,
     0,
   )),
+
+  ...FLOOR_L2_OBJECTS,
+  ...FLOOR_L3_OBJECTS,
 ]
 
 export function createBaseA01Layout(): FactoryObject[] {

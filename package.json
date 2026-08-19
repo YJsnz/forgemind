@@ -14,7 +14,11 @@
     "sim:smoke": "node scripts/run-sim.mjs scripts/sim-smoke.ts",
     "sim:backpressure": "node scripts/run-sim.mjs scripts/backpressure-check.ts",
     "assistant:protocol": "node scripts/run-sim.mjs scripts/assistant-protocol-check.ts",
-    "save:regression": "node scripts/run-sim.mjs scripts/save-regression.ts"
+    "save:regression": "node scripts/run-sim.mjs scripts/save-regression.ts",
+    "models:previews": "node scripts/generate-item-previews.mjs",
+    "models:validate": "node scripts/validate-item-models.mjs",
+    "models:validate:strict": "node scripts/validate-item-models.mjs --strict",
+    "models:refresh": "node scripts/generate-item-previews.mjs && node scripts/validate-item-models.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",

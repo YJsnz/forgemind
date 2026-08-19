@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import { OBJECT_DEFS } from '../game/types'
+import { getObjectDef } from '../game/types'
 import { gridToWorld, objectPortCells, objectPortCellsForSide, objectToWorld, occupiedCells, rotatedFootprint } from '../game/grid'
 import { rotationToDir } from '../game/dir'
 import { EquipmentModel, RuntimeDetailSignal } from './EquipmentModel'
@@ -40,7 +40,7 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   suppressConveyor?: boolean
   onClick: (id: string) => void
 }) {
-  const def = OBJECT_DEFS[obj.type]
+  const def = getObjectDef(obj.type, obj.resourceId)
   const fp = rotatedFootprint(def.footprint, obj.rotation)
   const { x, z } = objectToWorld(obj)
   const group = useRef<THREE.Group>(null)
@@ -84,7 +84,7 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
     >
       {isMachine ? (
         <>
-        {!suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />}
+        {!suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />}
           {/* 状态色底座（显示机器状态，模型上方不遮挡） */}
           <mesh position={[0, 0.025, 0]} receiveShadow>
             <boxGeometry args={[fp.w, 0.04, fp.d]} />
@@ -100,9 +100,9 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
           </mesh>
         </>
       ) : def.role === 'conveyor' || def.role === 'storage' ? (
-        !suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
+        !suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
       ) : (
-        !suppressEquipmentModel && <EquipmentModel type={obj.type} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
+        !suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
       )}
 
       {suppressEquipmentModel && obj.type === 'press' && (
@@ -235,7 +235,7 @@ function PortMarker({ kind, port, side, obj, color }: { kind: 'input' | 'output'
   }
   const sideDirection = sideData[side]
   const arrow = kind === 'output' ? sideDirection : { dx: -sideDirection.dx, dz: -sideDirection.dz }
-  const footprint = rotatedFootprint(OBJECT_DEFS[obj.type].footprint, obj.rotation)
+  const footprint = rotatedFootprint(getObjectDef(obj.type, obj.resourceId).footprint, obj.rotation)
   const bodyEdgeDistance = side === 'front' || side === 'back' ? footprint.w / 2 : footprint.d / 2
   const markerDistance = Math.abs(side === 'front' || side === 'back' ? edge.x : edge.z)
   const bridgeLength = Math.max(0.32, markerDistance - bodyEdgeDistance)

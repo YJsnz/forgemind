@@ -1,10 +1,11 @@
-import { isTransportType, objectRole, type AgvProgram, type AgvRouteAction, type AgvRouteWaypoint, type FactoryObject } from './types'
+import { isTransportType, objectRole, type AgvProgram, type AgvRouteAction, type AgvRouteWaypoint, type FactoryFloorId, type FactoryObject } from './types'
 import type { Recipe } from './item'
 import { mulberry32 } from './rng'
 import { rotationToDir, cellKey } from './dir'
 import { objectPortCell, objectPortCells, objectToWorld, occupiedCells } from './grid'
-import { agvDockCandidates, findAgvPath, type AgvDynamicObstacle, type AgvNavigationPoint } from './agvNavigation'
+import { AGV_CENTER_CLEARANCE, AGV_NAV_RADIUS, agvDockCandidates, findAgvPath, type AgvDynamicObstacle, type AgvNavigationPoint } from './agvNavigation'
 import { WAREHOUSE_AGV_ROUTE } from './warehouse'
+import { DRONE_DOCK, DRONE_FLOOR_ELEVATIONS, FLOOR_DELIVERY_POINTS, getDroneRoute } from './droneNavigation'
 
 /**
  * 仿真引擎（补充设计 §3 内核）—— 唯一真相源。
@@ -34,6 +35,8 @@ export const CONVEYOR_SPEED = 2
 export const SOURCE_INTERVAL = 1.0
 export const SOURCE_TRANSFER_TIME = 1.2
 
+const floorCellKey = (floorId: FactoryFloorId | undefined, x: number, z: number): string => `${floorId ?? 1}:${cellKey(x, z)}`
+
 /** 机器运行时状态（§3.4 状态机） */
 export type MachineState = 'idle' | 'loading' | 'processing' | 'output'
 
@@ -55,6 +58,8 @@ export interface ItemLot {
   itemId: string
   /** 当前所在传送带 id */
   conveyorId: string
+  /** 物料随输送带继承的楼层，旧快照默认视为 L1。 */
+  floorId: FactoryFloorId
   /** 沿 conveyor 朝向的格内进度 0..1 */
   offset: number
 }
@@ -64,6 +69,16 @@ export interface SimStats {
   produced: Record<string, number>
 }
 
+export type FloorSimStats = Record<FactoryFloorId, SimStats>
+
+function createFloorStats(): FloorSimStats {
+  return {
+    1: { consumed: {}, produced: {} },
+    2: { consumed: {}, produced: {} },
+    3: { consumed: {}, produced: {} },
+  }
+}
+
 /** 快照：前端消费的最小接口 */
 export interface SimulationSnapshot {
   timeSec: number
@@ -71,7 +86,9 @@ export interface SimulationSnapshot {
   sources: SourceRuntimeSnapshot[]
   itemLots: ItemLot[]
   agvs: AgvRuntimeSnapshot[]
+  drones: DroneRuntimeSnapshot[]
   stats: SimStats
+  floorStats: FloorSimStats
 }
 
 export type SourceState = 'idle' | 'picking' | 'placing' | 'blocked'
@@ -121,6 +138,32 @@ export interface AgvRuntimeSnapshot {
   currentWaypointLabel: string
 }
 
+export type DronePhase = 'parked' | 'taxi-to-lift' | 'ascending' | 'perimeter' | 'to-input' | 'returning'
+export type DroneMotionStatus = 'idle' | 'moving' | 'waiting'
+
+export interface DroneNavigationPoint {
+  x: number
+  y: number
+  z: number
+}
+
+export interface DroneRuntimeSnapshot {
+  objectId: string
+  position: DroneNavigationPoint
+  headingY: number
+  phase: DronePhase
+  motionStatus: DroneMotionStatus
+  path: DroneNavigationPoint[]
+  waypointIndex: number
+  targetFloor: 2 | 3
+  deliveryPointIndex: number
+  cargoItemId: string | null
+  cargoQuantity: number
+  completedTrips: number
+  distanceTravelled: number
+  currentWaypointLabel: string
+}
+
 export type AgvDecision = 'idle' | 'moving' | 'yielding' | 'replanning' | 'recovering'
 
 interface AgvRuntime {
@@ -145,6 +188,24 @@ interface AgvRuntime {
   pathMode: 'mission' | 'recovery' | 'yield'
 }
 
+interface DroneRuntime {
+  objectId: string
+  position: DroneNavigationPoint
+  headingY: number
+  phase: DronePhase
+  motionStatus: DroneMotionStatus
+  path: DroneNavigationPoint[]
+  pathLabels: string[]
+  waypointIndex: number
+  targetFloor: 2 | 3
+  deliveryPointIndex: number
+  cargoItemId: string | null
+  cargoQuantity: number
+  completedTrips: number
+  distanceTravelled: number
+  holdSeconds: number
+}
+
 interface AgvMissionTarget {
   position: AgvNavigationPoint
   candidates?: AgvNavigationPoint[]
@@ -163,6 +224,7 @@ export class SimulationEngine {
   private machines = new Map<string, MachineRuntime>()
   private conveyors = new Map<string, ConveyorRuntime>()
   private agvs = new Map<string, AgvRuntime>()
+  private drones = new Map<string, DroneRuntime>()
   private sources = new Map<string, SourceRuntime>()
   private recipes = new Map<string, Recipe>()
   /** cellKey -> FactoryObject（用于查下游） */
@@ -171,6 +233,7 @@ export class SimulationEngine {
   private objectById = new Map<string, FactoryObject>()
 
   private stats: SimStats = { consumed: {}, produced: {} }
+  private floorStats: FloorSimStats = createFloorStats()
   private lotCounter = 0
   private factoryObjects: FactoryObject[] = []
 
@@ -184,9 +247,11 @@ export class SimulationEngine {
     this.timeSec = 0
     this.accumulator = 0
     this.stats = { consumed: {}, produced: {} }
+    this.floorStats = createFloorStats()
     this.machines.clear()
     this.conveyors.clear()
     this.agvs.clear()
+    this.drones.clear()
     this.sources.clear()
     this.recipes.clear()
     this.objectByCell.clear()
@@ -198,10 +263,10 @@ export class SimulationEngine {
 
     for (const o of objects) {
       for (const cell of occupiedCells(o)) {
-        this.objectByCell.set(cellKey(cell.x, cell.z), o)
+        this.objectByCell.set(floorCellKey(o.floorId, cell.x, cell.z), o)
       }
       this.objectById.set(o.id, o)
-      if (objectRole(o.type) === 'machine') {
+      if (objectRole(o.type, o.resourceId) === 'machine') {
         this.machines.set(o.id, {
           objectId: o.id,
           state: 'idle',
@@ -212,9 +277,11 @@ export class SimulationEngine {
         })
       } else if (o.type === 'agv') {
         this.agvs.set(o.id, createAgvRuntime(o))
-      } else if (isTransportType(o.type) && o.type !== 'drone') {
+      } else if (o.type === 'drone') {
+        this.drones.set(o.id, createDroneRuntime(o))
+      } else if (isTransportType(o.type, o.resourceId)) {
         this.conveyors.set(o.id, { objectId: o.id, lot: null, branchCursor: 0 })
-      } else if (objectRole(o.type) === 'source') {
+      } else if (objectRole(o.type, o.resourceId) === 'source') {
         this.sources.set(o.id, {
           objectId: o.id,
           itemId: o.itemId ?? null,
@@ -244,6 +311,7 @@ export class SimulationEngine {
     this.stepConveyors(dt)
     this.stepMachines(dt)
     this.stepAgvs(dt)
+    this.stepDrones(dt)
   }
 
   // —— Source：定时产出到下游 ——
@@ -292,20 +360,20 @@ export class SimulationEngine {
 
   private sourceDownstreams(srcObj: FactoryObject): FactoryObject[] {
     return objectPortCells(srcObj, 'output')
-      .map((cell) => this.objectByCell.get(cellKey(cell.x, cell.z)))
+      .map((cell) => this.objectByCell.get(floorCellKey(srcObj.floorId, cell.x, cell.z)))
       .filter((obj): obj is FactoryObject => Boolean(obj))
       .filter((obj) => this.isConnected(srcObj, obj))
   }
 
   private trySourceOutput(srcObj: FactoryObject, itemId: string): boolean {
     for (const downstream of this.sourceDownstreams(srcObj)) {
-      if (isTransportType(downstream.type)) {
+      if (isTransportType(downstream.type, downstream.resourceId)) {
         const c = this.conveyors.get(downstream.id)
         if (c && !c.lot) {
           c.lot = this.makeLot(itemId, downstream.id, 0)
           return true
         }
-      } else if (objectRole(downstream.type) === 'machine' && this.tryFeedMachine(downstream.id, itemId)) {
+      } else if (objectRole(downstream.type, downstream.resourceId) === 'machine' && this.tryFeedMachine(downstream.id, itemId)) {
         return true
       }
     }
@@ -336,17 +404,17 @@ export class SimulationEngine {
         const output = objectPortCell(obj, 'output') ?? { x: obj.pos.x + dir.dx, z: obj.pos.z + dir.dz }
         const nx = output.x
         const nz = output.z
-        const downstream = this.objectByCell.get(cellKey(nx, nz))
+        const downstream = this.objectByCell.get(floorCellKey(obj.floorId, nx, nz))
 
         let moved = false
-        if (downstream && this.isConnected(obj, downstream) && isTransportType(downstream.type)) {
+        if (downstream && this.isConnected(obj, downstream) && isTransportType(downstream.type, downstream.resourceId)) {
           const dc = this.conveyors.get(downstream.id)
           if (dc && !dc.lot) {
             dc.lot = this.makeLot(lot.itemId, downstream.id, lot.offset - 1)
             c.lot = null
             moved = true
           }
-        } else if (downstream && this.isConnected(obj, downstream) && objectRole(downstream.type) === 'machine') {
+        } else if (downstream && this.isConnected(obj, downstream) && objectRole(downstream.type, downstream.resourceId) === 'machine') {
           if (this.tryFeedMachine(downstream.id, lot.itemId)) {
             c.lot = null
             moved = true
@@ -371,9 +439,9 @@ export class SimulationEngine {
     const start = c.branchCursor % Math.max(outputs.length, 1)
     for (let offset = 0; offset < outputs.length; offset++) {
       const output = outputs[(start + offset) % outputs.length]
-      const downstream = this.objectByCell.get(cellKey(output.x, output.z))
+      const downstream = this.objectByCell.get(floorCellKey(obj.floorId, output.x, output.z))
       if (!downstream || !this.isConnected(obj, downstream)) continue
-      if (isTransportType(downstream.type)) {
+      if (isTransportType(downstream.type, downstream.resourceId)) {
         const dc = this.conveyors.get(downstream.id)
         if (!dc || dc.lot) continue
         dc.lot = this.makeLot(lot.itemId, downstream.id, lot.offset - 1)
@@ -381,7 +449,7 @@ export class SimulationEngine {
         c.lot = null
         return true
       }
-      if (objectRole(downstream.type) === 'machine' && this.tryFeedMachine(downstream.id, lot.itemId)) {
+      if (objectRole(downstream.type, downstream.resourceId) === 'machine' && this.tryFeedMachine(downstream.id, lot.itemId)) {
         c.branchCursor = (start + offset + 1) % outputs.length
         c.lot = null
         return true
@@ -409,9 +477,13 @@ export class SimulationEngine {
         // 检查输入是否齐备
         if (this.inputsSatisfied(m, recipe)) {
           // 消耗输入
+          const floorId = this.findMachineObject(m.objectId)?.floorId ?? 1
+          const floorStats = this.floorStats[floorId]
           for (const p of recipe.inputs) {
             this.stats.consumed[p.itemId] =
               (this.stats.consumed[p.itemId] ?? 0) + p.qty
+            floorStats.consumed[p.itemId] =
+              (floorStats.consumed[p.itemId] ?? 0) + p.qty
           }
           m.inputBuffer = {}
           m.state = 'loading'
@@ -490,17 +562,17 @@ export class SimulationEngine {
     if (!obj) return false
     const outputs = objectPortCells(obj, 'output')
     const downstreams = outputs
-      .map((cell) => this.objectByCell.get(cellKey(cell.x, cell.z)))
+      .map((cell) => this.objectByCell.get(floorCellKey(obj.floorId, cell.x, cell.z)))
       .filter((target): target is FactoryObject => Boolean(target))
     const downstream = downstreams.find((target) => this.isConnected(obj, target))
 
     const out = recipe.outputs[0] // MVP 单输出；多输出后续扩展
 
-    if (downstream && isTransportType(downstream.type)) {
+    if (downstream && isTransportType(downstream.type, downstream.resourceId)) {
       const dc = this.conveyors.get(downstream.id)
       if (dc && !dc.lot) {
         dc.lot = this.makeLot(out.itemId, downstream.id, 0)
-        this.recordProduced(recipe)
+        this.recordProduced(m.objectId, recipe)
         return true
       }
       return false // 下游传送带满 → 背压
@@ -509,13 +581,16 @@ export class SimulationEngine {
     // 下游无传送带 → 直接视为出口，计入产出
     if (downstreams.length > 0 && !downstream) return false
 
-    this.recordProduced(recipe)
+    this.recordProduced(m.objectId, recipe)
     return true
   }
 
-  private recordProduced(recipe: Recipe): void {
+  private recordProduced(machineId: string, recipe: Recipe): void {
+    const floorId = this.findMachineObject(machineId)?.floorId ?? 1
+    const floorStats = this.floorStats[floorId]
     for (const p of recipe.outputs) {
       this.stats.produced[p.itemId] = (this.stats.produced[p.itemId] ?? 0) + p.qty
+      floorStats.produced[p.itemId] = (floorStats.produced[p.itemId] ?? 0) + p.qty
     }
   }
 
@@ -589,10 +664,13 @@ export class SimulationEngine {
         if (yielding && runtime.decision !== 'yielding' && runtime.decision !== 'replanning') runtime.yieldCount += 1
         runtime.blockedSeconds += dt
         runtime.motionStatus = 'waiting'
-        runtime.decision = yielding ? (runtime.blockedSeconds >= 0.8 ? 'replanning' : 'yielding') : 'replanning'
+        runtime.decision = yielding ? 'yielding' : 'replanning'
         if (runtime.retryTimer <= 0) {
-          if (yielding && runtime.blockedSeconds >= 0.45) {
-            const yieldPath = this.planYieldPath(runtime, blocker)
+          if (yielding && runtime.blockedSeconds >= 0.15) {
+            // First response is a constant-time retreat along the already
+            // validated path. Only a persistent conflict is allowed to invoke
+            // the expensive global planner.
+            const yieldPath = this.planYieldPath(runtime, blocker, runtime.blockedSeconds >= 1)
             if (yieldPath) {
               runtime.path = yieldPath
               runtime.waypointIndex = 1
@@ -600,7 +678,7 @@ export class SimulationEngine {
               runtime.retryTimer = 0
               runtime.decision = 'yielding'
             } else {
-              runtime.retryTimer = 0.35
+              runtime.retryTimer = 0.1
             }
           } else if (runtime.blockedSeconds >= 3) {
             const escapePath = this.planEscapePath(runtime, blocker)
@@ -648,9 +726,13 @@ export class SimulationEngine {
     const mission = this.agvMission(runtime)
     if (mission.length === 0) return false
     const target = mission[runtime.routeIndex % mission.length]
-    const nextPath = (target.candidates ?? [target.position])
-      .map((candidate) => findAgvPath(this.factoryObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime)))
+    const candidates = target.candidates ?? [target.position]
+    const nextPath = candidates
+      .map((candidate) => findAgvPath(this.factoryObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime, true)))
       .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1))
+      ?? candidates
+        .map((candidate) => findAgvPath(this.factoryObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime)))
+        .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1))
     if (!nextPath || nextPath.length <= 1) return false
     runtime.path = nextPath
     runtime.waypointIndex = 1
@@ -706,13 +788,35 @@ export class SimulationEngine {
     }
   }
 
-  private dynamicObstaclesFor(runtime: AgvRuntime): AgvDynamicObstacle[] {
+  private dynamicObstaclesFor(runtime: AgvRuntime, includeLookahead = false): AgvDynamicObstacle[] {
     const obstacles: AgvDynamicObstacle[] = []
     for (const other of this.agvs.values()) {
       if (other.objectId === runtime.objectId || other.motionStatus === 'idle') continue
-      obstacles.push({ position: other.position, radius: 0.1 })
+      obstacles.push({ position: other.position, radius: AGV_NAV_RADIUS })
       const next = other.path[other.waypointIndex]
-      if (next) obstacles.push({ position: next, radius: 0.1 })
+      if (next) obstacles.push({ position: next, radius: AGV_NAV_RADIUS })
+      if (!includeLookahead) continue
+
+      // Reserve the next few cells of each moving AGV's route. A planner that
+      // only sees the current cell discovers the conflict too late, when both
+      // vehicles are already inside the same narrow aisle.
+      const lookahead = [other.position, ...other.path.slice(other.waypointIndex, other.waypointIndex + 4)]
+      for (let index = 1; index < lookahead.length; index += 1) {
+        const from = lookahead[index - 1]
+        const to = lookahead[index]
+        const distance = Math.hypot(to.x - from.x, to.z - from.z)
+        const samples = Math.min(8, Math.max(1, Math.ceil(distance)))
+        for (let sample = 1; sample <= samples; sample += 1) {
+          const progress = sample / samples
+          obstacles.push({
+            position: {
+              x: from.x + (to.x - from.x) * progress,
+              z: from.z + (to.z - from.z) * progress,
+            },
+            radius: AGV_NAV_RADIUS,
+          })
+        }
+      }
     }
     return obstacles
   }
@@ -720,7 +824,7 @@ export class SimulationEngine {
   private blockingAgv(runtime: AgvRuntime, position: AgvNavigationPoint): AgvRuntime | undefined {
     return [...this.agvs.values()]
       .filter((other) => other.objectId !== runtime.objectId && other.motionStatus !== 'idle')
-      .find((other) => Math.hypot(other.position.x - position.x, other.position.z - position.z) < 1.55)
+      .find((other) => Math.hypot(other.position.x - position.x, other.position.z - position.z) < AGV_CENTER_CLEARANCE)
   }
 
   private planEscapePath(runtime: AgvRuntime, blocker: AgvRuntime): AgvNavigationPoint[] | null {
@@ -733,11 +837,18 @@ export class SimulationEngine {
       { x: runtime.position.x, z: runtime.position.z - awayZ * 3 },
     ]
     return candidates
-      .map((candidate) => findAgvPath(this.factoryObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime)))
+      .map((candidate) => findAgvPath(this.factoryObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime, true)))
       .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1)) ?? null
   }
 
-  private planYieldPath(runtime: AgvRuntime, blocker: AgvRuntime): AgvNavigationPoint[] | null {
+  private planYieldPath(runtime: AgvRuntime, blocker: AgvRuntime, allowGlobalSearch: boolean): AgvNavigationPoint[] | null {
+    const retreatPoint = runtime.path
+      .slice(0, runtime.waypointIndex)
+      .reverse()
+        .find((point) => Math.hypot(point.x - runtime.position.x, point.z - runtime.position.z) > 0.8 && Math.hypot(point.x - blocker.position.x, point.z - blocker.position.z) >= AGV_CENTER_CLEARANCE)
+    if (retreatPoint) return [{ ...runtime.position }, { ...retreatPoint }]
+    if (!allowGlobalSearch) return null
+
     const next = runtime.path[runtime.waypointIndex]
     const moveX = (next ? Math.sign(next.x - runtime.position.x) : 0) || Math.sign(runtime.position.x - blocker.position.x) || 1
     const moveZ = (next ? Math.sign(next.z - runtime.position.z) : 0) || Math.sign(runtime.position.z - blocker.position.z) || 0
@@ -752,9 +863,9 @@ export class SimulationEngine {
       { x: runtime.position.x + away.z * 2, z: runtime.position.z - away.x * 2 },
       { x: runtime.position.x - away.z * 2, z: runtime.position.z + away.x * 2 },
     ]
-    const dynamicObstacles = this.dynamicObstaclesFor(runtime)
+    const dynamicObstacles = this.dynamicObstaclesFor(runtime, true)
     return targets
-      .filter((target) => Math.hypot(target.x - blocker.position.x, target.z - blocker.position.z) >= 1.8)
+      .filter((target) => Math.hypot(target.x - blocker.position.x, target.z - blocker.position.z) >= AGV_CENTER_CLEARANCE)
       .map((target) => findAgvPath(this.factoryObjects, runtime.position, target, runtime.objectId, dynamicObstacles))
       .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1)) ?? null
   }
@@ -770,22 +881,47 @@ export class SimulationEngine {
 
   /** A transfer is valid only when the upstream output faces the downstream input. */
   private isConnected(upstream: FactoryObject, downstream: FactoryObject): boolean {
+    if ((upstream.floorId ?? 1) !== (downstream.floorId ?? 1)) return false
     const inputCells = objectPortCells(downstream, 'input')
     if (inputCells.length === 0) return true
     return occupiedCells(upstream).some((cell) => inputCells.some((input) => cell.x === input.x && cell.z === input.z))
   }
 
   private makeLot(itemId: string, conveyorId: string, offset: number): ItemLot {
+    const conveyor = this.objectById.get(conveyorId)
     return {
       id: `lot_${this.lotCounter++}`,
       itemId,
       conveyorId,
+      floorId: conveyor?.floorId ?? 1,
       offset,
     }
   }
 
   private findMachineObject(machineId: string): FactoryObject | undefined {
     return this.objectById.get(machineId)
+  }
+
+  private stepDrones(dt: number): void {
+    for (const runtime of this.drones.values()) {
+      if (runtime.phase === 'parked') {
+        runtime.motionStatus = 'waiting'
+        runtime.holdSeconds -= dt
+        if (runtime.holdSeconds <= 0) {
+          const mission = buildDroneMission(runtime.targetFloor)
+          runtime.path = mission.points
+          runtime.pathLabels = mission.labels
+          runtime.waypointIndex = 1
+          runtime.deliveryPointIndex = 0
+          runtime.motionStatus = 'moving'
+          runtime.phase = 'taxi-to-lift'
+        }
+        continue
+      }
+
+      runtime.motionStatus = 'moving'
+      advanceDrone(runtime, dt)
+    }
   }
 
   getSnapshot(): SimulationSnapshot {
@@ -820,15 +956,38 @@ export class SimulationEngine {
         yieldCount: runtime.yieldCount,
         currentWaypointLabel: runtime.currentWaypointLabel,
       })),
+      drones: Array.from(this.drones.values()).map((runtime) => ({
+        objectId: runtime.objectId,
+        position: { ...runtime.position },
+        headingY: runtime.headingY,
+        phase: runtime.phase,
+        motionStatus: runtime.motionStatus,
+        path: runtime.path.map((point) => ({ ...point })),
+        waypointIndex: runtime.waypointIndex,
+        targetFloor: runtime.targetFloor,
+        deliveryPointIndex: runtime.deliveryPointIndex,
+        cargoItemId: runtime.cargoItemId,
+        cargoQuantity: runtime.cargoQuantity,
+        completedTrips: runtime.completedTrips,
+        distanceTravelled: runtime.distanceTravelled,
+        currentWaypointLabel: runtime.pathLabels[runtime.waypointIndex] ?? 'L1 停机位 / 待命',
+      })),
       stats: {
         consumed: { ...this.stats.consumed },
         produced: { ...this.stats.produced },
+      },
+      floorStats: {
+        1: { consumed: { ...this.floorStats[1].consumed }, produced: { ...this.floorStats[1].produced } },
+        2: { consumed: { ...this.floorStats[2].consumed }, produced: { ...this.floorStats[2].produced } },
+        3: { consumed: { ...this.floorStats[3].consumed }, produced: { ...this.floorStats[3].produced } },
       },
     }
   }
 }
 
 const AGV_SPEED = 2.2
+const DRONE_SPEED = 8.5
+const DRONE_DOCK_HEIGHT = 1.45
 
 function createAgvRuntime(object: FactoryObject): AgvRuntime {
   const position = objectToWorld(object)
@@ -854,4 +1013,114 @@ function createAgvRuntime(object: FactoryObject): AgvRuntime {
     currentWaypointLabel: '待规划',
     pathMode: 'mission',
   }
+}
+
+function createDroneRuntime(object: FactoryObject): DroneRuntime {
+  return {
+    objectId: object.id,
+    position: { x: DRONE_DOCK[0], y: DRONE_DOCK_HEIGHT, z: DRONE_DOCK[1] },
+    headingY: 0,
+    phase: 'parked',
+    motionStatus: 'waiting',
+    path: [{ x: DRONE_DOCK[0], y: DRONE_DOCK_HEIGHT, z: DRONE_DOCK[1] }],
+    pathLabels: ['L1 停机位 / 待命'],
+    waypointIndex: 0,
+    targetFloor: 2,
+    deliveryPointIndex: 0,
+    cargoItemId: null,
+    cargoQuantity: 0,
+    completedTrips: 0,
+    distanceTravelled: 0,
+    holdSeconds: 1.2,
+  }
+}
+
+function buildDroneMission(targetFloor: 2 | 3): { points: DroneNavigationPoint[]; labels: string[] } {
+  const route = getDroneRoute(targetFloor, DRONE_FLOOR_ELEVATIONS[targetFloor]).map(([x, y, z], index) => ({
+    x,
+    y: index === 0 ? DRONE_DOCK_HEIGHT : y,
+    z,
+  }))
+  const hub = route[route.length - 1]
+  const points: DroneNavigationPoint[] = [route[0]]
+  const labels = ['L1 停机位 / 起飞']
+
+  route.slice(1).forEach((point, index) => {
+    points.push(point)
+    labels.push(index === 0 ? '东侧升降井 / 进站' : index === 1 ? `垂直上升 / L${targetFloor}` : `外围高位环线 / ${index < 5 ? '东侧—北侧' : '西侧—南侧'}`)
+  })
+
+  FLOOR_DELIVERY_POINTS[targetFloor].forEach(([x, z], index) => {
+    points.push({ x: hub.x, y: hub.y, z })
+    labels.push(`L${targetFloor} 输入点 0${index + 1} / 横向分流`)
+    points.push({ x, y: hub.y, z })
+    labels.push(`L${targetFloor} 输入点 0${index + 1} / 配送`)
+    points.push({ ...hub })
+    labels.push(`L${targetFloor} 物料枢纽 / 返回`)
+  })
+
+  route.slice(0, -1).reverse().forEach((point, index) => {
+    points.push(index === route.length - 2 ? { ...point, y: DRONE_DOCK_HEIGHT } : point)
+    labels.push(index === route.length - 2 ? 'L1 停机位 / 返航' : '返航 / 外围环线')
+  })
+  return { points, labels }
+}
+
+function advanceDrone(runtime: DroneRuntime, dt: number): void {
+  let remaining = DRONE_SPEED * dt
+  while (remaining > 0 && runtime.waypointIndex < runtime.path.length) {
+    const target = runtime.path[runtime.waypointIndex]
+    const dx = target.x - runtime.position.x
+    const dy = target.y - runtime.position.y
+    const dz = target.z - runtime.position.z
+    const segment = Math.hypot(dx, dy, dz)
+    if (segment < 0.001) {
+      runtime.position = { ...target }
+      runtime.waypointIndex += 1
+      continue
+    }
+    runtime.headingY = Math.atan2(dz, dx)
+    if (remaining >= segment) {
+      runtime.position = { ...target }
+      runtime.distanceTravelled += segment
+      remaining -= segment
+      runtime.waypointIndex += 1
+    } else {
+      const amount = remaining / segment
+      runtime.position = {
+        x: runtime.position.x + dx * amount,
+        y: runtime.position.y + dy * amount,
+        z: runtime.position.z + dz * amount,
+      }
+      runtime.distanceTravelled += remaining
+      remaining = 0
+    }
+  }
+
+  const label = runtime.pathLabels[runtime.waypointIndex] ?? 'L1 停机位 / 返航'
+  runtime.phase = dronePhaseFor(label)
+  const deliveryMatch = label.match(/输入点 0(\d)/)
+  if (deliveryMatch) runtime.deliveryPointIndex = Number(deliveryMatch[1]) - 1
+
+  if (runtime.waypointIndex >= runtime.path.length) {
+    runtime.completedTrips += 1
+    runtime.targetFloor = runtime.targetFloor === 2 ? 3 : 2
+    runtime.phase = 'parked'
+    runtime.motionStatus = 'waiting'
+    runtime.holdSeconds = 1.2
+    runtime.path = [{ x: DRONE_DOCK[0], y: DRONE_DOCK_HEIGHT, z: DRONE_DOCK[1] }]
+    runtime.pathLabels = ['L1 停机位 / 待命']
+    runtime.waypointIndex = 0
+    runtime.deliveryPointIndex = 0
+    runtime.position = { x: DRONE_DOCK[0], y: DRONE_DOCK_HEIGHT, z: DRONE_DOCK[1] }
+  }
+}
+
+function dronePhaseFor(label: string): DronePhase {
+  if (label.includes('停机位')) return 'parked'
+  if (label.includes('升降井')) return 'taxi-to-lift'
+  if (label.includes('垂直上升')) return 'ascending'
+  if (label.includes('外围') || label.includes('返航')) return label.includes('返航') ? 'returning' : 'perimeter'
+  if (label.includes('输入点')) return 'to-input'
+  return 'perimeter'
 }

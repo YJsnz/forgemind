@@ -7,6 +7,7 @@ ForgeMind 语音对话助手
 """
 import io
 import json
+import os
 import queue
 import threading
 import urllib.request
@@ -19,6 +20,7 @@ import sherpa_onnx
 # ---------- 配置 ----------
 ASR_DIR = "models/sherpa-onnx-paraformer-zh-2023-09-14"
 TTS_DIR = "models/sherpa-onnx-vits-zh-ll"
+TTS_SID = int(os.getenv("FORGEMIND_TTS_SID", "1"))
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_MODEL = "qwen2.5:7b"
 SAMPLE_RATE = 16000
@@ -162,7 +164,7 @@ def speak(text):
         sd.wait()
     except Exception as e:
         print(f"  (BT 语音服务不可用，用本地音色: {e})")
-        audio = tts_fallback.generate(text, sid=1, speed=1.0)
+        audio = tts_fallback.generate(text, sid=TTS_SID, speed=1.0)
         sd.play(audio.samples, samplerate=audio.sample_rate)
         sd.wait()
 
@@ -220,4 +222,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

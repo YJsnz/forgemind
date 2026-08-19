@@ -2,9 +2,10 @@ import * as THREE from 'three'
 import { useThree } from '@react-three/fiber'
 import { useRef, useEffect } from 'react'
 import { useForgeMindStore } from '../store/forgeMind'
-import type { GridPos, Rotation } from '../game/types'
+import type { FactoryFloorId, GridPos, Rotation } from '../game/types'
 import { dirToRotation } from '../game/dir'
 import { canPlace } from '../game/grid'
+import { getFloorElevation } from './FactoryFloorSystem'
 
 /**
  * 网格建造的指针交互层（Day 2）：
@@ -14,7 +15,7 @@ import { canPlace } from '../game/grid'
  *
  * 键盘（挂在 window）：R 旋转 ghost，Escape 退出建造工具。
  */
-export function BuildPlacer({ enabled = true }: { enabled?: boolean }) {
+export function BuildPlacer({ enabled = true, floorId = 1 }: { enabled?: boolean; floorId?: FactoryFloorId }) {
   const { camera, gl } = useThree()
   const raycaster = useRef(new THREE.Raycaster())
   const plane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0))
@@ -31,6 +32,10 @@ export function BuildPlacer({ enabled = true }: { enabled?: boolean }) {
 
   const isPlacing = enabled && buildType !== null
   const drag = useRef<{ anchors: GridPos[]; current: GridPos } | null>(null)
+
+  useEffect(() => {
+    plane.current.constant = -getFloorElevation(floorId)
+  }, [floorId])
 
   // 指针 → 网格坐标
   const pointerToGrid = (e: { clientX: number; clientY: number }): GridPos | null => {
@@ -88,11 +93,11 @@ export function BuildPlacer({ enabled = true }: { enabled?: boolean }) {
   })
 
   const validatePath = (path: GridPos[]): boolean[] => {
-    const staged = [...objects]
+    const staged = objects.filter((object) => (object.floorId ?? 1) === floorId)
     return pathRotations(path).map((rotation, index) => {
       const pos = path[index]
       const valid = canPlace(pos, 'conveyor', rotation, staged)
-      if (valid) staged.push({ id: `ghost-${index}`, type: 'conveyor', pos, rotation })
+      if (valid) staged.push({ id: `ghost-${index}`, type: 'conveyor', pos, rotation, floorId })
       return valid
     })
   }
@@ -108,7 +113,7 @@ export function BuildPlacer({ enabled = true }: { enabled?: boolean }) {
     const onMove = (e: PointerEvent) => {
       if (!isPlacing) return
       const pos = pointerToGrid(e)
-      updateGhost(pos)
+      updateGhost(pos, floorId)
       if (pos && drag.current) {
         drag.current.current = pos
         updatePathPreview(buildPath(drag.current.anchors, pos))
@@ -122,12 +127,12 @@ export function BuildPlacer({ enabled = true }: { enabled?: boolean }) {
         if (buildType === 'conveyor') {
           drag.current = { anchors: [pos], current: pos }
           el.setPointerCapture?.(e.pointerId)
-          updateGhost(pos)
+          updateGhost(pos, floorId)
           updatePathPreview([pos])
         } else {
           const rotation = useForgeMindStore.getState().ghost.rotation
-          updateGhost(pos)
-          placeAt(pos, rotation)
+          updateGhost(pos, floorId)
+          placeAt(pos, rotation, floorId)
         }
       } else {
         select(null)
@@ -156,7 +161,7 @@ export function BuildPlacer({ enabled = true }: { enabled?: boolean }) {
       const path = buildPath(anchors, current)
       path.forEach((cell, index) => {
         const rotation = pathRotations(path)[index]
-        placeAt(cell, rotation)
+        placeAt(cell, rotation, floorId)
       })
       drag.current = null
       setGhostPath([])
@@ -184,7 +189,7 @@ export function BuildPlacer({ enabled = true }: { enabled?: boolean }) {
       el.removeEventListener('pointerup', onUp)
       window.removeEventListener('keydown', onKey)
     }
-  }, [isPlacing, buildType, updateGhost, setGhostPath, setGhostPathValid, placeAt, select, rotateGhost, setBuildType, camera, gl, objects])
+  }, [floorId, isPlacing, buildType, updateGhost, setGhostPath, setGhostPathValid, placeAt, select, rotateGhost, setBuildType, camera, gl, objects])
 
   // 建造模式时禁用 OrbitControls 的旋转（否则拖动会同时旋转相机与放置）
   useEffect(() => {

@@ -4,7 +4,7 @@ ForgeMind AI 服务（FastAPI）—— 只做离线 AI / LLM 编排（补充设�
 职责边界（§5.2）：
 - 绝不进实时仿真链路（AGV/产能/瓶颈在 Java 引擎侧）。
 - 只暴露离线入口：AI 助手、未来方案评分。
-- 与 Spring Boot 用异步消息通信（Redis Stream/Kafka），本骨架先以 HTTP 占位。
+- 当前通过 HTTP 被前端调用；Redis Stream/Kafka 仅是未来多实例部署的异步通信方案。
 """
 import base64
 import io
@@ -41,6 +41,7 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 TTS_BASE_URL = os.getenv("FORGEMIND_TTS_URL", "http://127.0.0.1:8001").rstrip("/")
 TTS_TIMEOUT_SEC = float(os.getenv("FORGEMIND_TTS_TIMEOUT", "45"))
 TTS_BACKEND = os.getenv("FORGEMIND_TTS_BACKEND", "bt").lower()
+TTS_SID = int(os.getenv("FORGEMIND_TTS_SID", "1"))
 TTS_MODEL_DIR = Path(os.getenv(
     "FORGEMIND_TTS_MODEL_DIR",
     str(PROTOCOL_PATH.parent.parent / "voice-chat" / "models" / "sherpa-onnx-vits-zh-ll"),
@@ -300,7 +301,7 @@ def synthesize_fast_tts(text: str, length_scale: float) -> bytes:
     engine = get_fast_tts()
     speed = max(0.7, min(1.4, 1.0 / max(0.7, min(1.4, length_scale))))
     with _fast_tts_lock:
-        audio = engine.generate(text, sid=1, speed=speed)
+        audio = engine.generate(text, sid=TTS_SID, speed=speed)
     samples = np.asarray(audio.samples, dtype=np.float32)
     pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2").tobytes()
     output = io.BytesIO()

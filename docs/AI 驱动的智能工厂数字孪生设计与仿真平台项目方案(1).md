@@ -1,5 +1,7 @@
 # AI 驱动的智能工厂数字孪生设计与仿真平台项目方案
 
+> **文档定位（2026-08-19）：** 这是完整产品方案和目标架构文档，不是当前代码的逐项验收清单。已经落地的实现包括 L1/L2/L3 多楼层、L2/L3 独立产线、仓储/AGV/无人机物流、诊断与 Generative Factory、JSON+GLB 资源导入、模型封面预览以及按用户隔离的资源数据库持久化。当前运行架构使用前端 TypeScript 仿真 + Spring Boot/MySQL 结构化存档；文中 PostgreSQL、Redis/Kafka、服务端实时仿真等章节属于后续演进方案，不能当作已启用依赖。请以 [ForgeMind 当前实现总览](D:/Code/factory/docs/ForgeMind-当前实现总览.md) 和 [后端数据库设计](D:/Code/factory/docs/ForgeMind-后端数据库设计.md) 为当前实现依据。
+
 > **暂定项目名称：ForgeMind**
 >
 > **中文名称：ForgeMind AI 智能工厂数字孪生平台**

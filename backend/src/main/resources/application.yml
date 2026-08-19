@@ -12,5 +12,9 @@ spring:
     baseline-on-migrate: true
   jackson:
     default-property-inclusion: non_null
+  servlet:
+    multipart:
+      max-file-size: 80MB
+      max-request-size: 90MB
 server:
   port: 8080

@@ -1,5 +1,5 @@
 import toolCatalogJson from '../../contracts/forgemind-assistant-tools.json'
-import { OBJECT_DEFS, objectRole, type BuildType, type FactoryObject, type GridPos, type Rotation } from './types'
+import { getObjectDef, objectRole, type BuildType, type FactoryObject, type GridPos, type Rotation } from './types'
 import type { Item, Recipe } from './item'
 import type { SimulationSnapshot } from './simulation'
 
@@ -134,8 +134,8 @@ export function createFactoryAssistantContext(input: {
     objects: input.objects.map((object) => ({
       id: object.id,
       type: object.type,
-      label: OBJECT_DEFS[object.type].label,
-      role: objectRole(object.type),
+      label: getObjectDef(object.type, object.resourceId).label,
+      role: objectRole(object.type, object.resourceId),
       pos: { ...object.pos },
       rotation: object.rotation,
       recipeId: object.recipeId ?? null,

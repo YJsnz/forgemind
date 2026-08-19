@@ -228,13 +228,13 @@ const ITEM_NAMES: Record<string, string> = {
 }
 
 const GEARBOX_ITEMS: Item[] = [
-  { id: 'item_lubricant', name: '工业润滑剂', category: 'raw', color: '#d39a42', size: 1 },
-  { id: 'item_gear_blank', name: '齿轮毛坯', category: 'intermediate', color: '#71868a', size: 1 },
-  { id: 'item_clean_gear', name: '清洗齿轮组', category: 'intermediate', color: '#5f9c9c', size: 1 },
-  { id: 'item_gear_housing', name: '齿轮箱壳体', category: 'intermediate', color: '#8a9ca0', size: 1 },
-  { id: 'item_lubricant_pack', name: '定量润滑包', category: 'intermediate', color: '#c28e35', size: 1 },
-  { id: 'item_gearbox', name: '齿轮箱总成', category: 'product', color: '#4c9fa0', size: 1 },
-  { id: 'item_inspected_gearbox', name: '已检齿轮箱', category: 'product', color: '#3f9d79', size: 1 },
+  { id: 'item_lubricant', name: '工业润滑剂', category: 'raw', color: '#d39a42', size: 1, modelPath: 'material/granule.glb', modelId: 'RAW_GRANULE' },
+  { id: 'item_gear_blank', name: '齿轮毛坯', category: 'intermediate', color: '#71868a', size: 1, modelPath: 'material/ingot.glb', modelId: 'RAW_INGOT' },
+  { id: 'item_clean_gear', name: '清洗齿轮组', category: 'intermediate', color: '#5f9c9c', size: 1, modelPath: 'mechanical/gear.glb', modelId: 'PART_GEAR' },
+  { id: 'item_gear_housing', name: '齿轮箱壳体', category: 'intermediate', color: '#8a9ca0', size: 1, modelPath: 'material/chunk.glb', modelId: 'RAW_CHUNK' },
+  { id: 'item_lubricant_pack', name: '定量润滑包', category: 'intermediate', color: '#c28e35', size: 1, modelPath: 'package/box.glb', modelId: 'PACK_BOX' },
+  { id: 'item_gearbox', name: '齿轮箱总成', category: 'product', color: '#4c9fa0', size: 1, modelPath: 'package/crate.glb', modelId: 'PACK_CRATE' },
+  { id: 'item_inspected_gearbox', name: '已检齿轮箱', category: 'product', color: '#3f9d79', size: 1, modelPath: 'package/crate.glb', modelId: 'PACK_CRATE' },
 ]
 
 const GEARBOX_RECIPES: Recipe[] = [

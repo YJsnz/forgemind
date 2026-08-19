@@ -22,7 +22,7 @@ public class FactoryDbStore {
     private static final Set<String> ITEM_CATEGORIES = Set.of("raw", "intermediate", "product");
     private static final Set<String> OBJECT_TYPES = Set.of(
             "source", "conveyor", "machine", "oreMiner", "smelter", "press", "assembler",
-            "inspection", "washing", "agv", "storage", "splitter", "merger"
+            "inspection", "washing", "agv", "drone", "storage", "splitter", "merger", "imported"
     );
     private static final Set<Integer> ROTATIONS = Set.of(0, 90, 180, 270);
 
@@ -48,7 +48,7 @@ public class FactoryDbStore {
     @Transactional
     public FactorySave saveForUser(String userId, FactorySave save) {
         if (save == null) throw new IllegalArgumentException("存档不能为空");
-        validateSave(save);
+        validateSave(userId, save);
         String factoryId = ensureFactory(userId);
 
         jdbc.update("DELETE FROM factory_connection WHERE factory_id = ?", factoryId);
@@ -70,7 +70,7 @@ public class FactoryDbStore {
      * The browser performs the same checks for UX, but this is the authoritative
      * boundary for direct API callers and keeps nullable cross-table bindings safe.
      */
-    private void validateSave(FactorySave save) {
+    private void validateSave(String userId, FactorySave save) {
         if (save.version() == null || save.version() < 1 || save.version() > SAVE_VERSION) {
             throw new IllegalArgumentException("不支持的存档版本");
         }
@@ -117,6 +117,13 @@ public class FactoryDbStore {
             if (!objectIds.add(id)) throw new IllegalArgumentException("对象 id 重复：" + id);
             if (!OBJECT_TYPES.contains(requiredString(object, "type"))) {
                 throw new IllegalArgumentException("对象类型非法");
+            }
+            String objectType = requiredString(object, "type");
+            String resourceId = stringOrNull(object, "resourceId");
+            if ("imported".equals(objectType)) {
+                if (resourceId == null || !resourceBelongsToUser(userId, resourceId)) {
+                    throw new IllegalArgumentException("导入设备资源不存在或不属于当前用户");
+                }
             }
             Object rawPos = object.get("pos");
             if (!(rawPos instanceof Map<?, ?> rawMap)) throw new IllegalArgumentException("对象位置非法");
@@ -203,10 +210,11 @@ public class FactoryDbStore {
     }
 
     private List<Map<String, Object>> loadObjects(String factoryId) {
-        return jdbc.query("SELECT id, object_type, pos_x, pos_z, rotation, recipe_id, item_id FROM factory_object WHERE factory_id = ? ORDER BY created_at, id", (rs, rowNum) -> {
+        return jdbc.query("SELECT id, object_type, resource_id, pos_x, pos_z, rotation, recipe_id, item_id FROM factory_object WHERE factory_id = ? ORDER BY created_at, id", (rs, rowNum) -> {
             Map<String, Object> object = new LinkedHashMap<>();
             object.put("id", rs.getString("id"));
             object.put("type", rs.getString("object_type"));
+            object.put("resourceId", rs.getString("resource_id"));
             Map<String, Object> pos = new LinkedHashMap<>();
             pos.put("x", rs.getBigDecimal("pos_x"));
             pos.put("z", rs.getBigDecimal("pos_z"));
@@ -246,10 +254,20 @@ public class FactoryDbStore {
         Object rawPos = object.get("pos");
         if (!(rawPos instanceof Map<?, ?> rawMap)) throw new IllegalArgumentException("对象位置非法");
         Map<String, Object> pos = castMap(rawMap);
-        jdbc.update("INSERT INTO factory_object (factory_id, id, floor_id, object_type, pos_x, pos_z, rotation, recipe_id, item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        jdbc.update("INSERT INTO factory_object (factory_id, id, floor_id, object_type, resource_id, pos_x, pos_z, rotation, recipe_id, item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 factoryId, requiredString(object, "id"), "main-floor", requiredString(object, "type"),
-                decimalRequired(pos, "x"), decimalRequired(pos, "z"), integerRequired(object, "rotation"),
+                stringOrNull(object, "resourceId"), decimalRequired(pos, "x"), decimalRequired(pos, "z"), integerRequired(object, "rotation"),
                 stringOrNull(object, "recipeId"), stringOrNull(object, "itemId"));
+    }
+
+    private boolean resourceBelongsToUser(String userId, String resourceId) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM imported_resource WHERE owner_user_id = ? AND resource_id = ?",
+                Integer.class,
+                userId,
+                resourceId
+        );
+        return count != null && count > 0;
     }
 
     private List<Map<String, Object>> list(List<Map<String, Object>> value, String field) {

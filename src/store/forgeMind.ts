@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AgvProgram, BuildType, FactoryObject, GridPos, Rotation } from '../game/types'
+import { registerImportedObjectDef, type AgvProgram, type BuildType, type FactoryFloorId, type FactoryObject, type GridPos, type ImportedResource, type Rotation } from '../game/types'
 import { canPlace } from '../game/grid'
 import { DEFAULT_ITEMS, DEFAULT_RECIPES, type Item, type ItemCategory, type Recipe } from '../game/item'
 import { genId as itemGenId } from '../game/item'
@@ -26,6 +26,7 @@ function genId(): string {
 /** ghost 预览（跟随鼠标的待放置对象） */
 export interface Ghost {
   type: BuildType
+  resourceId?: string
   pos: GridPos | null
   rotation: Rotation
   valid: boolean
@@ -38,6 +39,8 @@ export interface ForgeMindState {
   factoryLayouts: Record<FactoryId, FactoryObject[]>
   /** 当前选中的建造工具类型；null = 无工具（浏览/选择模式） */
   buildType: BuildType | null
+  /** 当前选中的用户导入资源。 */
+  selectedImportedResourceId: string | null
   /** 已放置对象 */
   objects: FactoryObject[]
   /** ghost 预览 */
@@ -50,6 +53,8 @@ export interface ForgeMindState {
   items: Item[]
   /** 配方定义 */
   recipes: Recipe[]
+  /** 当前浏览器会话内可建造的用户导入资源。 */
+  importedResources: ImportedResource[]
 
   /** 仿真快照（低频，10Hz 由 runner 写入） */
   simSnapshot: SimulationSnapshot
@@ -63,8 +68,11 @@ export interface ForgeMindState {
   canRedo: boolean
 
   setBuildType: (t: BuildType | null) => void
+  setImportedResourceId: (id: string | null) => void
+  registerImportedResource: (resource: ImportedResource, select?: boolean) => void
+  clearImportedResources: () => void
   /** 更新 ghost 的网格位置（含合法性计算）；null = 指针不在网格上 */
-  updateGhost: (pos: GridPos | null) => void
+  updateGhost: (pos: GridPos | null, floorId?: FactoryFloorId) => void
   setGhostPath: (path: GridPos[]) => void
   setGhostPathValid: (valid: boolean[]) => void
   /** ghost 旋转 90°（R 键） */
@@ -72,7 +80,7 @@ export interface ForgeMindState {
   /** 确认放置当前 ghost */
   place: () => void
   /** Place a segment at an explicit grid cell (used by conveyor drag placement). */
-  placeAt: (pos: GridPos, rotation?: Rotation) => boolean
+  placeAt: (pos: GridPos, rotation?: Rotation, floorId?: FactoryFloorId) => boolean
   /** 移除指定对象 */
   remove: (id: string) => void
   /** 旋转已放置对象 */
@@ -82,7 +90,7 @@ export interface ForgeMindState {
   select: (id: string | null) => void
 
   /** 新增物品 */
-  addItem: (name: string, category: ItemCategory, color: string) => void
+  addItem: (name: string, category: ItemCategory, color: string, modelPath?: string, modelId?: string) => void
   /** 删除物品（若有配方引用则一并移除引用，防止悬空） */
   removeItem: (id: string) => void
   /** 新增配方 */
@@ -129,7 +137,13 @@ const emptySnapshot: SimulationSnapshot = {
   sources: [],
   itemLots: [],
   agvs: [],
+  drones: [],
   stats: { consumed: {}, produced: {} },
+  floorStats: {
+    1: { consumed: {}, produced: {} },
+    2: { consumed: {}, produced: {} },
+    3: { consumed: {}, produced: {} },
+  },
 }
 
 interface FactoryHistoryEntry {
@@ -171,6 +185,7 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
     a02: createBaseA02Layout(),
   },
   buildType: null,
+  selectedImportedResourceId: null,
   objects: createBaseA01Layout(),
   ghost: emptyGhost,
   ghostPath: [],
@@ -178,6 +193,7 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
   selectedId: null,
   items: DEFAULT_ITEMS,
   recipes: DEFAULT_RECIPES,
+  importedResources: [],
   simSnapshot: emptySnapshot,
   simPlaying: false,
   simSpeed: 0.35,
@@ -188,16 +204,63 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
   setBuildType: (t) =>
     set((s) => ({
       buildType: t,
-      ghost: t ? { type: t, pos: s.ghost.pos, rotation: 0, valid: false } : emptyGhost,
+      ghost: t ? { type: t, resourceId: t === 'imported' ? s.selectedImportedResourceId ?? undefined : undefined, pos: s.ghost.pos, rotation: 0, valid: false } : emptyGhost,
       ghostPath: [],
       ghostPathValid: [],
     })),
 
-  updateGhost: (pos) =>
+  setImportedResourceId: (id) =>
+    set((s) => ({
+      selectedImportedResourceId: id,
+      buildType: id ? 'imported' : s.buildType === 'imported' ? null : s.buildType,
+      ghost: id
+        ? { ...s.ghost, type: 'imported', resourceId: id, rotation: 0, valid: false }
+        : s.ghost,
+    })),
+
+  registerImportedResource: (resource, select = true) => {
+    registerImportedObjectDef(resource)
+    set((s) => ({
+      importedResources: [...s.importedResources.filter((entry) => entry.id !== resource.id), resource],
+      ...(select ? {
+        selectedImportedResourceId: resource.id,
+        buildType: 'imported' as const,
+        ghost: { ...s.ghost, type: 'imported' as const, resourceId: resource.id, rotation: 0 as Rotation, valid: false },
+        ghostPath: [],
+        ghostPathValid: [],
+      } : {}),
+    }))
+  },
+
+  clearImportedResources: () =>
+    set((s) => {
+      s.importedResources.forEach((resource) => {
+        const assetPath = resource.objectDef.assetPath
+        if (assetPath?.startsWith('blob:')) URL.revokeObjectURL(assetPath)
+      })
+      const withoutImported = (objects: FactoryObject[]) => objects.filter((object) => object.type !== 'imported')
+      const factoryLayouts = {
+        a01: withoutImported(s.factoryLayouts.a01),
+        a02: withoutImported(s.factoryLayouts.a02),
+      }
+      return {
+        importedResources: [],
+        selectedImportedResourceId: null,
+        factoryLayouts,
+        objects: withoutImported(s.objects),
+        buildType: s.buildType === 'imported' ? null : s.buildType,
+        ghost: s.ghost.type === 'imported' ? emptyGhost : s.ghost,
+        ghostPath: [],
+        ghostPathValid: [],
+        selectedId: s.selectedId && s.objects.some((object) => object.id === s.selectedId && object.type !== 'imported') ? s.selectedId : null,
+      }
+    }),
+
+  updateGhost: (pos, floorId = 1) =>
     set((s) => {
       if (!s.ghost.pos && pos === null) return {}
       const rotation = s.ghost.rotation
-      const valid = pos !== null && canPlace(pos, s.ghost.type, rotation, s.objects)
+      const valid = pos !== null && canPlace(pos, s.ghost.type, rotation, s.objects.filter((object) => (object.floorId ?? 1) === floorId), s.ghost.resourceId)
       return { ghost: { ...s.ghost, pos, valid } }
     }),
 
@@ -210,7 +273,7 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
       const rotation = ((s.ghost.rotation + 90) % 360) as Rotation
       const pos = s.ghost.pos
       const valid =
-        pos !== null && canPlace(pos, s.ghost.type, rotation, s.objects)
+        pos !== null && canPlace(pos, s.ghost.type, rotation, s.objects, s.ghost.resourceId)
       return { ghost: { ...s.ghost, rotation, valid } }
     }),
 
@@ -221,23 +284,27 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
       const obj: FactoryObject = {
         id: genId(),
         type: s.ghost.type,
+        resourceId: s.ghost.resourceId,
         pos: s.ghost.pos,
         rotation: s.ghost.rotation,
+        floorId: 1,
       }
       return { objects: [...s.objects, obj], ...historyFlags() }
     }),
 
-  placeAt: (pos, rotation = get().ghost.rotation) => {
+  placeAt: (pos, rotation = get().ghost.rotation, floorId = 1) => {
     let placed = false
     set((s) => {
-      if (!s.buildType || !canPlace(pos, s.buildType, rotation, s.objects)) return {}
+      if (!s.buildType || !canPlace(pos, s.buildType, rotation, s.objects.filter((object) => (object.floorId ?? 1) === floorId), s.selectedImportedResourceId ?? undefined)) return {}
       placed = true
       pushHistory(s)
       const obj: FactoryObject = {
         id: genId(),
         type: s.buildType,
+        resourceId: s.buildType === 'imported' ? s.selectedImportedResourceId ?? undefined : undefined,
         pos,
         rotation,
+        floorId,
       }
       return { objects: [...s.objects, obj], ghost: { ...s.ghost, pos, rotation, valid: true }, ...historyFlags() }
     })
@@ -260,7 +327,7 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
       const obj = s.objects.find((o) => o.id === id)
       if (!obj) return {}
       const rotation = ((obj.rotation + 90) % 360) as Rotation
-      const others = s.objects.filter((o) => o.id !== id)
+      const others = s.objects.filter((o) => o.id !== id && (o.floorId ?? 1) === (obj.floorId ?? 1))
       if (!canPlace(obj.pos, obj.type, rotation, others)) return {}
       pushHistory(s)
       return {
@@ -301,9 +368,9 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
 
   select: (id) => set({ selectedId: id }),
 
-  addItem: (name, category, color) =>
+  addItem: (name, category, color, modelPath, modelId) =>
     set((s) => ({
-      items: [...s.items, { id: itemGenId('item'), name, category, color, size: 1 }],
+      items: [...s.items, { id: itemGenId('item'), name, category, color, size: 1, modelPath, modelId }],
     })),
 
   removeItem: (id) =>

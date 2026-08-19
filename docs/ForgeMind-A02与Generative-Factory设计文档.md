@@ -2,7 +2,9 @@
 
 > 状态：方案整理版
 >
-> 更新时间：2026-08-18
+> 更新时间：2026-08-19
+>
+> 当前实现提示：A-02 的诊断和 Generative Factory 已在 `src/components/GenerativeFactoryWorkspace.tsx`、`src/game/factoryDiagnostics.ts` 和 `src/game/generativeFactory.ts` 中落地；诊断支持按 L1/L2/L3 楼层筛选，生成候选经过布局/端口校验和副本仿真。资源导入、仓储导航和无人机跨层运输属于 A-01 运行底座，事实索引见 [当前实现总览](D:/Code/factory/docs/ForgeMind-当前实现总览.md)。
 >
 > 目标：在保留 A-01 人工搭建产线的基础上，增加可切换的 A-02 AI 生成工厂实验场，并完成诊断与自动生成方案的产品闭环。
 

@@ -16,19 +16,17 @@ const ATLAS_POSITION: Record<BuildType, [number, number]> = {
   drone: [1, 3],
   storage: [3, 2],
   machine: [0, 3],
+  imported: [2, 3],
 }
 
-export function EquipmentThumbnail({ type }: { type: BuildType }) {
+export function EquipmentThumbnail({ type, previewDataUrl }: { type: BuildType; previewDataUrl?: string }) {
   const equipment = OBJECT_DEFS[type]
   const [column, row] = ATLAS_POSITION[type]
   const position = `${column * (100 / 3)}% ${row * (100 / 3)}%`
 
   return (
     <span className="fm-equipment-visual" aria-hidden="true">
-      <span
-        className="fm-equipment-static-image"
-        style={{ backgroundPosition: position }}
-      />
+      {previewDataUrl ? <img className="fm-equipment-imported-image" src={previewDataUrl} alt="" /> : <span className="fm-equipment-static-image" style={{ backgroundPosition: position }} />}
       <span className="fm-equipment-visual-label">CATALOG / {equipment.model}</span>
     </span>
   )

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useForgeMindStore } from '../store/forgeMind'
 import type { Recipe, RecipePort } from '../game/item'
+import type { Item } from '../game/item'
+import { ProductionModelLibrary } from './ProductionModelLibrary'
 
 interface ProductionRouteWorkspaceProps {
   onClose: () => void
@@ -13,6 +15,7 @@ export function ProductionRouteWorkspace({ onClose }: ProductionRouteWorkspacePr
   const removeRecipe = useForgeMindStore((state) => state.removeRecipe)
   const [selectedId, setSelectedId] = useState(recipes[0]?.id ?? '')
   const [createOpen, setCreateOpen] = useState(false)
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
 
   useEffect(() => {
     if (selectedId && recipes.some((recipe) => recipe.id === selectedId)) return
@@ -25,7 +28,7 @@ export function ProductionRouteWorkspace({ onClose }: ProductionRouteWorkspacePr
   )
 
   return (
-    <section className="fm-route-workspace glass3d" aria-label="生产路线工作区">
+    <section className="fm-route-workspace" aria-label="生产路线工作区">
       <header className="fm-route-header">
         <div>
           <span className="fm-production-kicker"><i>05</i> / PROCESS DEFINITION / RECIPE FLOW</span>
@@ -38,6 +41,8 @@ export function ProductionRouteWorkspace({ onClose }: ProductionRouteWorkspacePr
           <button type="button" className="fm-route-close" onClick={onClose} aria-label="关闭生产路线">×</button>
         </div>
       </header>
+
+      <ProductionModelLibrary selectedItemId={selectedItemId} onSelectItem={(item: Item) => setSelectedItemId(item.id)} />
 
       <div className="fm-route-layout">
         <section className="fm-route-panel fm-route-list-panel">

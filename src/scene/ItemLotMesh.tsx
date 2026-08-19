@@ -20,6 +20,7 @@ export function ItemLotMesh({ lot }: { lot: ItemLot }) {
 
   const conveyor = objects.find((o) => o.id === lot.conveyorId)
   if (!conveyor) return null
+  if ((conveyor.floorId ?? 1) !== lot.floorId) return null
 
   const item = items.find((i) => i.id === lot.itemId)
   const color = item?.color ?? '#dbe4ee'

@@ -1,11 +1,11 @@
 # ForgeMind 已实现功能模块技术文档
 
 **项目：** ForgeMind 智能工厂数字孪生平台  
-**文档版本：** 0.1.0  
-**整理日期：** 2026-08-18
+**文档版本：** 0.2.0
+**整理日期：** 2026-08-19
 **适用范围：** 当前仓库中已经实现、可运行或已经建立接口契约的功能模块
 
-本文档补充 [宝钗自研工厂渲染引擎技术文档](D:/Code/factory/docs/daiyu-render-engine.md) 和 [黛玉智能工厂思考引擎技术文档](D:/Code/factory/docs/daiyu-intelligence-engine.md)，重点说明 ForgeMind 除双引擎之外的业务、交互、仿真、数据和 AI 模块。文档中的“已实现”表示代码已经存在并可被当前应用调用；“骨架/占位”表示接口和数据契约已建立，但还没有接入完整生产能力。本文档按 2026-08-18 的代码状态整理，演示读数和明确边界会单独标注。
+本文档补充 [宝钗自研工厂渲染引擎技术文档](D:/Code/factory/docs/daiyu-render-engine.md) 和 [黛玉智能工厂思考引擎技术文档](D:/Code/factory/docs/daiyu-intelligence-engine.md)，重点说明 ForgeMind 除双引擎之外的业务、交互、仿真、数据和 AI 模块。文档中的“已实现”表示代码已经存在并可被当前应用调用；“骨架/占位”表示接口和数据契约已建立，但还没有接入完整生产能力。本版本按 2026-08-19 的代码状态整理；跨模块的事实索引见 [当前实现总览](D:/Code/factory/docs/ForgeMind-当前实现总览.md)。
 
 ## 1. 功能总览
 
@@ -16,14 +16,19 @@
 | 认证与登录演出 | `src/store/auth.ts`、`src/scene/LoginCameraRig.tsx` | 已实现 | 注册、登录、续登、登出、舱门动画和欢迎音频 |
 | 工厂状态管理 | `src/store/forgeMind.ts` | 已实现 | 低频编辑状态、选择态、撤销重做、仿真快照 |
 | 网格建造系统 | `src/scene/BuildPlacer.tsx`、`src/game/grid.ts` | 已实现 | 放置、碰撞、旋转、拖拽输送带、转角识别 |
+| 多楼层工厂 | `src/scene/FactoryFloorSystem.tsx`、`FloorSwitcher.tsx` | 已实现 | L1/L2/L3 楼层高度、切换和独立产线呈现 |
 | 设备目录与模型映射 | `src/game/types.ts`、`src/scene/EquipmentModel.tsx` | 已实现 | 设备规格、足迹、端口、吞吐、资产路径和视觉回退 |
+| 设备资源导入 | `src/game/resourcePack.ts`、`ResourceImportDialog.tsx` | 已实现 | JSON/GLB 选择、拖放、字段校验、模型预览和封面生成 |
+| 用户资源持久化 | `src/api/resources.ts`、`backend/.../ImportedResourceController.java` | 已实现 | 资源按用户保存、恢复、模型下载和引用归属校验 |
 | 物品与配方 | `src/game/item.ts`、`ItemPanel.tsx`、`RecipePanel.tsx` | 已实现 | 多输入/多输出配方、加工时长和引用关系维护 |
 | 离散事件仿真 | `src/game/simulation.ts`、`SimulationRunner.tsx` | 已实现 | 固定步生产物流、机器状态机、分流汇流、背压 |
 | 场景和模型系统 | `src/scene/`、`public/models/` | 已实现 | 高精度工艺设备、Panda URDF、物料可视化、登录舱 |
+| 仓储与 AGV | `src/components/WarehouseWorkspace.tsx`、`AgvNavigationControl.tsx` | 已实现 | 库位、运输层、AGV 任务、路径、避让和实时状态 |
+| 无人机跨层运输 | `src/components/DroneNavigationControl.tsx`、`src/game/droneNavigation.ts` | 已实现 | L1 停靠、升降井、L2/L3 航路和仿真驱动运输 |
 | 宝钗渲染引擎 | `src/engine/daiyu/` | 已实现 | 精确实例化、预热、运行时审计和 4060 预算策略 |
 | 黛玉智能工厂思考引擎 | `src/game/generativeFactory.ts` | 已实现 | 需求解析、产线生成、布局调整、路由校验、仿真评估、What-if 和 ROI |
 | 本地 JSON 存档 | `src/game/save.ts` | 已实现 | 导出、导入、运行时校验和浏览器下载 |
-| Spring Boot 存档/认证后端 | `backend/` | 已实现 | MySQL/Flyway 持久化、BCrypt 密码、数据库会话 token、按用户隔离工厂 |
+| Spring Boot 存档/认证后端 | `backend/` | 已实现 | MySQL/Flyway 持久化、BCrypt 密码、数据库会话 token、按用户隔离工厂和资源 |
 | AI 服务 | `ai-service/main.py` | 已实现（本地编排） | FastAPI 健康检查、Ollama 助手、NDJSON 流式回复、工具目录、ASR/TTS 网关 |
 | 网页语音助手 | `src/components/AssistantVoiceButton.tsx`、`src/game/assistantVoice.ts` | 已实现（依赖本地服务） | 麦克风录音、`BT` 关键字唤醒、ASR、流式回答和 TTS 播放 |
 | 独立语音助手 | `voice-chat/voice_chat.py` | 独立可运行 | 不依赖网页的本地 ASR → Ollama → TTS → 播放闭环 |
@@ -724,7 +729,38 @@ py -3.10 -m venv .venv
 | 导入存档失败 | JSON 版本、对象类型白名单、配方引用的物品是否存在 |
 | 舱门动画卡顿 | 宝钗预热状态、Panda 是否在隐藏祖先下跳过 IK、DPR 和阴影预算 |
 
-## 18. 当前边界与后续路线
+## 18. 多楼层、仓储与跨层物流补充
+
+### 18.1 楼层模型
+
+`FactoryFloorSystem` 根据 `floorId` 把对象放到对应的世界高度，`FloorSwitcher` 只切换可见楼层和当前编辑目标，不复制或重建工厂对象。L1 是仓储和无人机停靠层；L2 是加工/冲压/绕线层；L3 是多输入装配、视觉质检、包装和成品缓冲层。默认楼层定义和完整基础布局位于 `src/game/baseA01.ts`。
+
+### 18.2 无人机运输
+
+`src/game/droneNavigation.ts` 固定 L1 停靠位、升降井、目标楼层高程、外围高位环线和楼层输入点。无人机导航控制页可在仓储工作区打开，选择 L2/L3 目标层查看航路。仿真运行后，`SimulationRunner` 通过快照驱动三维无人机状态；暂停时不推进运输任务。
+
+### 18.3 标签与面板可见性
+
+设备、车辆和仓储区域标签属于场景空间内容，不应穿透工作区面板。三维标签和 HUD 面板分别处于不同渲染层；排查标签漏到其他界面时，优先检查场景 overlay 的挂载范围、当前 floor 可见性和面板的 z-index/portal 容器。
+
+## 19. 资源导入与用户隔离补充
+
+### 19.1 前端流程
+
+`BuildMenu` 打开 `ResourceImportDialog`。对话框支持拖放或文件选择，读取资源 JSON 和 GLB，使用 `parseForgeMindProject` 做字段校验，使用 `Model3DViewer` / `ImportedFactoryModel` 预览模型，并生成设备卡片封面。解析成功后资源先进入 Zustand，用户可以立即在建造目录中使用。
+
+### 19.2 后端流程
+
+登录态下由 `src/api/resources.ts` 调用 `/api/resources` 保存资源。Spring Boot 的 `ImportedResourceController` 和 `ImportedResourceDbStore` 把元数据、项目 JSON、GLB 文件名和二进制写入 `imported_resource`。`App.tsx` 在恢复工厂阶段加载当前用户资源并重新建立模型 Blob URL；切换用户时 `forgeMind` 会清理旧资源和 URL。
+
+### 19.3 安全不变量
+
+- 资源列表、GLB 下载和工厂保存都使用 bearer token；
+- `factory_object` 只有在 `resourceId` 属于当前用户时才能保存；
+- 未登录或后端不可用时，导入可以用于本地预览，但不能被标记为已云端持久化；
+- 新增资源类型时，同时检查前端 `OBJECT_DEFS`、资源包解析器、Spring Boot 对象白名单和迁移/回归样例。
+
+## 20. 当前边界与后续路线
 
 ### 已知边界
 
@@ -744,7 +780,7 @@ py -3.10 -m venv .venv
 4. 增加自动化浏览器验收、显存采样、温度采样和 LLM 并行压力测试。
 5. 在模型资产不变的前提下评估 HLOD、WebGPU 和离线纹理压缩。
 
-## 19. 代码索引
+## 21. 代码索引
 
 | 路径 | 说明 |
 | --- | --- |
@@ -760,6 +796,14 @@ py -3.10 -m venv .venv
 | `src/game/SimulationRunner.tsx` | rAF 驱动器和 10Hz 快照桥接 |
 | `src/game/save.ts` | 本地存档序列化、解析和下载 |
 | `src/game/api.ts` | Spring Boot 存档和 FastAPI AI 客户端 |
+| `src/api/resources.ts` | 用户资源保存、列表恢复和鉴权模型下载 |
+| `src/game/resourcePack.ts` | 资源包解析、校验、规范化和封面输入 |
+| `src/components/ResourceImportDialog.tsx` | 建造页资源导入窗口 |
+| `src/components/WarehouseWorkspace.tsx` | 仓储控制、运输层和物料台账 |
+| `src/components/AgvNavigationControl.tsx` | AGV 导航任务和路径控制 |
+| `src/components/DroneNavigationControl.tsx` | 无人机跨层航路控制 |
+| `src/game/droneNavigation.ts` | 无人机路线、楼层高程和配送点 |
+| `src/scene/FactoryFloorSystem.tsx` | 三维楼层容器和可见性 |
 | `src/game/assistantProtocol.ts` | 智能管家 1.0.0 动作目录、上下文和前端校验 |
 | `src/game/assistantExecutor.ts` | 智能管家动作执行、确认门控和仿真控制桥接 |
 | `src/game/assistantVoice.ts` | 浏览器录音、WAV 编码、ASR 和关键字监听 |
@@ -770,6 +814,10 @@ py -3.10 -m venv .venv
 | `src/scene/EquipmentModel.tsx` | 设备模型映射、加载和程序化回退 |
 | `src/scene/PandaArmModel.tsx` | Panda URDF、IK、自动/手动控制 |
 | `backend/src/main/java/com/forgemind/web/` | 认证和工厂 REST 控制器 |
+| `backend/src/main/java/com/forgemind/web/ImportedResourceController.java` | 用户资源 REST 控制器 |
+| `backend/src/main/java/com/forgemind/repository/ImportedResourceDbStore.java` | 资源元数据和 GLB 持久化 |
+| `backend/src/main/resources/db/migration/V5__create_user_imported_resources.sql` | 用户资源表 |
+| `backend/src/main/resources/db/migration/V6__add_resource_reference_to_factory_objects.sql` | 工厂设备资源引用 |
 | `ai-service/main.py` | FastAPI AI/ASR/TTS 编排服务 |
 | `voice-chat/voice_chat.py` | 本地 ASR/LLM/TTS 语音闭环 |
 | `scripts/sim-regression.ts` | 仿真回归测试 |

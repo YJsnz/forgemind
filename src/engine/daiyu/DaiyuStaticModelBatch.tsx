@@ -5,6 +5,7 @@ import type { ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 import { objectToWorld } from '../../game/grid'
 import type { BuildType, FactoryObject } from '../../game/types'
+import type { DroneRuntimeSnapshot } from '../../game/simulation'
 import type { AgvRuntimeSnapshot } from '../../game/simulation'
 
 const UP = new THREE.Vector3(0, 1, 0)
@@ -61,9 +62,12 @@ interface StaticBatch {
 
 interface AgvRenderMotion {
   x: number
+  y?: number
   z: number
   headingY: number
 }
+
+type DynamicRenderSnapshot = Pick<AgvRuntimeSnapshot, 'headingY'> | Pick<DroneRuntimeSnapshot, 'headingY'>
 
 /** 原模型精度不变的静态设备合批，适用于重复出现且模型本体不变形的设备。 */
 export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
@@ -75,7 +79,7 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
 }: {
   type: 'machine' | 'agv' | 'drone' | 'press' | 'washing' | 'storage'
   objects: FactoryObject[]
-  motion?: ReadonlyMap<string, AgvRuntimeSnapshot>
+  motion?: ReadonlyMap<string, DynamicRenderSnapshot & { position: { x: number; y?: number; z: number } }>
   castShadows?: boolean
   onSelect: (id: string) => void
 }) {
@@ -112,14 +116,14 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
   }, [batches, objects])
 
   useLayoutEffect(() => {
-    if (type !== 'agv' || !motion) return
+    if ((type !== 'agv' && type !== 'drone') || !motion) return
     const target = targetMotionRef.current
     const visual = visualMotionRef.current
     const activeIds = new Set<string>()
 
     motion.forEach((runtime, objectId) => {
       activeIds.add(objectId)
-      const next = { x: runtime.position.x, z: runtime.position.z, headingY: runtime.headingY }
+      const next = { x: runtime.position.x, y: runtime.position.y, z: runtime.position.z, headingY: runtime.headingY }
       target.set(objectId, next)
       if (!visual.has(objectId)) visual.set(objectId, { ...next })
     })
@@ -133,7 +137,7 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
   }, [motion, type])
 
   useFrame((_, delta) => {
-    if (type !== 'agv' || targetMotionRef.current.size === 0) return
+    if ((type !== 'agv' && type !== 'drone') || targetMotionRef.current.size === 0) return
     // The simulation publishes snapshots at 20Hz. Exponential smoothing keeps
     // the render transform continuous at the display frame rate without
     // changing the authoritative simulation position.
@@ -150,6 +154,7 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
         return
       }
       current.x += (next.x - current.x) * alpha
+      if (next.y !== undefined && current.y !== undefined) current.y += (next.y - current.y) * alpha
       current.z += (next.z - current.z) * alpha
       current.headingY += shortestAngleDelta(current.headingY, next.headingY) * alpha
     })
@@ -161,7 +166,7 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
       objects.forEach((object) => {
         const runtime = visual.get(object.id)
         const root = runtime
-          ? objectMatrix(object, spec.baseY ?? 0, { x: runtime.x, z: runtime.z }, runtime.headingY, rootMatrix)
+        ? objectMatrix(object, spec.baseY ?? 0, { x: runtime.x, y: runtime.y, z: runtime.z }, runtime.headingY, rootMatrix)
           : objectMatrix(object, spec.baseY ?? 0, undefined, undefined, rootMatrix)
         batch.matrices.forEach((local) => {
           instanceMatrix.multiplyMatrices(root, local)
@@ -253,10 +258,10 @@ function collectStaticBatches(scene: THREE.Group) {
   return [...grouped.values()]
 }
 
-function objectMatrix(object: FactoryObject, baseY = 0, position?: { x: number; z: number }, headingY?: number, target = new THREE.Matrix4()) {
+function objectMatrix(object: FactoryObject, baseY = 0, position?: { x: number; y?: number; z: number }, headingY?: number, target = new THREE.Matrix4()) {
   const world = position ?? objectToWorld(object)
   return target.compose(
-    new THREE.Vector3(world.x, baseY, world.z),
+    new THREE.Vector3(world.x, position?.y ?? baseY, world.z),
     new THREE.Quaternion().setFromAxisAngle(UP, headingY ?? rotationAngle(object.rotation)),
     SCALE_ONE,
   )

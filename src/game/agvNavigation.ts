@@ -1,4 +1,4 @@
-import { BUILD_BOUND, OBJECT_DEFS, type FactoryObject } from './types'
+import { BUILD_BOUND, getObjectDef, type FactoryObject } from './types'
 import { occupiedCells, rotatedFootprint } from './grid'
 
 export interface AgvNavigationPoint {
@@ -8,11 +8,22 @@ export interface AgvNavigationPoint {
 
 export interface AgvDynamicObstacle {
   position: AgvNavigationPoint
-  /** Radius in grid cells; defaults to one cell of safety clearance. */
+  /** Center-to-edge safety radius in world/grid meters. */
   radius?: number
 }
 
 const CLEARANCE_CELLS = 1
+/**
+ * Measured from the ForgeCore AGV body after the renderer's 1.35m height
+ * normalization: roughly 1.60m x 1.23m. Keep navigation aligned with the
+ * visible vehicle instead of the larger 2m catalogue grid footprint.
+ */
+export const AGV_MODEL_FOOTPRINT = { w: 1.60, d: 1.23 }
+export const AGV_BODY_HALF_WIDTH = AGV_MODEL_FOOTPRINT.w / 2
+export const AGV_BODY_HALF_DEPTH = AGV_MODEL_FOOTPRINT.d / 2
+export const AGV_NAV_RADIUS = AGV_BODY_HALF_WIDTH + 0.05
+export const AGV_CENTER_CLEARANCE = AGV_NAV_RADIUS * 2
+export const AGV_DOCK_MARGIN = 0.08
 const DIRECTIONS = [
   [1, 0], [0, 1], [-1, 0], [0, -1],
   [1, 1], [-1, 1], [-1, -1], [1, -1],
@@ -136,9 +147,9 @@ function createDynamicBlockedCells(obstacles: readonly AgvDynamicObstacle[]) {
   const blocked = new Set<string>()
   obstacles.forEach((obstacle) => {
     const center = pointToCell(obstacle.position)
-    // Dynamic vehicles are checked again by the local controller. Keep the
-    // global planner's footprint compact so one stopped AGV does not seal an
-    // entire aisle; static equipment retains the full safety envelope above.
+    // Dynamic vehicles use the measured ForgeCore body envelope plus a small
+    // margin. A stopped AGV therefore occupies its visible collision envelope
+    // instead of being treated as a single point in the global planner.
     const radius = Math.max(0, Math.ceil((obstacle.radius ?? 0) - 0.25))
     for (let dx = -radius; dx <= radius; dx += 1) {
       for (let dz = -radius; dz <= radius; dz += 1) {
@@ -194,13 +205,15 @@ export function agvDockPoint(object: FactoryObject): AgvNavigationPoint {
 
 /** Candidate docks let the planner choose the open side when racks are dense. */
 export function agvDockCandidates(object: FactoryObject): AgvNavigationPoint[] {
-  const footprint = rotatedFootprint(OBJECT_DEFS[object.type].footprint, object.rotation)
+  const footprint = rotatedFootprint(getObjectDef(object.type, object.resourceId).footprint, object.rotation)
   const centerX = object.pos.x + Math.max(0, footprint.w / 2 - 0.5)
   const centerZ = object.pos.z + Math.max(0, footprint.d / 2 - 0.5)
+  const dockX = AGV_BODY_HALF_WIDTH + AGV_DOCK_MARGIN
+  const dockZ = AGV_BODY_HALF_DEPTH + AGV_DOCK_MARGIN
   return [
-    { x: object.pos.x + footprint.w + 0.5, z: centerZ },
-    { x: object.pos.x - 0.5, z: centerZ },
-    { x: centerX, z: object.pos.z + footprint.d + 0.5 },
-    { x: centerX, z: object.pos.z - 0.5 },
+    { x: object.pos.x + footprint.w + dockX, z: centerZ },
+    { x: object.pos.x - dockX, z: centerZ },
+    { x: centerX, z: object.pos.z + footprint.d + dockZ },
+    { x: centerX, z: object.pos.z - dockZ },
   ]
 }

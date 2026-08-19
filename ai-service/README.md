@@ -2,6 +2,8 @@
 
 离线 AI / LLM 编排服务（补充设计 §5.1：只做离线，绝不进实时仿真链路）。
 
+> 当前状态（2026-08-19）：本服务只负责 AI 助手、工具协议、ASR、TTS 和视觉检测辅助。用户登录、工厂存档、用户私有设备资源和 GLB 下载由 `backend/` 的 Spring Boot/MySQL 服务负责，不要把资源导入请求发送到本服务。
+
 ## 安装 & 运行
 
 ```bash
@@ -50,5 +52,6 @@ ai-service 启动后会在后台预加载千问、ASR，并用一条短语预热
 
 ## 职责边界（§5.2）
 
-- 与 Spring Boot 用**异步消息**（Redis Stream / Kafka）通信，本骨架先以 HTTP 占位。
+- 当前前端通过 HTTP 直接调用本服务；Redis Stream / Kafka 仍是未来多实例部署的异步通信方案，不是当前启动依赖。
+- Spring Boot 的 `/api/factory` 和 `/api/resources` 不经过 AI 服务，资源权限与用户隔离在 Spring Boot/数据库层完成。
 - LLM 只做**动作库选型 + 结构化 schema 填参**，产出数字以副本仿真为准，不自由改工厂。

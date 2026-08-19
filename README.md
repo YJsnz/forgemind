@@ -1,6 +1,6 @@
 # ForgeMind · 智能工厂数字孪生
 
-AI 驱动的智能工厂数字孪生设计与仿真平台。学习答辩项目，1 人 × 7 天，vibecoding 风格。
+AI 驱动的智能工厂数字孪生设计、生产路线与仿真平台。项目早期以 1 人 × 7 天为冲刺约束；当前代码已经扩展到多楼层、仓储物流、无人机跨层运输、诊断和用户私有设备资源导入。
 
 ## 技术栈
 
@@ -8,7 +8,7 @@ AI 驱动的智能工厂数字孪生设计与仿真平台。学习答辩项目�
 - **样式**：TailwindCSS + 自定义设计 token（《明日方舟：终末地》工业机能风）
 - **仿真内核**：纯 TS（`src/game/simulation.ts`），与 React/Three 解耦，是唯一真相源
 - **后端双栈**：
-  - **Spring Boot 3 + MySQL 8.4**（Java 17，`backend/`）—— 用户、工厂结构、物品和配方持久化
+  - **Spring Boot 3 + MySQL 8.4**（Java 17，`backend/`）—— 用户、工厂结构、物品、配方和用户私有导入资源持久化
   - **FastAPI**（Python 3.10，`ai-service/`）—— DeepSeek / 本地 Ollama AI 编排、工具协议、ASR/TTS 网关
 
 ## 快速开始
@@ -60,6 +60,9 @@ cd ai-service && py -3.10 -m venv .venv && .venv/Scripts/pip install -r requirem
 
 ## 设计文档
 
+- [当前实现总览（事实索引）](docs/ForgeMind-当前实现总览.md)
+- [后端服务说明](backend/README.md)
+
 - [原方案（67 节）](docs/AI%20驱动的智能工厂数字孪生设计与仿真平台项目方案(1).md)
 - [补充设计（权威，9 节）](docs/ForgeMind-补充设计.md)
 - [A-02 与 Generative Factory 设计文档](docs/ForgeMind-A02与Generative-Factory设计文档.md)
@@ -74,7 +77,9 @@ cd ai-service && py -3.10 -m venv .venv && .venv/Scripts/pip install -r requirem
 
 两套能力保持现有代码结构，通过工厂对象、布局和仿真快照协作。`src/engine/daiyu/` 等历史路径暂不改名，仅作为兼容标识；产品正式命名以本文档为准。
 
-## 已实现功能（7 天）
+## 早期七天里程碑（历史记录）
+
+> 下表保留用于说明项目演进，不代表当前功能边界。当前状态以[当前实现总览](docs/ForgeMind-当前实现总览.md)为准。
 
 | 天 | 能力 |
 |---|---|
@@ -86,7 +91,7 @@ cd ai-service && py -3.10 -m venv .venv && .venv/Scripts/pip install -r requirem
 | Day 6 | 利用率 / 在途 / 产出统计 + 终末地视觉打磨 |
 | Day 7 | 演示闭环 + 集成测试 + 修复 |
 
-## 当前增量状态（2026-08-18）
+## 当前增量状态（2026-08-19）
 
 - 新增主界面「生产控制台」（`flow` 视图）：提供工厂俯视地图、设备登记、四段物流流向、产出/消耗统计，以及仿真启动、暂停、倍率和重置操作。
 - 网页端语音入口已接入：浏览器麦克风 → 本地 Paraformer ASR → Ollama 智能管家 → BT TTS（Sherpa VITS 备用）；支持手动录音和 `BT` 关键字唤醒。
@@ -96,14 +101,19 @@ cd ai-service && py -3.10 -m venv .venv && .venv/Scripts/pip install -r requirem
 - 生成器已支持产品 Profile：电机与齿轮箱使用不同物品、配方、终端成品和诊断目标；调整候选会显示改造差异、改造成本和 Pareto 等级。
 - Generative Factory 已升级为可迭代的生成调整引擎：自动估算并行设备、基于 Beam Search 迭代候选、What-if 对照 CNC / 装配 / AGV 变更，并在候选卡片显示 CAPEX、月度收益、回本期和 12 个月 ROI。
 - 生成器默认使用规则解析 + 本地仿真；AI 约束提取可通过 `FORGEMIND_LLM_PROVIDER=deepseek` 切换到 DeepSeek，未配置服务时自动降级，不把 API Key 暴露到浏览器。
+- 新增 L1/L2/L3 多楼层工厂：L2 提供加工、冲压、绕线和物料缓冲，L3 提供多输入装配、视觉质检、包装和成品缓冲；楼层高度、切换和独立产线由 `FactoryFloorSystem`、`FloorSwitcher` 与 `baseA01.ts` 协同维护。
+- 仓储控制页已纳入 AGV 导航和无人机导航。无人机固定停靠 L1，通过升降井上升到 L2/L3，再沿高位环线和输入支线执行跨层补给；仿真启动后才推进运输任务。
+- 建造页支持导入资源包：可拖入或选择项目 JSON 与 GLB，自动校验字段、归一化模型并生成设备封面；资源会写入 `imported_resource`，按用户隔离恢复，其他用户不能列出、下载或引用。
+- 工厂存档的设备对象记录 `resourceId`，后端保存时验证资源归属；本地 JSON 存档仍用于离线演示，云端存档负责跨会话恢复。
 
 生产控制台中的「生产效率」当前仍是演示读数；设备利用率、在途物料、产出和消耗以仿真快照为准。
 
-## 模型（高精度公模）
+## 模型（内置、公模与用户导入）
 
 - **机械臂**：`public/models/robot_arm_6dof_white.glb`，来自 [cobot-atlas](https://huggingface.co/datasets/torusprime/cobot-atlas)（MIT，2023+ 工业机器人 GLB），1 个 mesh、约 2843 三角形。
 - 加载时按补充设计 §2.3 规范化：包围盒居中 → 缩放到 1×1 网格足迹 → 底面落 y=0。
 - 传送带 / source 用程序化几何（简单几何体，无需公模）。物品实体仍用 InstancedMesh 前的单盒占位。
+- 用户导入 GLB 不直接打包进前端：浏览器端用于预览和当前会话，登录后由 Spring Boot 保存到用户自己的资源记录；再次登录时按需下载并生成 Blob URL。
 
 ## 演示脚本（§7.1）
 
@@ -147,9 +157,11 @@ npm run sim:smoke                   # 闭环验证（Source→带→机→带→
 npm run sim:backpressure            # 背压验证（头堵停住不穿透）
 ```
 
+`sim:regression`、`assistant:protocol`、`save:regression` 和 `models:validate` 是当前稳定回归项。`generative:regression` 的候选生成部分已通过，但 A-01 调整分支仍有“未返回 3 个全部可验证方案”的已知失败，发布前需单独修复生成器调整逻辑。
+
 ## 关键设计原则（防翻车）
 
-- **真相源在后端（引擎）**，前端只做确定性插值渲染，不自己推进仿真
+- **当前运行时真相源在 `src/game/simulation.ts`**，前端内存仿真负责确定性推进；Spring Boot 保存可恢复的静态工厂结构，不逐 tick 接管仿真
 - **React 管 UI，Three.js 管渲染**，只在低频层交集；高频仿真实体位置不进响应式 store
 - **种子化随机数**，优化结论可复现
 - 传送带**离散模型**（槽位 + 头堵背压），不是恒速路径插值

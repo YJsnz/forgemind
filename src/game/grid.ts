@@ -1,5 +1,5 @@
 import type { FactoryObject, Footprint, GridPos, PortSide, Rotation } from './types'
-import { BUILD_BOUND, OBJECT_DEFS } from './types'
+import { BUILD_BOUND, getObjectDef } from './types'
 import { rotationToDir } from './dir'
 
 /** 世界坐标 = 格坐标（1 格 = 1 米，格锚点在格中心） */
@@ -8,8 +8,8 @@ export function gridToWorld(g: GridPos): { x: number; z: number } {
 }
 
 /** The visual anchor for a footprint is its geometric centre, not its min corner. */
-export function objectToWorld(obj: Pick<FactoryObject, 'type' | 'pos' | 'rotation'>): { x: number; z: number } {
-  const fp = rotatedFootprint(OBJECT_DEFS[obj.type].footprint, obj.rotation)
+export function objectToWorld(obj: Pick<FactoryObject, 'type' | 'resourceId' | 'pos' | 'rotation'>): { x: number; z: number } {
+  const fp = rotatedFootprint(getObjectDef(obj.type, obj.resourceId).footprint, obj.rotation)
   return { x: obj.pos.x + fp.w / 2, z: obj.pos.z + fp.d / 2 }
 }
 
@@ -20,7 +20,7 @@ export function rotatedFootprint(f: Footprint, r: Rotation): Footprint {
 
 /** 对象占用的所有格坐标 */
 export function occupiedCells(obj: FactoryObject): GridPos[] {
-  const def = OBJECT_DEFS[obj.type]
+  const def = getObjectDef(obj.type, obj.resourceId)
   const fp = rotatedFootprint(def.footprint, obj.rotation)
   const cells: GridPos[] = []
   for (let dx = 0; dx < fp.w; dx++) {
@@ -64,17 +64,18 @@ export function canPlace(
   type: FactoryObject['type'],
   rotation: Rotation,
   others: FactoryObject[],
+  resourceId?: string,
 ): boolean {
-  const def = OBJECT_DEFS[type]
+  const def = getObjectDef(type, resourceId)
   const fp = rotatedFootprint(def.footprint, rotation)
   if (isOutOfBounds(pos, fp)) return false
-  const cells = occupiedCells({ id: '', type, pos, rotation })
+  const cells = occupiedCells({ id: '', type, resourceId, pos, rotation })
   return !others.some((o) => cellsOverlap(cells, occupiedCells(o)))
 }
 
 /** Returns the first grid cell immediately outside a machine's named port. */
 export function objectPortCell(
-  obj: Pick<FactoryObject, 'type' | 'pos' | 'rotation'>,
+  obj: Pick<FactoryObject, 'type' | 'resourceId' | 'pos' | 'rotation'>,
   port: 'input' | 'output',
 ): GridPos | null {
   return objectPortCells(obj, port)[0] ?? null
@@ -82,10 +83,10 @@ export function objectPortCell(
 
 /** Returns all external cells for a named port. Splitters and mergers expose multiple ports. */
 export function objectPortCells(
-  obj: Pick<FactoryObject, 'type' | 'pos' | 'rotation'>,
+  obj: Pick<FactoryObject, 'type' | 'resourceId' | 'pos' | 'rotation'>,
   port: 'input' | 'output',
 ): GridPos[] {
-  const def = OBJECT_DEFS[obj.type]
+  const def = getObjectDef(obj.type, obj.resourceId)
   const side = port === 'input' ? def.inputPort : def.outputPort
   if (!side) return []
 
@@ -108,11 +109,11 @@ export function objectPortCells(
 
 /** Returns the external grid cells for one named side of a port. */
 export function objectPortCellsForSide(
-  obj: Pick<FactoryObject, 'type' | 'pos' | 'rotation'>,
+  obj: Pick<FactoryObject, 'type' | 'resourceId' | 'pos' | 'rotation'>,
   port: 'input' | 'output',
   side: PortSide,
 ): GridPos[] {
-  const def = OBJECT_DEFS[obj.type]
+  const def = getObjectDef(obj.type, obj.resourceId)
   const declaredSide = port === 'input' ? def.inputPort : def.outputPort
   if (!declaredSide) return []
   if (obj.type === 'splitter' && port === 'input' && side !== 'back') return []
@@ -130,9 +131,9 @@ export function objectPortCellsForSide(
 }
 
 function portCellsBySide(
-  obj: Pick<FactoryObject, 'type' | 'pos' | 'rotation'>,
+  obj: Pick<FactoryObject, 'type' | 'resourceId' | 'pos' | 'rotation'>,
 ): Record<PortSide, GridPos[]> {
-  const def = OBJECT_DEFS[obj.type]
+  const def = getObjectDef(obj.type, obj.resourceId)
   const fp = rotatedFootprint(def.footprint, obj.rotation)
   const forward = rotationToDir(obj.rotation)
   const sideDir = { dx: -forward.dz, dz: forward.dx }
@@ -170,7 +171,7 @@ function portCellsBySide(
 }
 
 /** All rear/side edge cells of the 3x3 robotic cell are valid line-side docks. */
-function assemblyDockCells(obj: Pick<FactoryObject, 'type' | 'pos' | 'rotation'>): GridPos[] {
+function assemblyDockCells(obj: Pick<FactoryObject, 'type' | 'resourceId' | 'pos' | 'rotation'>): GridPos[] {
   const forward = rotationToDir(obj.rotation)
   const left = { dx: -forward.dz, dz: forward.dx }
   const directions = [
@@ -187,7 +188,7 @@ function assemblyDockCells(obj: Pick<FactoryObject, 'type' | 'pos' | 'rotation'>
 }
 
 export function portWorldOffset(
-  obj: Pick<FactoryObject, 'type' | 'pos' | 'rotation'>,
+  obj: Pick<FactoryObject, 'type' | 'resourceId' | 'pos' | 'rotation'>,
   port: 'input' | 'output',
   side?: PortSide,
 ): { x: number; z: number } | null {

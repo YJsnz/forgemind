@@ -9,6 +9,7 @@ import { SimulationRunner } from './game/SimulationRunner'
 import { useForgeMindStore } from './store/forgeMind'
 import { useAuthStore } from './store/auth'
 import { isMachineType, isTransportType, objectRole } from './game/types'
+import { diagnoseFactory } from './game/factoryDiagnostics'
 import { AssistantOrb } from './components/AssistantOrb'
 import { AssistantRuntime } from './components/AssistantRuntime'
 import { AssistantVoiceButton } from './components/AssistantVoiceButton'
@@ -18,10 +19,13 @@ import { WarehouseWorkspace } from './components/WarehouseWorkspace'
 import { GenerativeFactoryWorkspace } from './components/GenerativeFactoryWorkspace'
 import type { FactoryId } from './store/forgeMind'
 import { ForgeMindIntro } from './components/ForgeMindIntro'
+import { FloorSwitcher } from './components/FloorSwitcher'
+import type { FactoryFloorId } from './scene/FactoryFloorSystem'
 import './forgemind-intro.css'
 import './production.css'
 import './generative.css'
 import { animateIfAllowed } from './utils/animeMotion'
+import { loadImportedResources } from './api/resources'
 
 const VIEW_META: Record<FactoryView, { code: string; label: string; title: string; description: string }> = {
   overview: {
@@ -60,6 +64,7 @@ function App() {
   const [showViewportTools, setShowViewportTools] = useState(true)
   const [showInterfaceHints, setShowInterfaceHints] = useState(true)
   const [reducedMotion, setReducedMotion] = useState(false)
+  const [activeFloor, setActiveFloor] = useState<FactoryFloorId>(1)
   const shellRef = useRef<HTMLDivElement>(null)
   const topActionsRef = useRef<HTMLDivElement>(null)
   const objects = useForgeMindStore((s) => s.objects)
@@ -75,11 +80,15 @@ function App() {
   const redo = useForgeMindStore((s) => s.redo)
   const factoryId = useForgeMindStore((s) => s.factoryId)
   const setFactory = useForgeMindStore((s) => s.setFactory)
+  const registerImportedResource = useForgeMindStore((s) => s.registerImportedResource)
+  const clearImportedResources = useForgeMindStore((s) => s.clearImportedResources)
 
   const phase = useAuthStore((s) => s.phase)
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const restoreSession = useAuthStore((s) => s.restoreSession)
+  const token = useAuthStore((s) => s.token)
+  const resourceUserToken = useRef<string | null>(null)
 
   const changeView = (next: FactoryView) => {
     setView(next)
@@ -91,6 +100,7 @@ function App() {
     setFactory(next)
     setAuxPanel(null)
     setBuildType(null)
+    setActiveFloor(1)
   }
 
   const handleLogout = () => {
@@ -103,6 +113,28 @@ function App() {
   useEffect(() => {
     restoreSession()
   }, [restoreSession])
+
+  // 导入设备属于登录用户：切换用户时先清除前一个用户的内存资源，
+  // 进入工厂后再从后端加载当前 token 所属用户的资源。
+  useEffect(() => {
+    if (phase !== 'factory' || !token) {
+      resourceUserToken.current = null
+      clearImportedResources()
+      return
+    }
+    if (resourceUserToken.current === token) return
+    resourceUserToken.current = token
+    let cancelled = false
+    void loadImportedResources()
+      .then((resources) => {
+        if (cancelled) return
+        resources.forEach((resource) => registerImportedResource(resource, false))
+      })
+      .catch((error) => {
+        if (!cancelled) console.warn('[ForgeMind] 用户设备资源加载失败', error)
+      })
+    return () => { cancelled = true }
+  }, [clearImportedResources, phase, registerImportedResource, token])
 
   // 登录成功 → 播放 BT-7274 欢迎语音（与舱门开启同步）
   useEffect(() => {
@@ -187,6 +219,36 @@ function App() {
     sources: objects.filter((o) => objectRole(o.type) === 'source').length,
   }), [objects])
 
+  const liveKpis = useMemo(() => {
+    const producedTotal = Object.values(snapshot.stats.produced).reduce((sum, value) => sum + value, 0)
+    const outputRatePerMinute = snapshot.timeSec > 0 ? producedTotal / (snapshot.timeSec / 60) : 0
+    const theoreticalRatePerMinute = objects
+      .filter((object) => objectRole(object.type) === 'machine')
+      .reduce((sum, machine) => {
+        const recipe = recipes.find((candidate) => candidate.id === machine.recipeId)
+        if (!recipe || recipe.durationSec <= 0) return sum
+        const outputUnits = recipe.outputs.reduce((outputSum, output) => outputSum + output.qty, 0)
+        return sum + (outputUnits * 60) / recipe.durationSec
+      }, 0)
+    const productionEfficiency = snapshot.timeSec > 0 && theoreticalRatePerMinute > 0
+      ? Math.min(100, (outputRatePerMinute / theoreticalRatePerMinute) * 100)
+      : 0
+    const diagnostic = diagnoseFactory(objects, snapshot, recipes)
+    const logisticsLoad = counts.conveyors > 0
+      ? Math.min(100, (snapshot.itemLots.length / counts.conveyors) * 100)
+      : 0
+    const activeMachines = snapshot.machines.filter((machine) => machine.state === 'processing' || machine.state === 'output').length
+
+    return {
+      productionEfficiency,
+      utilization: diagnostic.utilization,
+      outputRatePerMinute,
+      logisticsLoad,
+      producedTotal,
+      activeMachines,
+    }
+  }, [counts.conveyors, objects, recipes, snapshot])
+
   const meta = VIEW_META[view]
   const activeTool = auxPanel === 'productionRoute' ? '生产路线工作区已打开' : auxPanel === 'warehouse' ? '仓储工作区已打开' : buildType ? '建造工具已启用' : '浏览与选择'
 
@@ -198,14 +260,14 @@ function App() {
   if (phase !== 'factory') {
     return (
       <div className="fm-login-shell">
-        <FactoryCanvas view="overview" />
+        <FactoryCanvas view="overview" activeFloor={1} />
         <LoginOverlay />
       </div>
     )
   }
 
   return (
-    <div ref={shellRef} className="fm-shell" data-reduced-motion={reducedMotion ? 'true' : 'false'}>
+    <div ref={shellRef} className="fm-shell" data-reduced-motion={reducedMotion ? 'true' : 'false'} data-warehouse-open={auxPanel === 'warehouse' ? 'true' : 'false'} data-panel-open={Boolean(auxPanel || view !== 'overview' || selectedId || topMenu) ? 'true' : 'false'}>
       <SimulationRunner />
       <AssistantRuntime />
 
@@ -321,7 +383,8 @@ function App() {
 
         <main className="fm-main">
           <section className="fm-viewport" data-building={buildType ? 'true' : 'false'} aria-label="3D 工厂视口">
-            <FactoryCanvas view={view} />
+            <FactoryCanvas view={view} activeFloor={activeFloor} />
+            <FloorSwitcher activeFloor={activeFloor} onChange={setActiveFloor} />
 
             {selectedId && view !== 'flow' && (
               <aside className="fm-device-drawer glass3d" aria-label="设备详情">
@@ -388,10 +451,10 @@ function App() {
           </section>
 
           <section className="fm-kpi-strip" aria-label="工厂关键指标">
-            <Kpi label="生产效率" value={snapshot.timeSec > 0 ? '92.3%' : '—'} trend="+4.8%" tone="amber" />
-            <Kpi label="设备利用率" value={counts.machines ? '78.6%' : '—'} trend={`${counts.machines} 台设备`} />
-            <Kpi label="实时产出" value={String(Object.values(snapshot.stats.produced).reduce((sum, value) => sum + value, 0))} trend="units / min" />
-            <Kpi label="物流负载" value={counts.conveyors ? '64%' : '—'} trend={`${counts.conveyors} 条线路`} tone="cyan" />
+            <Kpi label="生产效率" value={`${liveKpis.productionEfficiency.toFixed(1)}%`} trend={snapshot.timeSec > 0 ? `${liveKpis.outputRatePerMinute.toFixed(1)} units / min` : '等待仿真'} tone="amber" />
+            <Kpi label="设备利用率" value={`${liveKpis.utilization.toFixed(1)}%`} trend={`${liveKpis.activeMachines} / ${counts.machines} 台运行`} />
+            <Kpi label="实时产出" value={liveKpis.outputRatePerMinute.toFixed(1)} trend={`${liveKpis.producedTotal} units / session`} />
+            <Kpi label="物流负载" value={`${liveKpis.logisticsLoad.toFixed(1)}%`} trend={`${snapshot.itemLots.length} / ${counts.conveyors} 槽位`} tone="cyan" />
             <AssistantOrb compact />
             <AssistantVoiceButton />
             <div className="fm-kpi-context"><span className="fm-context-dot" /> {activeTool}</div>

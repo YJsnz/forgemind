@@ -1,5 +1,7 @@
 # 黛玉（Daiyu）智能工厂思考引擎技术文档
 
+> 当前实现（2026-08-19）：规则解析、产品 Profile、候选布局生成、端口/碰撞校验、副本仿真、诊断和 What-if/ROI 已由 `src/game/factoryAI.ts`、`factoryDiagnostics.ts`、`generativeFactory.ts` 及 `GenerativeFactoryWorkspace.tsx` 提供。AI 服务只负责离线约束提取和解释，不能直接修改实时场景；用户导入资源、楼层和物流状态会作为生成与诊断输入的一部分，但资源持久化由 Spring Boot/MySQL 负责。跨模块事实以 [当前实现总览](D:/Code/factory/docs/ForgeMind-当前实现总览.md) 为准。
+
 **项目：** ForgeMind 智能工厂数字孪生平台  
 **引擎名称：** 黛玉（Daiyu）  
 **引擎定位：** 工厂领域的需求理解、产线生成、布局调整、仿真评估与方案解释引擎  

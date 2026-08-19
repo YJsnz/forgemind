@@ -1,9 +1,10 @@
 import { stagger } from 'animejs'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { diagnoseFactory } from '../game/factoryDiagnostics'
+import { diagnoseFactory, type FactoryFloorDiagnostic } from '../game/factoryDiagnostics'
 import { requestFactorySpec } from '../game/factoryAI'
 import { DEFAULT_COST_ASSUMPTIONS, evaluateWhatIf, generateFactoryAdjustments, generateFactoryCandidates, parseGenerationBrief, type GeneratedCandidate, type GenerationSpec, type WhatIfMutation, type WhatIfResult } from '../game/generativeFactory'
 import { occupiedCells } from '../game/grid'
+import type { FactoryFloorId } from '../game/types'
 import { useForgeMindStore } from '../store/forgeMind'
 import { animateIfAllowed } from '../utils/animeMotion'
 
@@ -50,6 +51,7 @@ export function GenerativeFactoryWorkspace() {
   const [specSource, setSpecSource] = useState<'deepseek' | 'qwen' | 'rule' | 'fallback'>('rule')
   const [whatIf, setWhatIf] = useState<WhatIfResult | null>(null)
   const [isWhatIfRunning, setIsWhatIfRunning] = useState(false)
+  const [selectedDiagnosticFloor, setSelectedDiagnosticFloor] = useState<FactoryFloorId | 0>(0)
 
   const selectedCandidate = useMemo(
     () => candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0] ?? null,
@@ -66,6 +68,7 @@ export function GenerativeFactoryWorkspace() {
     setIsGenerating(false)
     setWhatIf(null)
     setIsWhatIfRunning(false)
+    setSelectedDiagnosticFloor(0)
     setNotice(`${factoryId.toUpperCase()} 等待诊断任务`)
   }, [factoryId])
 
@@ -190,6 +193,12 @@ export function GenerativeFactoryWorkspace() {
           <div className="fm-generative-live-note"><i />{liveDiagnostic.recommendation}</div>
         </div>
 
+        <FloorDiagnosticsPanel
+          floors={liveDiagnostic.floors}
+          selectedFloor={selectedDiagnosticFloor}
+          onSelect={setSelectedDiagnosticFloor}
+        />
+
         <div className="fm-generative-grid">
           <section className="fm-generative-card fm-generative-brief glass3d">
             <div className="fm-generative-card-head"><span>01 / REQUIREMENT INPUT</span><b>需求输入</b></div>
@@ -253,6 +262,77 @@ export function GenerativeFactoryWorkspace() {
 
         <footer className="fm-generative-footer"><span><i /> {factoryId.toUpperCase()} / AI FACTORY DIAGNOSTICS</span><span>{objects.length.toString().padStart(2, '0')} ASSETS · {liveDiagnostic.openIssues.length} OPEN ISSUES</span><strong>{selectedCandidate ? 'SIMULATION VERIFIED / APPLY AFTER REVIEW' : 'READY FOR DIAGNOSIS'}</strong></footer>
       </div>
+    </section>
+  )
+}
+
+const FLOOR_DIAGNOSTIC_META: Record<FactoryFloorId, { name: string; role: string; description: string }> = {
+  1: { name: '基础物流层', role: 'RECEIVING / CORE LINE', description: '原料接收、核心加工与成品缓存' },
+  2: { name: '工艺制造层', role: 'PROCESS / DRONE SUPPLY', description: '无人机供料的柔性制造单元' },
+  3: { name: '装配交付层', role: 'ASSEMBLY / QA', description: '装配、质检与交付前缓冲' },
+}
+
+function FloorDiagnosticsPanel({
+  floors,
+  selectedFloor,
+  onSelect,
+}: {
+  floors: FactoryFloorDiagnostic[]
+  selectedFloor: FactoryFloorId | 0
+  onSelect: (floorId: FactoryFloorId | 0) => void
+}) {
+  const selected = selectedFloor === 0 ? null : floors.find((floor) => floor.floorId === selectedFloor) ?? null
+
+  return (
+    <section className="fm-floor-diagnostics" aria-label="分楼层诊断">
+      <div className="fm-floor-diagnostics-head">
+        <div>
+          <span>FLOOR SIGNAL / 04</span>
+          <h2>分楼层诊断</h2>
+          <p>按楼层隔离物流、设备与在途物料状态；生成器仍以全厂链路作为调整基线。</p>
+        </div>
+        <div className="fm-floor-diagnostics-filters" role="group" aria-label="楼层诊断筛选">
+          <button type="button" className={selectedFloor === 0 ? 'is-active' : ''} onClick={() => onSelect(0)} aria-pressed={selectedFloor === 0}>全厂</button>
+          {floors.map((floor) => <button key={floor.floorId} type="button" className={selectedFloor === floor.floorId ? 'is-active' : ''} onClick={() => onSelect(floor.floorId)} aria-pressed={selectedFloor === floor.floorId}>L{floor.floorId}</button>)}
+        </div>
+      </div>
+
+      <div className="fm-floor-diagnostics-grid">
+        {floors.map((floor) => {
+          const meta = FLOOR_DIAGNOSTIC_META[floor.floorId]
+          const statusClass = `is-${floor.status.toLowerCase()}`
+          return (
+            <button
+              type="button"
+              key={floor.floorId}
+              className={`fm-floor-diagnostic-card ${statusClass} ${selectedFloor === floor.floorId ? 'is-selected' : ''}`}
+              onClick={() => onSelect(floor.floorId)}
+              aria-pressed={selectedFloor === floor.floorId}
+            >
+              <div className="fm-floor-diagnostic-card-top"><span>L{floor.floorId}</span><small>{meta.role}</small><b>{floor.status}</b></div>
+              <div className="fm-floor-diagnostic-card-title"><h3>{meta.name}</h3><i /></div>
+              <p>{meta.description}</p>
+              <div className="fm-floor-diagnostic-metrics">
+                <span><em>THROUGHPUT</em><b>{floor.throughputPerHour.toFixed(1)}<small>/H</small></b></span>
+                <span><em>UTILIZATION</em><b>{floor.utilization.toFixed(1)}<small>%</small></b></span>
+                <span><em>ACTIVE</em><b>{floor.activeMachines}<small>/{floor.machineCount}</small></b></span>
+                <span><em>IN TRANSIT</em><b>{floor.itemLots}</b></span>
+              </div>
+              <div className="fm-floor-diagnostic-health"><span><i style={{ width: `${floor.score}%` }} /></span><b>{floor.score}</b><small>{floor.openIssues.length > 0 ? `${floor.openIssues.length} OPEN ISSUE${floor.openIssues.length > 1 ? 'S' : ''}` : 'LINK STABLE'}</small></div>
+            </button>
+          )
+        })}
+      </div>
+
+      {selected && (
+        <div className={`fm-floor-diagnostic-detail is-${selected.status.toLowerCase()}`}>
+          <div className="fm-floor-diagnostic-detail-kicker"><span>L{selected.floorId} / FOCUS CHANNEL</span><b>{selected.status}</b></div>
+          <p>{selected.recommendation}</p>
+          <div className="fm-floor-diagnostic-issue-list">
+            {selected.openIssues.length > 0 ? selected.openIssues.map((issue) => <span key={issue}><i />{issue}</span>) : <span><i />没有开放问题，楼层可以继续参与生成与仿真。</span>}
+          </div>
+        </div>
+      )}
     </section>
   )
 }

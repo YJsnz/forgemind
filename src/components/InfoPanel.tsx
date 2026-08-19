@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useForgeMindStore } from '../store/forgeMind'
-import { OBJECT_DEFS } from '../game/types'
+import { getObjectDef } from '../game/types'
 import { Model3DViewer } from './Model3DViewer'
 import { StorageContentOverlay } from './StorageContentOverlay'
 
@@ -25,7 +25,7 @@ export function InfoPanel() {
     return <div className="fm-inspector fm-inspector-empty"><div className="fm-eyebrow">OBJECT INSPECTOR</div><strong>未选中设备</strong><p>从 3D 工厂中点击设备，查看它的职能、接口和运行状态。</p></div>
   }
 
-  const def = OBJECT_DEFS[obj.type]
+  const def = getObjectDef(obj.type, obj.resourceId)
   const machine = def.role === 'machine'
   const source = def.role === 'source'
 

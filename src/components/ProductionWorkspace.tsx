@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { stagger } from 'animejs'
 import { useForgeMindStore } from '../store/forgeMind'
-import { isMachineType, isTransportType, objectRole, OBJECT_DEFS, type FactoryObject } from '../game/types'
+import { getObjectDef, isMachineType, isTransportType, objectRole, type FactoryObject } from '../game/types'
 import { rotatedFootprint } from '../game/grid'
 import { rotationToDir } from '../game/dir'
 import { animateIfAllowed } from '../utils/animeMotion'
@@ -48,9 +48,9 @@ export function ProductionWorkspace() {
   const machineRuntime = useMemo(() => new Map(snapshot.machines.map((machine) => [machine.objectId, machine])), [snapshot.machines])
   const sourceRuntime = useMemo(() => new Map(snapshot.sources.map((source) => [source.objectId, source])), [snapshot.sources])
   const selected = selectedId ? objectMap.get(selectedId) ?? null : null
-  const machines = objects.filter((object) => objectRole(object.type) === 'machine')
-  const logistics = objects.filter((object) => isTransportType(object.type))
-  const routeObjects = objects.filter((object) => objectRole(object.type) === 'conveyor')
+  const machines = objects.filter((object) => objectRole(object.type, object.resourceId) === 'machine')
+  const logistics = objects.filter((object) => isTransportType(object.type, object.resourceId))
+  const routeObjects = objects.filter((object) => objectRole(object.type, object.resourceId) === 'conveyor')
   const activeMachines = snapshot.machines.filter((machine) => machine.state === 'processing' || machine.state === 'output').length
   const avgUtilization = snapshot.machines.length === 0
     ? 0
@@ -179,7 +179,7 @@ export function ProductionWorkspace() {
     if (!selected) {
       return <div className={`fm-production-selection-empty ${wide ? 'is-wide' : ''}`}><span>＋</span><div><b>选择一台设备查看详情</b><small>点击地图节点或设备卡片，查看坐标、配方、吞吐和运行状态。</small></div></div>
     }
-    const def = OBJECT_DEFS[selected.type]
+    const def = getObjectDef(selected.type, selected.resourceId)
     return <section className={`fm-production-selection ${wide ? 'is-wide' : ''}`}>
       <div className="fm-production-selection-top"><span>SELECTED ASSET / {objectCode(selected)}</span><b className={activeFor(selected) ? 'is-live' : ''}>{statusFor(selected)}</b></div>
       <div className="fm-production-selection-main"><div><h3>{def.label}</h3><small>{def.subtitle}</small></div><strong style={{ '--selection-accent': def.accent } as CSSProperties}>{def.model.slice(0, 2).toUpperCase()}</strong></div>
@@ -188,7 +188,7 @@ export function ProductionWorkspace() {
         <div><span>坐标 / POSITION</span><b>{selected.pos.x}, {selected.pos.z}</b></div>
         <div><span>朝向 / HEADING</span><b>{selected.rotation}°</b></div>
         <div><span>吞吐 / THROUGHPUT</span><b>{def.throughput}</b></div>
-        <div><span>{isMachineType(selected.type) ? '配方 / RECIPE' : '物料 / MATERIAL'}</span><b>{isMachineType(selected.type) ? recipeName(selected.recipeId) : itemName(selected.itemId)}</b></div>
+        <div><span>{isMachineType(selected.type, selected.resourceId) ? '配方 / RECIPE' : '物料 / MATERIAL'}</span><b>{isMachineType(selected.type, selected.resourceId) ? recipeName(selected.recipeId) : itemName(selected.itemId)}</b></div>
       </div>
       <div className="fm-production-selection-actions"><button type="button" onClick={() => rotateObject(selected.id)}>旋转设备</button><button type="button" className="danger" onClick={() => remove(selected.id)}>拆除设备</button></div>
     </section>
@@ -196,8 +196,8 @@ export function ProductionWorkspace() {
 
   const renderMapTab = () => {
     const visibleObjects = objects.filter((object) => {
-      if (mapFilter === 'process') return isMachineType(object.type) || objectRole(object.type) === 'source'
-      if (mapFilter === 'logistics') return !isMachineType(object.type)
+       if (mapFilter === 'process') return isMachineType(object.type, object.resourceId) || objectRole(object.type, object.resourceId) === 'source'
+       if (mapFilter === 'logistics') return !isMachineType(object.type, object.resourceId)
       return true
     })
     return <div className="fm-production-tab-panel fm-production-map-panel">
@@ -224,10 +224,10 @@ export function ProductionWorkspace() {
             })}
           </svg>
           {visibleObjects.map((object) => {
-            const def = OBJECT_DEFS[object.type]
-            const footprint = rotatedFootprint(def.footprint, object.rotation)
+             const def = getObjectDef(object.type, object.resourceId)
+             const footprint = rotatedFootprint(def.footprint, object.rotation)
             const point = mapPoint(object)
-            const role = objectRole(object.type)
+             const role = objectRole(object.type, object.resourceId)
             const routeNode = role === 'conveyor'
             const verticalNode = object.rotation % 180 !== 0
             const badge = object.type === 'agv' ? 'AGV' : def.model.slice(0, 2).toUpperCase()
@@ -261,13 +261,13 @@ export function ProductionWorkspace() {
     <div className="fm-production-tab-intro"><div><span className="fm-production-label">ASSET REGISTER / 02</span><h2>设备详情</h2><p>把每一台设备的空间位置、工艺角色和运行状态集中在同一张登记表里。</p></div><div className="fm-production-intro-stat"><b>{objects.length}</b><span>REGISTERED ASSETS</span></div></div>
     {renderSelectedCard(true)}
     <div className="fm-production-device-grid">{objects.map((object) => {
-      const def = OBJECT_DEFS[object.type]
-      return <button key={object.id} type="button" className={`fm-production-device-card ${selectedId === object.id ? 'is-selected' : ''}`} onClick={() => select(object.id)}><div className="fm-production-device-card-top"><span className={activeFor(object) ? 'is-live' : ''} /><small>{objectCode(object)}</small><b>{statusFor(object)}</b></div><h3>{def.label}</h3><p>{def.subtitle}</p><div><span>{object.pos.x}, {object.pos.z}</span><strong>{isMachineType(object.type) ? recipeName(object.recipeId) : def.throughput}</strong></div></button>
+      const def = getObjectDef(object.type, object.resourceId)
+      return <button key={object.id} type="button" className={`fm-production-device-card ${selectedId === object.id ? 'is-selected' : ''}`} onClick={() => select(object.id)}><div className="fm-production-device-card-top"><span className={activeFor(object) ? 'is-live' : ''} /><small>{objectCode(object)}</small><b>{statusFor(object)}</b></div><h3>{def.label}</h3><p>{def.subtitle}</p><div><span>{object.pos.x}, {object.pos.z}</span><strong>{isMachineType(object.type, object.resourceId) ? recipeName(object.recipeId) : def.throughput}</strong></div></button>
     })}</div>
   </div>
 
   const renderFlowTab = () => {
-    const sources = objects.filter((object) => objectRole(object.type) === 'source')
+    const sources = objects.filter((object) => objectRole(object.type, object.resourceId) === 'source')
     const dispatch = objects.filter((object) => object.type === 'storage' || object.type === 'agv')
     const flowStages = [
       { code: '01', title: '原料接收', note: 'RECEIVING', items: sources, accent: '#d6ad3b' },
@@ -275,7 +275,7 @@ export function ProductionWorkspace() {
       { code: '03', title: '装配与质检', note: 'ASSEMBLY / QA', items: objects.filter((object) => object.type === 'assembler' || object.type === 'inspection'), accent: '#d99a7c' },
       { code: '04', title: '缓存与出货', note: 'DISPATCH', items: dispatch, accent: '#9bb3d4' },
     ]
-    return <div className="fm-production-tab-panel fm-production-flow-panel"><div className="fm-production-tab-intro"><div><span className="fm-production-label">MATERIAL FLOW / 03</span><h2>物流流向</h2><p>用四个生产区域看清从原料到出货的路径，颜色只表达状态，不再用大面积箭头遮挡设备。</p></div><div className="fm-production-flow-clock"><span>FLOW CLOCK</span><b>{formatTime(snapshot.timeSec)}</b></div></div><div className="fm-production-flow-track"><div className="fm-production-flow-line" />{flowStages.map((stage) => <section key={stage.code} className="fm-production-flow-stage" style={{ '--stage-accent': stage.accent } as CSSProperties}><div className="fm-production-flow-stage-head"><span>{stage.code}</span><div><b>{stage.title}</b><small>{stage.note}</small></div><strong>{stage.items.length.toString().padStart(2, '0')}</strong></div><div className="fm-production-flow-stage-items">{stage.items.slice(0, 8).map((object) => <button key={object.id} type="button" onClick={() => { select(object.id); setTab('details') }}><i className={activeFor(object) ? 'is-live' : ''} /><span>{OBJECT_DEFS[object.type].label}</span><small>{statusFor(object)}</small></button>)}{stage.items.length > 8 && <small className="fm-production-more">+ {stage.items.length - 8} MORE ASSETS</small>}</div></section>)}</div><div className="fm-production-flow-summary"><div><span>在途物料</span><b>{snapshot.itemLots.length}</b><small>ITEM LOTS</small></div><div><span>运行工位</span><b>{activeMachines}</b><small>ACTIVE CELLS</small></div><div><span>物流节点</span><b>{logistics.length}</b><small>ROUTE ASSETS</small></div><div><span>平均利用率</span><b>{(avgUtilization * 100).toFixed(1)}%</b><small>LIVE AVERAGE</small></div></div></div>
+    return <div className="fm-production-tab-panel fm-production-flow-panel"><div className="fm-production-tab-intro"><div><span className="fm-production-label">MATERIAL FLOW / 03</span><h2>物流流向</h2><p>用四个生产区域看清从原料到出货的路径，颜色只表达状态，不再用大面积箭头遮挡设备。</p></div><div className="fm-production-flow-clock"><span>FLOW CLOCK</span><b>{formatTime(snapshot.timeSec)}</b></div></div><div className="fm-production-flow-track"><div className="fm-production-flow-line" />{flowStages.map((stage) => <section key={stage.code} className="fm-production-flow-stage" style={{ '--stage-accent': stage.accent } as CSSProperties}><div className="fm-production-flow-stage-head"><span>{stage.code}</span><div><b>{stage.title}</b><small>{stage.note}</small></div><strong>{stage.items.length.toString().padStart(2, '0')}</strong></div><div className="fm-production-flow-stage-items">{stage.items.slice(0, 8).map((object) => <button key={object.id} type="button" onClick={() => { select(object.id); setTab('details') }}><i className={activeFor(object) ? 'is-live' : ''} /><span>{getObjectDef(object.type, object.resourceId).label}</span><small>{statusFor(object)}</small></button>)}{stage.items.length > 8 && <small className="fm-production-more">+ {stage.items.length - 8} MORE ASSETS</small>}</div></section>)}</div><div className="fm-production-flow-summary"><div><span>在途物料</span><b>{snapshot.itemLots.length}</b><small>ITEM LOTS</small></div><div><span>运行工位</span><b>{activeMachines}</b><small>ACTIVE CELLS</small></div><div><span>物流节点</span><b>{logistics.length}</b><small>ROUTE ASSETS</small></div><div><span>平均利用率</span><b>{(avgUtilization * 100).toFixed(1)}%</b><small>LIVE AVERAGE</small></div></div></div>
   }
 
   const renderOutputTab = () => {
@@ -302,7 +302,7 @@ function mapXPercent(value: number): number { return ((value - MAP_MIN_X) / MAP_
 function mapZPercent(value: number): number { return ((value - MAP_MIN_Z) / MAP_HEIGHT) * 100 }
 
 function mapPoint(object: FactoryObject): { x: number; y: number } {
-  const footprint = rotatedFootprint(OBJECT_DEFS[object.type].footprint, object.rotation)
+  const footprint = rotatedFootprint(getObjectDef(object.type, object.resourceId).footprint, object.rotation)
   return { x: object.pos.x + footprint.w / 2, y: object.pos.z + footprint.d / 2 }
 }
 
@@ -329,8 +329,8 @@ function statusLabel(object: FactoryObject, machineRuntime: ReadonlyMap<string, 
   const source = sourceRuntime.get(object.id)
   if (source?.state === 'blocked') return '待连接'
   if (source?.state === 'picking' || source?.state === 'placing') return '供料中'
-  if (objectRole(object.type) === 'machine') return '待机'
-  if (objectRole(object.type) === 'conveyor') return '物流在线'
+  if (objectRole(object.type, object.resourceId) === 'machine') return '待机'
+  if (objectRole(object.type, object.resourceId) === 'conveyor') return '物流在线'
   if (object.type === 'storage') return '缓存区'
   if (object.type === 'agv') return '待命车辆'
   return '在线'

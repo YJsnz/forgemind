@@ -22,6 +22,9 @@ export type BuildType =
   | 'storage'
   | 'splitter'
   | 'merger'
+  | 'imported'
+
+export type FactoryFloorId = 1 | 2 | 3
 
 export type ObjectRole = 'source' | 'conveyor' | 'machine' | 'storage'
 export type EquipmentCategory = '采集' | '加工' | '装配' | '物流'
@@ -54,13 +57,29 @@ export interface ObjectDef {
   outputPort: PortSide | null
 }
 
+export interface ImportedResource {
+  id: string
+  name: string
+  modelFileName: string
+  sourceFileName: string
+  sourceFormat: string
+  previewDataUrl: string
+  objectDef: ObjectDef
+  warnings: string[]
+  importedAt: string
+}
+
 export type PortSide = 'front' | 'back' | 'left' | 'right'
 
 export interface FactoryObject {
   id: string
   type: BuildType
+  /** Runtime resource id for user-imported equipment. */
+  resourceId?: string
   pos: GridPos
   rotation: Rotation
+  /** Logical floor datum; old saves omit it and remain on L1. */
+  floorId?: FactoryFloorId
   recipeId?: string
   itemId?: string
   agvProgram?: AgvProgram
@@ -141,6 +160,18 @@ export const OBJECT_DEFS: Record<BuildType, ObjectDef> = {
   agv: equipment('agv', 'storage', '物流', 'AGV 叉车搬运车', 'AGV FORKLIFT Mk.I', '在原料库、线边库和成品库之间执行托盘搬运任务。', 'Autonomous forklift', { w: 2, d: 2 }, '#6e7370', '#dfb842', 1.35, '8 trips / h', '5 kW', ['托盘任务'], ['托盘任务']),
   drone: equipment('drone', 'storage', '物流', '货运无人机', 'CARGO DRONE Mk.I', '在不同楼层的仓库与货架之间执行轻载空中运输任务。', 'ForgeCore cargo drone', { w: 3, d: 3 }, '#536e78', '#70d4d0', 1.8, '12 trips / h', '3 kW', ['运输任务'], ['运输任务']),
   storage: equipment('storage', 'storage', '物流', '成品缓存仓', 'FINISHED GOODS BUFFER Mk.I', '按批次缓存已检验产品，等待入库或出货。', 'Pallet buffer rack', { w: 2, d: 2 }, '#6c7674', '#d7b44a', 1.35, '240 / min', '4 kW', ['合格品'], ['待出货托盘']),
+  imported: equipment('imported', 'machine', '加工', '导入工艺设备', 'IMPORTED RESOURCE', '来自 Hub 资源包的可建造设备。', 'Imported ForgeMind resource', { w: 2, d: 2 }, '#4b9ca4', '#72d4d2', 1.5, '—', '—', ['工艺输入'], ['工艺输出']),
+}
+
+const importedObjectDefs = new Map<string, ObjectDef>()
+
+export function registerImportedObjectDef(resource: ImportedResource): void {
+  importedObjectDefs.set(resource.id, resource.objectDef)
+}
+
+export function getObjectDef(type: BuildType, resourceId?: string): ObjectDef {
+  if (type === 'imported' && resourceId) return importedObjectDefs.get(resourceId) ?? OBJECT_DEFS.imported
+  return OBJECT_DEFS[type]
 }
 
 // The material infeed is a compound station: an unloading buffer, robot arm,
@@ -189,15 +220,15 @@ export function isBuildType(value: unknown): value is BuildType {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(OBJECT_DEFS, value)
 }
 
-export function objectRole(type: BuildType): ObjectRole {
-  return OBJECT_DEFS[type].role
+export function objectRole(type: BuildType, resourceId?: string): ObjectRole {
+  return getObjectDef(type, resourceId).role
 }
 
-export function isMachineType(type: BuildType): boolean {
-  return objectRole(type) === 'machine'
+export function isMachineType(type: BuildType, resourceId?: string): boolean {
+  return objectRole(type, resourceId) === 'machine'
 }
 
-export function isTransportType(type: BuildType): boolean {
-  const role = objectRole(type)
+export function isTransportType(type: BuildType, resourceId?: string): boolean {
+  const role = objectRole(type, resourceId)
   return role === 'conveyor' || role === 'storage'
 }

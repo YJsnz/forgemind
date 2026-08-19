@@ -4,11 +4,12 @@ import { useGLTF } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { PandaArmModel } from './PandaArmModel'
 import { IncomingStationModel } from './IncomingStationModel'
-import type { BuildType } from '../game/types'
+import { getObjectDef, type BuildType } from '../game/types'
 import type { MachineRuntime, SourceRuntimeSnapshot } from '../game/simulation'
 
 interface EquipmentModelProps {
   type: BuildType
+  resourceId?: string
   color: string
   accent: string
   height: number
@@ -22,7 +23,13 @@ interface EquipmentModelProps {
   suppressConveyor?: boolean
 }
 
-export function EquipmentModel({ type, color, accent, height, active = false, runtime, sourceRuntime, conveyorCorner = false, conveyorCornerInput = 'left', castShadows = true, suppressPanda = false, suppressConveyor = false }: EquipmentModelProps) {
+export function EquipmentModel({ type, resourceId, color, accent, height, active = false, runtime, sourceRuntime, conveyorCorner = false, conveyorCornerInput = 'left', castShadows = true, suppressPanda = false, suppressConveyor = false }: EquipmentModelProps) {
+  if (type === 'imported') {
+    const importedDef = getObjectDef(type, resourceId)
+    return importedDef.assetPath
+      ? <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path={importedDef.assetPath} targetFootprint={Math.max(importedDef.footprint.w, importedDef.footprint.d)} targetHeight={height} castShadows={castShadows} /></Suspense>
+      : <SolidUnit color={color} height={height} />
+  }
   switch (type) {
     case 'machine':
       return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/industrial/realvirtual_high_detail.glb" targetFootprint={1.3} targetHeight={height} /></Suspense>

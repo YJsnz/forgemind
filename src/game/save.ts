@@ -111,6 +111,7 @@ function parseObjects(v: unknown): FactoryObject[] {
     return {
       id,
       type,
+      resourceId: typeof x.resourceId === 'string' ? x.resourceId : undefined,
       pos: { x: pos.x as number, z: pos.z as number },
       rotation: rotation as Rotation,
       recipeId: typeof x.recipeId === 'string' ? x.recipeId : undefined,
@@ -163,6 +164,7 @@ function parseItems(v: unknown): Item[] {
       size: typeof x.size === 'number' ? x.size : 1,
       note: typeof x.note === 'string' ? x.note : undefined,
       modelPath: typeof x.modelPath === 'string' ? x.modelPath : undefined,
+      modelId: typeof x.modelId === 'string' ? x.modelId : undefined,
     }
   })
 }

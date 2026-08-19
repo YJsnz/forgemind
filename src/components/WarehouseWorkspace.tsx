@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
-import { OBJECT_DEFS } from '../game/types'
+import { getObjectDef } from '../game/types'
 import { useForgeMindStore } from '../store/forgeMind'
 import { AgvNavigationControl } from './AgvNavigationControl'
+import { DroneNavigationControl } from './DroneNavigationControl'
+import { ItemModelThumbnail } from './ItemModelThumbnail'
 
 interface WarehouseWorkspaceProps {
   onClose: () => void
@@ -25,6 +27,7 @@ export function WarehouseWorkspace({ onClose }: WarehouseWorkspaceProps) {
   const agvCount = objects.filter((object) => object.type === 'agv').length
   const droneCount = objects.filter((object) => object.type === 'drone').length
   const movingAgvCount = snapshot.agvs.filter((agv) => agv.motionStatus === 'moving').length
+  const movingDroneCount = snapshot.drones.filter((drone) => drone.motionStatus === 'moving').length
   const conveyorCount = objects.filter((object) => object.type === 'conveyor').length
   const activityRows = useMemo(() => {
     const ids = new Set([...Object.keys(snapshot.stats.produced), ...Object.keys(snapshot.stats.consumed)])
@@ -44,7 +47,7 @@ export function WarehouseWorkspace({ onClose }: WarehouseWorkspaceProps) {
   const itemForStorage = (object: (typeof storageObjects)[number]) => items.find((item) => item.id === (object.type === 'oreMiner' ? 'item_steel_blank' : 'item_screw'))
 
   return (
-    <section className="fm-warehouse-workspace glass3d" aria-label="仓储工作区">
+    <section className="fm-warehouse-workspace" aria-label="仓储工作区">
       <header className="fm-warehouse-header">
         <div>
           <span className="fm-eyebrow"><b>06</b> / STORAGE CONTROL</span>
@@ -58,11 +61,11 @@ export function WarehouseWorkspace({ onClose }: WarehouseWorkspaceProps) {
         <button type="button" className="fm-warehouse-close" onClick={onClose} aria-label="关闭仓储工作区">×</button>
       </header>
 
-      {tab === 'navigation' ? <AgvNavigationControl /> : <>
+      {tab === 'navigation' ? <div className="fm-warehouse-navigation-stack"><AgvNavigationControl /><DroneNavigationControl /></div> : <>
       <div className="fm-warehouse-kpis" aria-label="仓储统计">
         <WarehouseMetric label="货物仓库" value={storageObjects.filter((object) => object.type === 'storage').length} note="WAREHOUSES" />
         <WarehouseMetric label="原料货架" value={storageObjects.filter((object) => object.type === 'oreMiner').length} note="RAW RACKS" />
-        <WarehouseMetric label="AGV / 无人机" value={`${agvCount} / ${droneCount}`} note={`${movingAgvCount} 台 AGV 导航中`} />
+        <WarehouseMetric label="AGV / 无人机" value={`${agvCount} / ${droneCount}`} note={`${movingAgvCount} 台 AGV · ${movingDroneCount} 台无人机运行中`} />
         <WarehouseMetric label="在途物料" value={snapshot.itemLots.length} note={`${conveyorCount} 条输送线`} />
       </div>
 
@@ -82,7 +85,7 @@ export function WarehouseWorkspace({ onClose }: WarehouseWorkspaceProps) {
                   const content = `${item?.name ?? (isRawRack ? '钢制毛坯' : '螺丝')}*100`
                   return (
                     <tr key={object.id}>
-                      <td><button type="button" className="fm-warehouse-location" onClick={() => selectStorage(object.id)}><i className={isRawRack ? 'is-raw' : 'is-finished'} /><span className="fm-warehouse-location-model">{item?.modelPath && <img src={`/models/forgecore/items/previews/${item.modelPath.replace(/\.glb$/u, '.png')}`} alt="" />}<span><b>{OBJECT_DEFS[object.type].label}</b><small>{object.id}</small></span></span></button></td>
+                      <td><button type="button" className="fm-warehouse-location" onClick={() => selectStorage(object.id)}><i className={isRawRack ? 'is-raw' : 'is-finished'} /><span className="fm-warehouse-location-model"><ItemModelThumbnail modelPath={item?.modelPath} /><span><b>{getObjectDef(object.type, object.resourceId).label}</b><small>{object.id}</small></span></span></button></td>
                       <td><strong className="fm-warehouse-content">{content}</strong><small className="fm-warehouse-muted">初始库存</small></td>
                       <td><span className="fm-warehouse-state"><i />{isRawRack ? '有限库存' : '可查询'}</span></td>
                       <td><b>{isRawRack ? '∞' : '240'}</b><small>units</small></td>
