@@ -2,14 +2,15 @@ import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { daiyuEngine } from './DaiyuEngine'
-import { DAIYU_WARMUP_DELAYS_MS } from './config'
+import { DAIYU_WARMUP_DELAYS_MS, type DaiyuTargetFps } from './config'
 
 /** 每帧只采样底层 renderer.info，不触发 React 重渲染。 */
-export function DaiyuRuntime({ running }: { running: boolean }) {
+export function DaiyuRuntime({ running, targetFps = 60 }: { running: boolean; targetFps?: DaiyuTargetFps }) {
   const { gl, scene } = useThree()
   const lastAuditAt = useRef(0)
 
   useEffect(() => {
+    daiyuEngine.setTargetFps(targetFps)
     daiyuEngine.setPhase(running ? 'running' : 'prewarming')
     ;(window as Window & { __DAIYU__?: typeof daiyuEngine }).__DAIYU__ = daiyuEngine
     document.documentElement.dataset.daiyuEngine = `${daiyuEngine.name}@${daiyuEngine.version}`
@@ -21,7 +22,7 @@ export function DaiyuRuntime({ running }: { running: boolean }) {
       delete document.documentElement.dataset.daiyuEngine
       delete document.documentElement.dataset.daiyuSnapshot
     }
-  }, [running])
+  }, [running, targetFps])
 
   useFrame(({ clock }, delta) => {
     daiyuEngine.sampleFrame(delta, gl)

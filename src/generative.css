@@ -321,6 +321,13 @@
 .fm-setting-row i { min-width: 31px; padding: 4px 3px; border: 1px solid var(--fm-edge); color: var(--fm-text-faint); font: 8px var(--fm-font-mono); font-style: normal; text-align: center; }
 .fm-setting-row i.is-on { border-color: rgba(63, 157, 121, .55); color: #247d5c; background: rgba(63, 157, 121, .1); }
 .fm-setting-row:hover b { color: var(--fm-accent-2); }
+.fm-setting-choice-row { cursor: default; }
+.fm-setting-choice-row:hover b { color: var(--fm-text); }
+.fm-setting-choice { display: flex; flex-shrink: 0; border: 1px solid var(--fm-edge); }
+.fm-setting-choice button { border: 0; border-right: 1px solid var(--fm-edge); padding: 5px 7px; color: var(--fm-text-faint); background: transparent; font: 8px var(--fm-font-mono); cursor: pointer; }
+.fm-setting-choice button:last-child { border-right: 0; }
+.fm-setting-choice button:hover, .fm-setting-choice button.is-active { color: var(--fm-text); background: rgba(229, 174, 24, .16); }
+.fm-setting-choice button.is-active { box-shadow: inset 0 -2px 0 var(--fm-accent-2); }
 .fm-user-status { display: flex; align-items: center; gap: 10px; margin: 14px 15px; padding: 11px; border: 1px solid var(--fm-edge); background: rgba(244, 247, 244, .95); }
 .fm-user-status > div { display: flex; flex-direction: column; gap: 4px; }
 .fm-user-status b { font-size: 10px; font-weight: 600; }

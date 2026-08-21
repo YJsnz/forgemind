@@ -1,9 +1,11 @@
 import type * as THREE from 'three'
 import {
+  budgetForTargetFps,
   DAIYU_4060_LAPTOP_BUDGET,
   DAIYU_ENGINE_NAME,
   DAIYU_ENGINE_VERSION,
   type DaiyuBudget,
+  type DaiyuTargetFps,
 } from './config'
 
 export type DaiyuPhase = 'cold' | 'prewarming' | 'ready' | 'running'
@@ -35,7 +37,7 @@ type Listener = (snapshot: DaiyuSnapshot) => void
 export class DaiyuEngine {
   readonly name = DAIYU_ENGINE_NAME
   readonly version = DAIYU_ENGINE_VERSION
-  readonly budget: Readonly<DaiyuBudget>
+  private activeBudget: Readonly<DaiyuBudget>
 
   private phase: DaiyuPhase = 'cold'
   private frameSamples: number[] = []
@@ -44,7 +46,17 @@ export class DaiyuEngine {
   private rendererStats = { drawCalls: 0, triangles: 0, geometries: 0, textures: 0 }
 
   constructor(budget: Readonly<DaiyuBudget> = DAIYU_4060_LAPTOP_BUDGET) {
-    this.budget = budget
+    this.activeBudget = budget
+  }
+
+  get budget() {
+    return this.activeBudget
+  }
+
+  setTargetFps(targetFps: DaiyuTargetFps) {
+    if (this.activeBudget.targetFps === targetFps) return
+    this.activeBudget = budgetForTargetFps(targetFps, this.activeBudget)
+    this.publish(true)
   }
 
   setPhase(phase: DaiyuPhase) {

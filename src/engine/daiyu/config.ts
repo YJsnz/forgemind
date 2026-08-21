@@ -12,6 +12,8 @@ export interface DaiyuBudget {
   maxRendererMemoryMb: number
 }
 
+export type DaiyuTargetFps = 60 | 120
+
 export const DAIYU_4060_LAPTOP_BUDGET: Readonly<DaiyuBudget> = Object.freeze({
   targetFps: 60,
   frameBudgetMs: 1000 / 60,
@@ -21,5 +23,13 @@ export const DAIYU_4060_LAPTOP_BUDGET: Readonly<DaiyuBudget> = Object.freeze({
   maxGeometries: 900,
   maxRendererMemoryMb: 1024,
 })
+
+export function budgetForTargetFps(targetFps: DaiyuTargetFps, baseBudget: Readonly<DaiyuBudget> = DAIYU_4060_LAPTOP_BUDGET): Readonly<DaiyuBudget> {
+  return Object.freeze({
+    ...baseBudget,
+    targetFps,
+    frameBudgetMs: 1000 / targetFps,
+  })
+}
 
 export const DAIYU_WARMUP_DELAYS_MS = [200, 900, 2400, 5200] as const

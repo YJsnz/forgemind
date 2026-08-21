@@ -31,6 +31,9 @@ import { loadImportedResources } from './api/resources'
 import { getFactoryFloors, MAX_FACTORY_FLOORS } from './game/floorConfig'
 import type { FactoryProjectSummary } from './api/factoryProjects'
 import { selectionKeyboardAction } from './game/selection'
+import type { DaiyuTargetFps } from './engine/daiyu/config'
+
+const TARGET_FPS_STORAGE_KEY = 'forgemind.target-fps'
 
 const VIEW_META: Record<FactoryView, { code: string; label: string; title: string; description: string }> = {
   overview: {
@@ -69,6 +72,7 @@ function App() {
   const [showViewportTools, setShowViewportTools] = useState(true)
   const [showInterfaceHints, setShowInterfaceHints] = useState(true)
   const [reducedMotion, setReducedMotion] = useState(false)
+  const [targetFps, setTargetFps] = useState<DaiyuTargetFps>(readTargetFps)
   const [activeFloor, setActiveFloor] = useState<FactoryFloorId>(1)
   const [visibleFloors, setVisibleFloors] = useState<Set<FactoryFloorId>>(() => new Set())
   const [projectReady, setProjectReady] = useState(false)
@@ -109,6 +113,11 @@ function App() {
     setView(next)
     setAuxPanel(null)
     if (next !== 'build') setBuildType(null)
+  }
+
+  const changeTargetFps = (next: DaiyuTargetFps) => {
+    setTargetFps(next)
+    window.localStorage.setItem(TARGET_FPS_STORAGE_KEY, String(next))
   }
 
   const toggleFloorVisibility = (floorId: FactoryFloorId) => {
@@ -344,7 +353,7 @@ function App() {
   if (phase !== 'factory') {
     return (
       <div className="fm-login-shell">
-        <FactoryCanvas view="overview" activeFloor={1} floorCount={1} />
+        <FactoryCanvas view="overview" targetFps={targetFps} activeFloor={1} floorCount={1} />
         <LoginOverlay />
       </div>
     )
@@ -429,8 +438,9 @@ function App() {
                 <button type="button" className="fm-setting-row" aria-pressed={showViewportTools} onClick={() => setShowViewportTools(!showViewportTools)}><span><b>视口辅助信息</b><small>显示坐标、网格与镜头提示</small></span><i className={showViewportTools ? 'is-on' : ''}>{showViewportTools ? 'ON' : 'OFF'}</i></button>
                 <button type="button" className="fm-setting-row" aria-pressed={showInterfaceHints} onClick={() => setShowInterfaceHints(!showInterfaceHints)}><span><b>操作快捷提示</b><small>显示撤回、旋转和建造提示</small></span><i className={showInterfaceHints ? 'is-on' : ''}>{showInterfaceHints ? 'ON' : 'OFF'}</i></button>
                 <button type="button" className="fm-setting-row" aria-pressed={reducedMotion} onClick={() => setReducedMotion(!reducedMotion)}><span><b>减少界面动效</b><small>降低面板进入和状态切换动画</small></span><i className={reducedMotion ? 'is-on' : ''}>{reducedMotion ? 'ON' : 'OFF'}</i></button>
+                <div className="fm-setting-row fm-setting-choice-row"><span><b>渲染目标帧率</b><small>{targetFps} FPS · {targetFps === 120 ? '流畅优先，动态降级更积极' : '画质优先，保留更多阴影预算'}</small></span><div className="fm-setting-choice" role="group" aria-label="渲染目标帧率"><button type="button" className={targetFps === 60 ? 'is-active' : ''} aria-pressed={targetFps === 60} onClick={() => changeTargetFps(60)}>60 FPS</button><button type="button" className={targetFps === 120 ? 'is-active' : ''} aria-pressed={targetFps === 120} onClick={() => changeTargetFps(120)}>120 FPS</button></div></div>
               </div>
-              <div className="fm-top-popover-foot">设置仅在当前工作台会话中生效</div>
+              <div className="fm-top-popover-foot">帧率选项保存在本机，其余界面设置仅在当前工作台会话中生效</div>
             </div>
           )}
 
@@ -470,7 +480,7 @@ function App() {
 
         <main className="fm-main">
           <section className="fm-viewport" data-building={buildType ? 'true' : 'false'} aria-label="3D 工厂视口">
-            <FactoryCanvas view={view} activeFloor={activeFloor} visibleFloors={[...visibleFloors]} floorCount={floorCount} />
+            <FactoryCanvas view={view} targetFps={targetFps} activeFloor={activeFloor} visibleFloors={[...visibleFloors]} floorCount={floorCount} />
             {projectReady && <FloorSwitcher activeFloor={activeFloor} visibleFloors={visibleFloors} floors={getFactoryFloors(floorCount, floorNames)} onChange={selectFloor} onToggleVisibility={toggleFloorVisibility} onAddFloor={handleAddFloor} onRenameFloor={renameFloor} canAddFloor={floorCount < MAX_FACTORY_FLOORS} />}
 
             {selectedIds.length === 1 && selectedId && view !== 'flow' && (
@@ -592,6 +602,11 @@ function Kpi({ label, value, trend, tone = 'default' }: { label: string; value: 
 
 function MiniStat({ label, value }: { label: string; value: number }) {
   return <div className="fm-mini-stat"><span>{label}</span><strong>{value.toString().padStart(2, '0')}</strong></div>
+}
+
+function readTargetFps(): DaiyuTargetFps {
+  if (typeof window === 'undefined') return 60
+  return window.localStorage.getItem(TARGET_FPS_STORAGE_KEY) === '120' ? 120 : 60
 }
 
 function ViewSummary({ view, counts }: { view: FactoryView; counts: { machines: number; conveyors: number; sources: number } }) {
