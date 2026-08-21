@@ -1,0 +1,562 @@
+import { create } from 'zustand'
+import { registerImportedObjectDef, type AgvProgram, type BuildType, type FactoryFloorId, type FactoryObject, type GridPos, type ImportedResource, type Rotation } from '../game/types'
+import { canPlace } from '../game/grid'
+import { DEFAULT_ITEMS, DEFAULT_RECIPES, type Item, type ItemCategory, type Recipe } from '../game/item'
+import { genId as itemGenId } from '../game/item'
+import type { FactorySave } from '../game/save'
+import { SAVE_VERSION } from '../game/save'
+import type { SimulationSnapshot } from '../game/simulation'
+import { createBaseA01Layout } from '../game/baseA01'
+import { createBaseA02Layout } from '../game/baseA02'
+
+export type FactoryId = 'a01' | 'a02'
+
+/**
+ * 低频 UI/编辑状态（补充设计 §5.3：只装低频状态；
+ * 高频仿真实体位置绝不进 store，命令式更新 Three.js）。
+ *
+ * Day 2：建造；Day 3：Item/Recipe + 保存加载。
+ */
+
+/** 生成对象短 id */
+function genId(): string {
+  return `obj_${Math.random().toString(36).slice(2, 9)}`
+}
+
+/** ghost 预览（跟随鼠标的待放置对象） */
+export interface Ghost {
+  type: BuildType
+  resourceId?: string
+  pos: GridPos | null
+  rotation: Rotation
+  valid: boolean
+}
+
+export interface ForgeMindState {
+  /** 当前工作场地：A-01 人工产线 / A-02 AI 生成实验场 */
+  factoryId: FactoryId
+  /** 场地布局缓存；切换场地时互不覆盖 */
+  factoryLayouts: Record<FactoryId, FactoryObject[]>
+  /** 当前选中的建造工具类型；null = 无工具（浏览/选择模式） */
+  buildType: BuildType | null
+  /** 当前选中的用户导入资源。 */
+  selectedImportedResourceId: string | null
+  /** 已放置对象 */
+  objects: FactoryObject[]
+  /** ghost 预览 */
+  ghost: Ghost
+  ghostPath: GridPos[]
+  ghostPathValid: boolean[]
+  /** 当前选中对象 id */
+  selectedId: string | null
+  /** 物品类型定义 */
+  items: Item[]
+  /** 配方定义 */
+  recipes: Recipe[]
+  /** 当前浏览器会话内可建造的用户导入资源。 */
+  importedResources: ImportedResource[]
+
+  /** 仿真快照（低频，10Hz 由 runner 写入） */
+  simSnapshot: SimulationSnapshot
+  /** 仿真是否运行中 */
+  simPlaying: boolean
+  /** 仿真倍率 */
+  simSpeed: number
+  /** 重置信号：每 +1，runner 重建引擎 */
+  simResetTick: number
+  canUndo: boolean
+  canRedo: boolean
+
+  setBuildType: (t: BuildType | null) => void
+  setImportedResourceId: (id: string | null) => void
+  registerImportedResource: (resource: ImportedResource, select?: boolean) => void
+  clearImportedResources: () => void
+  /** 更新 ghost 的网格位置（含合法性计算）；null = 指针不在网格上 */
+  updateGhost: (pos: GridPos | null, floorId?: FactoryFloorId) => void
+  setGhostPath: (path: GridPos[]) => void
+  setGhostPathValid: (valid: boolean[]) => void
+  /** ghost 旋转 90°（R 键） */
+  rotateGhost: () => void
+  /** 确认放置当前 ghost */
+  place: () => void
+  /** Place a segment at an explicit grid cell (used by conveyor drag placement). */
+  placeAt: (pos: GridPos, rotation?: Rotation, floorId?: FactoryFloorId) => boolean
+  /** 移除指定对象 */
+  remove: (id: string) => void
+  /** 旋转已放置对象 */
+  rotateObject: (id: string) => void
+  undo: () => void
+  redo: () => void
+  select: (id: string | null) => void
+
+  /** 新增物品 */
+  addItem: (name: string, category: ItemCategory, color: string, modelPath?: string, modelId?: string) => void
+  /** 删除物品（若有配方引用则一并移除引用，防止悬空） */
+  removeItem: (id: string) => void
+  /** 新增配方 */
+  addRecipe: (
+    name: string,
+    inputs: Recipe['inputs'],
+    outputs: Recipe['outputs'],
+    durationSec: number,
+  ) => void
+  /** 删除配方 */
+  removeRecipe: (id: string) => void
+
+  /** 机器绑定配方 */
+  bindRecipe: (objectId: string, recipeId: string | null) => void
+  /** source 绑定产出物品 */
+  bindItem: (objectId: string, itemId: string | null) => void
+  /** 配置 AGV 的起点、货物和终点任务 */
+  setAgvProgram: (objectId: string, program: AgvProgram | null) => void
+
+  /** 设置仿真快照（仅 runner 调用，低频） */
+  setSimSnapshot: (snap: SimulationSnapshot) => void
+  setSimPlaying: (p: boolean) => void
+  setSimSpeed: (x: number) => void
+  /** 请求重置仿真（runner 监听 tick 变化重建引擎） */
+  requestSimReset: () => void
+
+  /** 导出当前状态为存档对象 */
+  exportSave: () => FactorySave
+  /** 用存档覆盖当前状态 */
+  importSave: (save: FactorySave) => void
+  /** 清空全部（新建工厂） */
+  clearAll: () => void
+  /** 切换工作场地，并恢复目标场地的独立布局与仿真快照 */
+  setFactory: (factoryId: FactoryId) => void
+  /** 由生成器或诊断副本一次性应用布局，并合并候选方案的物品与配方 */
+  applyLayout: (objects: FactoryObject[], layoutRecipes?: Recipe[], layoutItems?: Item[]) => void
+}
+
+const emptyGhost: Ghost = { type: 'machine', pos: null, rotation: 0, valid: false }
+
+const emptySnapshot: SimulationSnapshot = {
+  timeSec: 0,
+  machines: [],
+  sources: [],
+  itemLots: [],
+  agvs: [],
+  drones: [],
+  stats: { consumed: {}, produced: {} },
+  floorStats: {
+    1: { consumed: {}, produced: {} },
+    2: { consumed: {}, produced: {} },
+    3: { consumed: {}, produced: {} },
+  },
+}
+
+interface FactoryHistoryEntry {
+  objects: FactoryObject[]
+  selectedId: string | null
+}
+
+const HISTORY_LIMIT = 80
+
+export const useForgeMindStore = create<ForgeMindState>((set, get) => {
+  const undoStacks: Record<FactoryId, FactoryHistoryEntry[]> = { a01: [], a02: [] }
+  const redoStacks: Record<FactoryId, FactoryHistoryEntry[]> = { a01: [], a02: [] }
+
+  const capture = (state: Pick<ForgeMindState, 'objects' | 'selectedId'>): FactoryHistoryEntry => ({
+    objects: state.objects,
+    selectedId: state.selectedId,
+  })
+
+  const pushHistory = (state: Pick<ForgeMindState, 'objects' | 'selectedId'>) => {
+    const factoryId = get().factoryId
+    undoStacks[factoryId] = [...undoStacks[factoryId], capture(state)].slice(-HISTORY_LIMIT)
+    redoStacks[factoryId] = []
+  }
+
+  const historyFlags = () => {
+    const factoryId = get().factoryId
+    return { canUndo: undoStacks[factoryId].length > 0, canRedo: redoStacks[factoryId].length > 0 }
+  }
+
+  const snapshotByFactory: Record<FactoryId, SimulationSnapshot> = {
+    a01: emptySnapshot,
+    a02: emptySnapshot,
+  }
+
+  return ({
+  factoryId: 'a01',
+  factoryLayouts: {
+    a01: createBaseA01Layout(),
+    a02: createBaseA02Layout(),
+  },
+  buildType: null,
+  selectedImportedResourceId: null,
+  objects: createBaseA01Layout(),
+  ghost: emptyGhost,
+  ghostPath: [],
+  ghostPathValid: [],
+  selectedId: null,
+  items: DEFAULT_ITEMS,
+  recipes: DEFAULT_RECIPES,
+  importedResources: [],
+  simSnapshot: emptySnapshot,
+  simPlaying: false,
+  simSpeed: 0.35,
+  simResetTick: 0,
+  canUndo: false,
+  canRedo: false,
+
+  setBuildType: (t) =>
+    set((s) => ({
+      buildType: t,
+      ghost: t ? { type: t, resourceId: t === 'imported' ? s.selectedImportedResourceId ?? undefined : undefined, pos: s.ghost.pos, rotation: 0, valid: false } : emptyGhost,
+      ghostPath: [],
+      ghostPathValid: [],
+    })),
+
+  setImportedResourceId: (id) =>
+    set((s) => ({
+      selectedImportedResourceId: id,
+      buildType: id ? 'imported' : s.buildType === 'imported' ? null : s.buildType,
+      ghost: id
+        ? { ...s.ghost, type: 'imported', resourceId: id, rotation: 0, valid: false }
+        : s.ghost,
+    })),
+
+  registerImportedResource: (resource, select = true) => {
+    registerImportedObjectDef(resource)
+    set((s) => ({
+      importedResources: [...s.importedResources.filter((entry) => entry.id !== resource.id), resource],
+      ...(select ? {
+        selectedImportedResourceId: resource.id,
+        buildType: 'imported' as const,
+        ghost: { ...s.ghost, type: 'imported' as const, resourceId: resource.id, rotation: 0 as Rotation, valid: false },
+        ghostPath: [],
+        ghostPathValid: [],
+      } : {}),
+    }))
+  },
+
+  clearImportedResources: () =>
+    set((s) => {
+      s.importedResources.forEach((resource) => {
+        const assetPath = resource.objectDef.assetPath
+        if (assetPath?.startsWith('blob:')) URL.revokeObjectURL(assetPath)
+      })
+      const withoutImported = (objects: FactoryObject[]) => objects.filter((object) => object.type !== 'imported')
+      const factoryLayouts = {
+        a01: withoutImported(s.factoryLayouts.a01),
+        a02: withoutImported(s.factoryLayouts.a02),
+      }
+      return {
+        importedResources: [],
+        selectedImportedResourceId: null,
+        factoryLayouts,
+        objects: withoutImported(s.objects),
+        buildType: s.buildType === 'imported' ? null : s.buildType,
+        ghost: s.ghost.type === 'imported' ? emptyGhost : s.ghost,
+        ghostPath: [],
+        ghostPathValid: [],
+        selectedId: s.selectedId && s.objects.some((object) => object.id === s.selectedId && object.type !== 'imported') ? s.selectedId : null,
+      }
+    }),
+
+  updateGhost: (pos, floorId = 1) =>
+    set((s) => {
+      if (!s.ghost.pos && pos === null) return {}
+      const rotation = s.ghost.rotation
+      const valid = pos !== null && canPlace(pos, s.ghost.type, rotation, s.objects.filter((object) => (object.floorId ?? 1) === floorId), s.ghost.resourceId)
+      return { ghost: { ...s.ghost, pos, valid } }
+    }),
+
+  setGhostPath: (path) => set({ ghostPath: path }),
+  setGhostPathValid: (valid) => set({ ghostPathValid: valid }),
+
+  rotateGhost: () =>
+    set((s) => {
+      if (!s.buildType) return {}
+      const rotation = ((s.ghost.rotation + 90) % 360) as Rotation
+      const pos = s.ghost.pos
+      const valid =
+        pos !== null && canPlace(pos, s.ghost.type, rotation, s.objects, s.ghost.resourceId)
+      return { ghost: { ...s.ghost, rotation, valid } }
+    }),
+
+  place: () =>
+    set((s) => {
+      if (!s.ghost.pos || !s.ghost.valid) return {}
+      pushHistory(s)
+      const obj: FactoryObject = {
+        id: genId(),
+        type: s.ghost.type,
+        resourceId: s.ghost.resourceId,
+        pos: s.ghost.pos,
+        rotation: s.ghost.rotation,
+        floorId: 1,
+      }
+      return { objects: [...s.objects, obj], ...historyFlags() }
+    }),
+
+  placeAt: (pos, rotation = get().ghost.rotation, floorId = 1) => {
+    let placed = false
+    set((s) => {
+      if (!s.buildType || !canPlace(pos, s.buildType, rotation, s.objects.filter((object) => (object.floorId ?? 1) === floorId), s.selectedImportedResourceId ?? undefined)) return {}
+      placed = true
+      pushHistory(s)
+      const obj: FactoryObject = {
+        id: genId(),
+        type: s.buildType,
+        resourceId: s.buildType === 'imported' ? s.selectedImportedResourceId ?? undefined : undefined,
+        pos,
+        rotation,
+        floorId,
+      }
+      return { objects: [...s.objects, obj], ghost: { ...s.ghost, pos, rotation, valid: true }, ...historyFlags() }
+    })
+    return placed
+  },
+
+  remove: (id) =>
+    set((s) => {
+      if (!s.objects.some((o) => o.id === id)) return {}
+      pushHistory(s)
+      return {
+        objects: s.objects.filter((o) => o.id !== id),
+        selectedId: s.selectedId === id ? null : s.selectedId,
+        ...historyFlags(),
+      }
+    }),
+
+  rotateObject: (id) =>
+    set((s) => {
+      const obj = s.objects.find((o) => o.id === id)
+      if (!obj) return {}
+      const rotation = ((obj.rotation + 90) % 360) as Rotation
+      const others = s.objects.filter((o) => o.id !== id && (o.floorId ?? 1) === (obj.floorId ?? 1))
+      if (!canPlace(obj.pos, obj.type, rotation, others)) return {}
+      pushHistory(s)
+      return {
+        objects: s.objects.map((o) => (o.id === id ? { ...o, rotation } : o)),
+        ...historyFlags(),
+      }
+    }),
+
+  undo: () =>
+    set((s) => {
+      const previous = undoStacks[s.factoryId].pop()
+      if (!previous) return {}
+      redoStacks[s.factoryId].push(capture(s))
+      return {
+        objects: previous.objects,
+        selectedId: previous.selectedId,
+        ghostPath: [],
+        ghostPathValid: [],
+        simResetTick: s.simResetTick + 1,
+        ...historyFlags(),
+      }
+    }),
+
+  redo: () =>
+    set((s) => {
+      const next = redoStacks[s.factoryId].pop()
+      if (!next) return {}
+      undoStacks[s.factoryId].push(capture(s))
+      return {
+        objects: next.objects,
+        selectedId: next.selectedId,
+        ghostPath: [],
+        ghostPathValid: [],
+        simResetTick: s.simResetTick + 1,
+        ...historyFlags(),
+      }
+    }),
+
+  select: (id) => set({ selectedId: id }),
+
+  addItem: (name, category, color, modelPath, modelId) =>
+    set((s) => ({
+      items: [...s.items, { id: itemGenId('item'), name, category, color, size: 1, modelPath, modelId }],
+    })),
+
+  removeItem: (id) =>
+    set((s) => {
+      // 同时清理引用该物品的配方端口，防止悬空引用
+      const recipes = s.recipes
+        .map((r) => ({
+          ...r,
+          inputs: r.inputs.filter((p) => p.itemId !== id),
+          outputs: r.outputs.filter((p) => p.itemId !== id),
+        }))
+        .filter((r) => r.inputs.length > 0 || r.outputs.length > 0)
+      return {
+        items: s.items.filter((i) => i.id !== id),
+        recipes,
+      }
+    }),
+
+  addRecipe: (name, inputs, outputs, durationSec) =>
+    set((s) => ({
+      recipes: [
+        ...s.recipes,
+        {
+          id: itemGenId('recipe'),
+          name,
+          inputs,
+          outputs,
+          durationSec: Math.max(0.1, durationSec),
+        },
+      ],
+    })),
+
+  removeRecipe: (id) =>
+    set((s) => ({ recipes: s.recipes.filter((r) => r.id !== id) })),
+
+  bindRecipe: (objectId, recipeId) =>
+    set((s) => {
+      const object = s.objects.find((o) => o.id === objectId)
+      const nextRecipeId = recipeId ?? undefined
+      if (!object || object.recipeId === nextRecipeId) return {}
+      pushHistory(s)
+      return {
+        objects: s.objects.map((o) =>
+          o.id === objectId ? { ...o, recipeId: nextRecipeId } : o,
+        ),
+        ...historyFlags(),
+      }
+    }),
+
+  bindItem: (objectId, itemId) =>
+    set((s) => {
+      const object = s.objects.find((o) => o.id === objectId)
+      const nextItemId = itemId ?? undefined
+      if (!object || object.itemId === nextItemId) return {}
+      pushHistory(s)
+      return {
+        objects: s.objects.map((o) =>
+          o.id === objectId ? { ...o, itemId: nextItemId } : o,
+        ),
+        ...historyFlags(),
+      }
+    }),
+
+  setAgvProgram: (objectId, program) =>
+    set((s) => {
+      const object = s.objects.find((entry) => entry.id === objectId)
+      if (!object || object.type !== 'agv') return {}
+      const nextProgram = program ? { ...program, loadQuantity: Math.max(1, Math.round(program.loadQuantity)) } : undefined
+      if (JSON.stringify(object.agvProgram ?? null) === JSON.stringify(nextProgram ?? null)) return {}
+      pushHistory(s)
+      return {
+        objects: s.objects.map((entry) => (entry.id === objectId ? { ...entry, agvProgram: nextProgram } : entry)),
+        ...historyFlags(),
+      }
+    }),
+
+  setSimSnapshot: (snap) => {
+    snapshotByFactory[get().factoryId] = snap
+    set({ simSnapshot: snap })
+  },
+  setSimPlaying: (p) => set({ simPlaying: p }),
+  setSimSpeed: (x) => set({ simSpeed: x }),
+  requestSimReset: () => set((s) => ({ simResetTick: s.simResetTick + 1 })),
+
+  exportSave: () => {
+    const s = get()
+    return {
+      version: SAVE_VERSION,
+      savedAt: new Date().toISOString(),
+      objects: s.objects,
+      items: s.items,
+      recipes: s.recipes,
+    }
+  },
+
+  importSave: (save) => {
+    const factoryId = get().factoryId
+    undoStacks[factoryId] = []
+    redoStacks[factoryId] = []
+    set({
+      factoryLayouts: { ...get().factoryLayouts, [factoryId]: save.objects },
+      objects: save.objects,
+      items: save.items,
+      recipes: save.recipes,
+      selectedId: null,
+      buildType: null,
+      ghost: emptyGhost,
+      ghostPath: [],
+      ghostPathValid: [],
+      simSnapshot: emptySnapshot,
+      simPlaying: false,
+      canUndo: false,
+      canRedo: false,
+    })
+  },
+
+  clearAll: () => {
+    const factoryId = get().factoryId
+    undoStacks[factoryId] = []
+    redoStacks[factoryId] = []
+    set({
+      factoryLayouts: { ...get().factoryLayouts, [factoryId]: [] },
+      objects: [],
+      items: [],
+      recipes: [],
+      selectedId: null,
+      buildType: null,
+      ghost: emptyGhost,
+      ghostPath: [],
+      ghostPathValid: [],
+      simSnapshot: emptySnapshot,
+      simPlaying: false,
+      canUndo: false,
+      canRedo: false,
+    })
+  },
+
+  setFactory: (factoryId) => {
+    set((s) => {
+      if (s.factoryId === factoryId) return {}
+      snapshotByFactory[s.factoryId] = s.simSnapshot
+      const nextSnapshot = snapshotByFactory[factoryId] ?? emptySnapshot
+      const nextObjects = s.factoryLayouts[factoryId] ?? []
+      return {
+        factoryId,
+        factoryLayouts: {
+          ...s.factoryLayouts,
+          [s.factoryId]: s.objects,
+        },
+        objects: nextObjects.map((object) => ({ ...object, pos: { ...object.pos } })),
+        selectedId: null,
+        buildType: null,
+        ghost: emptyGhost,
+        ghostPath: [],
+        ghostPathValid: [],
+        simSnapshot: nextSnapshot,
+        simPlaying: false,
+        simResetTick: s.simResetTick + 1,
+        canUndo: undoStacks[factoryId].length > 0,
+        canRedo: redoStacks[factoryId].length > 0,
+      }
+    })
+  },
+
+  applyLayout: (objects, layoutRecipes = [], layoutItems = []) =>
+    set((s) => {
+      pushHistory(s)
+      const mergeById = <T extends { id: string }>(current: T[], additions: T[]) => {
+        const byId = new Map(current.map((entry) => [entry.id, entry]))
+        additions.forEach((entry) => byId.set(entry.id, entry))
+        return Array.from(byId.values())
+      }
+      return {
+        objects: objects.map((object) => ({ ...object, pos: { ...object.pos } })),
+        recipes: mergeById(s.recipes, layoutRecipes),
+        items: mergeById(s.items, layoutItems),
+        selectedId: null,
+        buildType: null,
+        ghost: emptyGhost,
+        ghostPath: [],
+        ghostPathValid: [],
+        simSnapshot: emptySnapshot,
+        simPlaying: false,
+        simResetTick: s.simResetTick + 1,
+        ...historyFlags(),
+      }
+    }),
+  })
+})

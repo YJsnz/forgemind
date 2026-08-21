@@ -1,0 +1,49 @@
+# dependencies
+node_modules/
+**/.venv/
+**/.venv-*/
+**/venv/
+*.pyc
+**/__pycache__/
+
+# local speech / assistant model weights (download separately)
+voice-chat/models/**/*.onnx
+voice-chat/models/**/*.onnx.data
+voice-chat/models/**/*.bin
+voice-chat/models/**/*.pt
+voice-chat/models/**/*.pth
+voice-chat/models/**/*.safetensors
+voice-chat/models/**/*.gguf
+
+# build output
+dist/
+dist-ssr/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# editor / os
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# env
+.env
+.env.local
+.env.*.local
+.claude/settings.local.json
+
+# raw CAD source assets (1.6GB, already converted to GLB in public/models/industrial/)
+step_to_gltf/
+工厂素材/
