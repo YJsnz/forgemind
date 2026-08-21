@@ -51,11 +51,10 @@ export function SimulationRunner() {
       const st = useForgeMindStore.getState()
       if (st.simPlaying) {
         engine!.advance(dtReal * st.simSpeed)
-      }
-
-      if (now - lastPush >= SNAPSHOT_INTERVAL) {
-        lastPush = now
-        st.setSimSnapshot(engine!.getSnapshot())
+        if (now - lastPush >= SNAPSHOT_INTERVAL) {
+          lastPush = now
+          st.setSimSnapshot(engine!.getSnapshot())
+        }
       }
 
       raf = requestAnimationFrame(loop)

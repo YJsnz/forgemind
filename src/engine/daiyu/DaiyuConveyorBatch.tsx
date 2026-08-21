@@ -75,12 +75,13 @@ export const DaiyuConveyorBatch = memo(function DaiyuConveyorBatch({
       mesh.instanceMatrix.needsUpdate = true
       mesh.computeBoundingSphere()
     })
+    updateMotionInstances(motionRef.current, objects, 0)
   }, [batches, objects])
 
   useFrame(({ clock }, delta) => {
-    if (!rootRef.current || !isHierarchyVisible(rootRef.current)) return
+    if (!running || !rootRef.current || !isHierarchyVisible(rootRef.current)) return
     const elapsed = clock.getElapsedTime()
-    if (running) motionPhaseRef.current = (motionPhaseRef.current + delta * CONVEYOR_DIRECTION_STRIPE_PHASE_RATE) % 1
+    motionPhaseRef.current = (motionPhaseRef.current + delta * CONVEYOR_DIRECTION_STRIPE_PHASE_RATE) % 1
     updateMotionInstances(motionRef.current, objects, motionPhaseRef.current)
     const pulse = 1 + (0.5 + 0.5 * Math.sin(elapsed * 3)) * 0.03
     selectedRefs.current.forEach((outline) => outline.scale.setScalar(pulse))
