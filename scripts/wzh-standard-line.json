@@ -1,0 +1,2487 @@
+{
+  "version": 6,
+  "savedAt": "2026-08-21T06:16:13.776Z",
+  "name": "WZH 三层标准电机生产线",
+  "floorCount": 3,
+  "floorNames": [
+    "1F 原料接收与总装卸",
+    "2F 零部件加工与齐套",
+    "3F 总装、质检与出货"
+  ],
+  "objects": [
+    {
+      "id": "a01_infeed_steel",
+      "type": "source",
+      "pos": {
+        "x": -23,
+        "z": 1
+      },
+      "rotation": 0,
+      "itemId": "item_steel_blank"
+    },
+    {
+      "id": "a01_cv_receiving_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -20,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_receiving_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -19,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_agv_inbound",
+      "type": "agv",
+      "pos": {
+        "x": -21,
+        "z": 4
+      },
+      "rotation": 0,
+      "agvProgram": {
+        "enabled": true,
+        "sourceObjectId": "a01_warehouse_raw_rack_01",
+        "destinationObjectId": "a01_raw_material_rack",
+        "itemId": "item_steel_blank",
+        "loadQuantity": 100,
+        "priority": 2,
+        "policy": "priority"
+      }
+    },
+    {
+      "id": "a01_raw_material_rack",
+      "type": "oreMiner",
+      "pos": {
+        "x": -18,
+        "z": 1
+      },
+      "rotation": 0,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {
+          "item_steel_blank": 24
+        }
+      }
+    },
+    {
+      "id": "a01_cv_main_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -16,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_main_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -15,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_main_03",
+      "type": "conveyor",
+      "pos": {
+        "x": -14,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cnc_housing",
+      "type": "smelter",
+      "pos": {
+        "x": -13,
+        "z": 1
+      },
+      "rotation": 0,
+      "recipeId": "recipe_machining"
+    },
+    {
+      "id": "a01_cv_main_04",
+      "type": "conveyor",
+      "pos": {
+        "x": -10,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_main_05",
+      "type": "conveyor",
+      "pos": {
+        "x": -9,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_wash_deburr",
+      "type": "washing",
+      "pos": {
+        "x": -8,
+        "z": 1
+      },
+      "rotation": 0,
+      "recipeId": "recipe_wash"
+    },
+    {
+      "id": "a01_cv_main_06",
+      "type": "conveyor",
+      "pos": {
+        "x": -6,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_main_07",
+      "type": "conveyor",
+      "pos": {
+        "x": -5,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_housing_wip_buffer",
+      "type": "storage",
+      "pos": {
+        "x": -4,
+        "z": 1
+      },
+      "rotation": 0,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "a01_cv_main_08",
+      "type": "conveyor",
+      "pos": {
+        "x": -2,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_main_09",
+      "type": "conveyor",
+      "pos": {
+        "x": -1,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_main_10",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_main_11",
+      "type": "conveyor",
+      "pos": {
+        "x": 1,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_main_12",
+      "type": "conveyor",
+      "pos": {
+        "x": 2,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_main_13",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_infeed_sheet",
+      "type": "source",
+      "pos": {
+        "x": 5,
+        "z": 10
+      },
+      "rotation": 270,
+      "itemId": "item_steel_sheet"
+    },
+    {
+      "id": "a01_cv_sheet_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": 9
+      },
+      "rotation": 270
+    },
+    {
+      "id": "a01_cv_sheet_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": 8
+      },
+      "rotation": 270
+    },
+    {
+      "id": "a01_hydraulic_press",
+      "type": "press",
+      "pos": {
+        "x": 5,
+        "z": 6
+      },
+      "rotation": 270,
+      "recipeId": "recipe_stamping"
+    },
+    {
+      "id": "a01_cv_stamp_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": 5
+      },
+      "rotation": 270
+    },
+    {
+      "id": "a01_cv_stamp_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": 4
+      },
+      "rotation": 270
+    },
+    {
+      "id": "a01_cv_stamp_03",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": 3
+      },
+      "rotation": 270
+    },
+    {
+      "id": "a01_infeed_copper",
+      "type": "source",
+      "pos": {
+        "x": 5,
+        "z": -10
+      },
+      "rotation": 90,
+      "itemId": "item_copper_wire"
+    },
+    {
+      "id": "a01_cv_copper_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": -7
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_cv_copper_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": -6
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_coil_winding",
+      "type": "machine",
+      "pos": {
+        "x": 5,
+        "z": -5
+      },
+      "rotation": 90,
+      "recipeId": "recipe_coil"
+    },
+    {
+      "id": "a01_cv_coil_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": -4
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_cv_coil_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": -3
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_cv_coil_03",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": -2
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_cv_coil_04",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": -1
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_infeed_fasteners",
+      "type": "source",
+      "pos": {
+        "x": -8,
+        "z": -5
+      },
+      "rotation": 0,
+      "itemId": "item_fastener"
+    },
+    {
+      "id": "a01_cv_fastener_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -5,
+        "z": -5
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_fastener_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -4,
+        "z": -5
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_fastener_kitting",
+      "type": "machine",
+      "pos": {
+        "x": -3,
+        "z": -5
+      },
+      "rotation": 0,
+      "recipeId": "recipe_fastener_kit"
+    },
+    {
+      "id": "a01_cv_kit_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -2,
+        "z": -5
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_kit_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -1,
+        "z": -5
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_kit_03",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": -5
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_kit_04",
+      "type": "conveyor",
+      "pos": {
+        "x": 1,
+        "z": -5
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_kit_05",
+      "type": "conveyor",
+      "pos": {
+        "x": 2,
+        "z": -5
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_kit_corner_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -5
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_cv_kit_06",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -4
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_cv_kit_07",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -3
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_cv_kit_08",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -2
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_cv_kit_09",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -1
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_cv_kit_corner_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": 0
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_robotic_assembly",
+      "type": "assembler",
+      "pos": {
+        "x": 4,
+        "z": 0
+      },
+      "rotation": 0,
+      "recipeId": "recipe_motor"
+    },
+    {
+      "id": "a01_cv_quality_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 7,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_vision_inspection",
+      "type": "inspection",
+      "pos": {
+        "x": 8,
+        "z": 1
+      },
+      "rotation": 0,
+      "recipeId": "recipe_inspection"
+    },
+    {
+      "id": "a01_cv_quality_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 10,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_packaging_cell",
+      "type": "machine",
+      "pos": {
+        "x": 11,
+        "z": 1
+      },
+      "rotation": 0,
+      "recipeId": "recipe_packaging"
+    },
+    {
+      "id": "a01_quality_splitter",
+      "type": "splitter",
+      "pos": {
+        "x": 12,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_cv_finished",
+      "type": "conveyor",
+      "pos": {
+        "x": 13,
+        "z": 1
+      },
+      "rotation": 0
+    },
+    {
+      "id": "a01_finished_buffer",
+      "type": "storage",
+      "pos": {
+        "x": 14,
+        "z": 1
+      },
+      "rotation": 0,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "a01_agv_outbound",
+      "type": "agv",
+      "pos": {
+        "x": 16,
+        "z": 1
+      },
+      "rotation": 0,
+      "agvProgram": {
+        "enabled": true,
+        "sourceObjectId": "a01_warehouse_raw_rack_02",
+        "destinationObjectId": "a01_finished_buffer",
+        "itemId": "item_steel_blank",
+        "loadQuantity": 100,
+        "priority": 1,
+        "policy": "balanced"
+      }
+    },
+    {
+      "id": "a01_cv_rework",
+      "type": "conveyor",
+      "pos": {
+        "x": 12,
+        "z": 2
+      },
+      "rotation": 90
+    },
+    {
+      "id": "a01_rework_buffer",
+      "type": "storage",
+      "pos": {
+        "x": 12,
+        "z": 3
+      },
+      "rotation": 90,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "a01_cv_quarantine",
+      "type": "conveyor",
+      "pos": {
+        "x": 12,
+        "z": 0
+      },
+      "rotation": 270
+    },
+    {
+      "id": "a01_quarantine_buffer",
+      "type": "storage",
+      "pos": {
+        "x": 12,
+        "z": -2
+      },
+      "rotation": 270,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "a01_agv_logistics_01",
+      "type": "agv",
+      "pos": {
+        "x": -12,
+        "z": -14
+      },
+      "rotation": 0,
+      "agvProgram": {
+        "enabled": true,
+        "sourceObjectId": "a01_warehouse_finished_rack_01",
+        "destinationObjectId": "a01_raw_material_rack",
+        "itemId": "item_steel_blank",
+        "loadQuantity": 100,
+        "priority": 0,
+        "policy": "balanced"
+      }
+    },
+    {
+      "id": "a01_agv_logistics_02",
+      "type": "agv",
+      "pos": {
+        "x": 6,
+        "z": -14
+      },
+      "rotation": 180,
+      "agvProgram": {
+        "enabled": true,
+        "sourceObjectId": "a01_warehouse_raw_rack_01",
+        "destinationObjectId": "a01_finished_buffer",
+        "itemId": "item_steel_blank",
+        "loadQuantity": 100,
+        "priority": 0,
+        "policy": "shortest"
+      }
+    },
+    {
+      "id": "a01_drone_logistics_01",
+      "type": "drone",
+      "pos": {
+        "x": 18,
+        "z": -14
+      },
+      "rotation": 180,
+      "agvProgram": {
+        "enabled": true,
+        "sourceObjectId": "l2_clean_buffer",
+        "destinationObjectId": "wzh_l3_clean_input_rack",
+        "itemId": "item_clean_part",
+        "loadQuantity": 3,
+        "priority": 2,
+        "policy": "shortest"
+      }
+    },
+    {
+      "id": "a01_warehouse_raw_rack_01",
+      "type": "oreMiner",
+      "pos": {
+        "x": -21,
+        "z": -10
+      },
+      "rotation": 0,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {
+          "item_steel_sheet": 24,
+          "item_fastener": 48
+        }
+      }
+    },
+    {
+      "id": "a01_warehouse_raw_rack_02",
+      "type": "oreMiner",
+      "pos": {
+        "x": -17,
+        "z": -10
+      },
+      "rotation": 0,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {
+          "item_copper_wire": 24
+        }
+      }
+    },
+    {
+      "id": "a01_warehouse_finished_rack_01",
+      "type": "storage",
+      "pos": {
+        "x": -21,
+        "z": -6
+      },
+      "rotation": 0,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "a01_warehouse_finished_rack_02",
+      "type": "storage",
+      "pos": {
+        "x": -17,
+        "z": -6
+      },
+      "rotation": 0,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "l2_infeed_steel",
+      "type": "source",
+      "pos": {
+        "x": -23,
+        "z": -10
+      },
+      "rotation": 0,
+      "itemId": "item_steel_blank",
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_steel_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -22,
+        "z": -10
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_steel_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -21,
+        "z": -10
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_cnc_housing",
+      "type": "smelter",
+      "pos": {
+        "x": -20,
+        "z": -10
+      },
+      "rotation": 0,
+      "recipeId": "recipe_machining",
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_housing_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -17,
+        "z": -10
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_housing_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -16,
+        "z": -10
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_wash_deburr",
+      "type": "washing",
+      "pos": {
+        "x": -15,
+        "z": -10
+      },
+      "rotation": 0,
+      "recipeId": "recipe_wash",
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_clean_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -13,
+        "z": -10
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_clean_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -12,
+        "z": -10
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_clean_buffer",
+      "type": "storage",
+      "pos": {
+        "x": -7,
+        "z": -11
+      },
+      "rotation": 0,
+      "floorId": 2,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "l2_infeed_sheet",
+      "type": "source",
+      "pos": {
+        "x": -4,
+        "z": 13
+      },
+      "rotation": 270,
+      "itemId": "item_steel_sheet",
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_sheet_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -4,
+        "z": 12
+      },
+      "rotation": 270,
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_sheet_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -4,
+        "z": 11
+      },
+      "rotation": 270,
+      "floorId": 2
+    },
+    {
+      "id": "l2_press",
+      "type": "press",
+      "pos": {
+        "x": -4,
+        "z": 9
+      },
+      "rotation": 270,
+      "recipeId": "recipe_stamping",
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_shell_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -4,
+        "z": 7
+      },
+      "rotation": 270,
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_shell_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -4,
+        "z": 6
+      },
+      "rotation": 270,
+      "floorId": 2
+    },
+    {
+      "id": "l2_shell_buffer",
+      "type": "storage",
+      "pos": {
+        "x": -5,
+        "z": 0
+      },
+      "rotation": 0,
+      "floorId": 2,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "l2_infeed_copper",
+      "type": "source",
+      "pos": {
+        "x": 7,
+        "z": -14
+      },
+      "rotation": 0,
+      "itemId": "item_copper_wire",
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_copper_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -14
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_copper_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 9,
+        "z": -14
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_coil_winding",
+      "type": "machine",
+      "pos": {
+        "x": 10,
+        "z": -14
+      },
+      "rotation": 0,
+      "recipeId": "recipe_coil",
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_coil_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 11,
+        "z": -14
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_coil_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 12,
+        "z": -14
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_coil_buffer",
+      "type": "storage",
+      "pos": {
+        "x": 17,
+        "z": -15
+      },
+      "rotation": 0,
+      "floorId": 2,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "l2_infeed_fastener",
+      "type": "source",
+      "pos": {
+        "x": -23,
+        "z": 10
+      },
+      "rotation": 0,
+      "itemId": "item_fastener",
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_fastener_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -22,
+        "z": 10
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_fastener_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -21,
+        "z": 10
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_kitting",
+      "type": "machine",
+      "pos": {
+        "x": -20,
+        "z": 10
+      },
+      "rotation": 0,
+      "recipeId": "recipe_fastener_kit",
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_kit_01",
+      "type": "conveyor",
+      "pos": {
+        "x": -19,
+        "z": 10
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_cv_kit_02",
+      "type": "conveyor",
+      "pos": {
+        "x": -18,
+        "z": 10
+      },
+      "rotation": 0,
+      "floorId": 2
+    },
+    {
+      "id": "l2_kit_buffer",
+      "type": "storage",
+      "pos": {
+        "x": -13,
+        "z": 9
+      },
+      "rotation": 0,
+      "floorId": 2,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "l3_infeed_clean_part",
+      "type": "source",
+      "pos": {
+        "x": -8,
+        "z": 1
+      },
+      "rotation": 0,
+      "itemId": "item_clean_part",
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_clean_-7",
+      "type": "conveyor",
+      "pos": {
+        "x": -7,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_clean_-6",
+      "type": "conveyor",
+      "pos": {
+        "x": -6,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_clean_-5",
+      "type": "conveyor",
+      "pos": {
+        "x": -5,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_clean_-4",
+      "type": "conveyor",
+      "pos": {
+        "x": -4,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_clean_-3",
+      "type": "conveyor",
+      "pos": {
+        "x": -3,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_clean_-2",
+      "type": "conveyor",
+      "pos": {
+        "x": -2,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_clean_-1",
+      "type": "conveyor",
+      "pos": {
+        "x": -1,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_clean_0",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_infeed_shell",
+      "type": "source",
+      "pos": {
+        "x": 3,
+        "z": 10
+      },
+      "rotation": 270,
+      "itemId": "item_stamped_shell",
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_shell_9",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": 9
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_shell_8",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": 8
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_shell_7",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": 7
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_shell_6",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": 6
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_shell_5",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": 5
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_shell_4",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": 4
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_infeed_kit",
+      "type": "source",
+      "pos": {
+        "x": 3,
+        "z": -7
+      },
+      "rotation": 90,
+      "itemId": "item_fastener_kit",
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_kit_-6",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -6
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_kit_-5",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -5
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_kit_-4",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -4
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_kit_-3",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -3
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_kit_-2",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -2
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_kit_-1",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": -1
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_infeed_coil",
+      "type": "source",
+      "pos": {
+        "x": 10,
+        "z": -10
+      },
+      "rotation": 180,
+      "itemId": "item_coil",
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_09",
+      "type": "conveyor",
+      "pos": {
+        "x": 9,
+        "z": -10
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_08",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -10
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_turn_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -9
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y-8",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -8
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y-7",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -7
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y-6",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -6
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y-5",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -5
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y-4",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -4
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y-3",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -3
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y-2",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -2
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y-1",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": -1
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y0",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 0
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y1",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 1
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y2",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 2
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y3",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 3
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y4",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 4
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y5",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 5
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y6",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 6
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y7",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 7
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y8",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 8
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y9",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 9
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y10",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 10
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_y11",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 11
+      },
+      "rotation": 90,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_turn_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 8,
+        "z": 12
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_x7",
+      "type": "conveyor",
+      "pos": {
+        "x": 7,
+        "z": 12
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_x6",
+      "type": "conveyor",
+      "pos": {
+        "x": 6,
+        "z": 12
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_x5",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": 12
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_x4",
+      "type": "conveyor",
+      "pos": {
+        "x": 4,
+        "z": 12
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_x3",
+      "type": "conveyor",
+      "pos": {
+        "x": 3,
+        "z": 12
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_x2",
+      "type": "conveyor",
+      "pos": {
+        "x": 2,
+        "z": 12
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_x1",
+      "type": "conveyor",
+      "pos": {
+        "x": 1,
+        "z": 12
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_x0",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 12
+      },
+      "rotation": 180,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_turn_03",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 11
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_drop10",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 10
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_drop9",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 9
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_drop8",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 8
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_drop7",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 7
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_drop6",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 6
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_drop5",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 5
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_drop4",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 4
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_drop3",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 3
+      },
+      "rotation": 270,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_coil_approach",
+      "type": "conveyor",
+      "pos": {
+        "x": 0,
+        "z": 2
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_robotic_assembly",
+      "type": "assembler",
+      "pos": {
+        "x": 2,
+        "z": 0
+      },
+      "rotation": 0,
+      "recipeId": "recipe_motor",
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_assembly_out_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 5,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_assembly_out_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 6,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_vision_inspection",
+      "type": "inspection",
+      "pos": {
+        "x": 7,
+        "z": 1
+      },
+      "rotation": 0,
+      "recipeId": "recipe_inspection",
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_qa_01",
+      "type": "conveyor",
+      "pos": {
+        "x": 9,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_qa_02",
+      "type": "conveyor",
+      "pos": {
+        "x": 10,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_packaging",
+      "type": "machine",
+      "pos": {
+        "x": 11,
+        "z": 1
+      },
+      "rotation": 0,
+      "recipeId": "recipe_packaging",
+      "floorId": 3
+    },
+    {
+      "id": "l3_quality_splitter",
+      "type": "splitter",
+      "pos": {
+        "x": 12,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_cv_finished",
+      "type": "conveyor",
+      "pos": {
+        "x": 13,
+        "z": 1
+      },
+      "rotation": 0,
+      "floorId": 3
+    },
+    {
+      "id": "l3_finished_buffer",
+      "type": "storage",
+      "pos": {
+        "x": 18,
+        "z": 0
+      },
+      "rotation": 0,
+      "floorId": 3,
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "wzh_l2_steel_input_rack",
+      "type": "storage",
+      "floorId": 2,
+      "pos": {
+        "x": -22,
+        "z": -6
+      },
+      "rotation": 0,
+      "displayName": "l2_infeed_steel 供料货架",
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {
+          "item_steel_blank": 24
+        }
+      }
+    },
+    {
+      "id": "wzh_l2_sheet_input_rack",
+      "type": "storage",
+      "floorId": 2,
+      "pos": {
+        "x": -3,
+        "z": 17
+      },
+      "rotation": 0,
+      "displayName": "l2_infeed_sheet 供料货架",
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {
+          "item_steel_sheet": 24
+        }
+      }
+    },
+    {
+      "id": "wzh_l2_copper_input_rack",
+      "type": "storage",
+      "floorId": 2,
+      "pos": {
+        "x": 5,
+        "z": -13
+      },
+      "rotation": 0,
+      "displayName": "l2_infeed_copper 供料货架",
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {
+          "item_copper_wire": 24
+        }
+      }
+    },
+    {
+      "id": "wzh_l2_fastener_input_rack",
+      "type": "storage",
+      "floorId": 2,
+      "pos": {
+        "x": -22,
+        "z": 14
+      },
+      "rotation": 0,
+      "displayName": "l2_infeed_fastener 供料货架",
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {
+          "item_fastener": 96
+        }
+      }
+    },
+    {
+      "id": "wzh_l3_clean_input_rack",
+      "type": "storage",
+      "floorId": 3,
+      "pos": {
+        "x": -10,
+        "z": 2
+      },
+      "rotation": 0,
+      "displayName": "l3_infeed_clean_part 供料货架",
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {}
+      }
+    },
+    {
+      "id": "wzh_l3_shell_input_rack",
+      "type": "storage",
+      "floorId": 3,
+      "pos": {
+        "x": 4,
+        "z": 14
+      },
+      "rotation": 0,
+      "displayName": "l3_infeed_shell 供料货架",
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {
+          "item_stamped_shell": 24
+        }
+      }
+    },
+    {
+      "id": "wzh_l3_kit_input_rack",
+      "type": "storage",
+      "floorId": 3,
+      "pos": {
+        "x": 4,
+        "z": -9
+      },
+      "rotation": 0,
+      "displayName": "l3_infeed_kit 供料货架",
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {
+          "item_fastener_kit": 24
+        }
+      }
+    },
+    {
+      "id": "wzh_l3_coil_input_rack",
+      "type": "storage",
+      "floorId": 3,
+      "pos": {
+        "x": 14,
+        "z": -9
+      },
+      "rotation": 0,
+      "displayName": "l3_infeed_coil 供料货架",
+      "storageConfig": {
+        "capacity": 240,
+        "initialInventory": {
+          "item_coil": 24
+        }
+      }
+    },
+    {
+      "id": "wzh_l2_clean_buffer_station",
+      "type": "source",
+      "floorId": 2,
+      "pos": {
+        "x": -11,
+        "z": -12
+      },
+      "rotation": 180,
+      "displayName": "l2_clean_buffer 入架站",
+      "stationProgram": {
+        "mode": "store",
+        "transferIntervalSec": 0.5,
+        "rackAssignments": {}
+      }
+    },
+    {
+      "id": "wzh_l2_shell_buffer_station",
+      "type": "source",
+      "floorId": 2,
+      "pos": {
+        "x": -6,
+        "z": 2
+      },
+      "rotation": 90,
+      "displayName": "l2_shell_buffer 入架站",
+      "stationProgram": {
+        "mode": "store",
+        "transferIntervalSec": 0.5,
+        "rackAssignments": {}
+      }
+    },
+    {
+      "id": "wzh_l2_coil_buffer_station",
+      "type": "source",
+      "floorId": 2,
+      "pos": {
+        "x": 13,
+        "z": -16
+      },
+      "rotation": 180,
+      "displayName": "l2_coil_buffer 入架站",
+      "stationProgram": {
+        "mode": "store",
+        "transferIntervalSec": 0.5,
+        "rackAssignments": {}
+      }
+    },
+    {
+      "id": "wzh_l2_kit_buffer_station",
+      "type": "source",
+      "floorId": 2,
+      "pos": {
+        "x": -17,
+        "z": 8
+      },
+      "rotation": 180,
+      "displayName": "l2_kit_buffer 入架站",
+      "stationProgram": {
+        "mode": "store",
+        "transferIntervalSec": 0.5,
+        "rackAssignments": {}
+      }
+    },
+    {
+      "id": "wzh_l3_finished_buffer_station",
+      "type": "source",
+      "floorId": 3,
+      "pos": {
+        "x": 14,
+        "z": -1
+      },
+      "rotation": 180,
+      "displayName": "l3_finished_buffer 入架站",
+      "stationProgram": {
+        "mode": "store",
+        "transferIntervalSec": 0.5,
+        "rackAssignments": {}
+      }
+    },
+    {
+      "id": "wzh_inbound_warehouse",
+      "type": "inboundWarehouse",
+      "floorId": 1,
+      "pos": {
+        "x": -24,
+        "z": -20
+      },
+      "rotation": 0,
+      "itemId": "item_steel_blank",
+      "displayName": "WZH 入货仓库"
+    },
+    {
+      "id": "wzh_agv_inbound",
+      "type": "agv",
+      "floorId": 1,
+      "pos": {
+        "x": -20,
+        "z": -20
+      },
+      "rotation": 0,
+      "agvProgram": {
+        "enabled": true,
+        "sourceObjectId": "wzh_inbound_warehouse",
+        "destinationObjectId": "a01_raw_material_rack",
+        "itemId": "item_steel_blank",
+        "loadQuantity": 24,
+        "priority": 3,
+        "policy": "priority",
+        "dispatchMode": "continuous"
+      }
+    },
+    {
+      "id": "wzh_incline_up_1_2",
+      "type": "inclineUp",
+      "floorId": 1,
+      "pos": {
+        "x": -17,
+        "z": 20
+      },
+      "rotation": 0,
+      "incline": {
+        "direction": "up",
+        "lowerFloorId": 1,
+        "upperFloorId": 2,
+        "lowPos": {
+          "x": -17,
+          "z": 20
+        },
+        "highPos": {
+          "x": -10,
+          "z": 20
+        },
+        "riseM": 5.25,
+        "runM": 7
+      }
+    },
+    {
+      "id": "wzh_incline_down_3_2",
+      "type": "inclineDown",
+      "floorId": 3,
+      "pos": {
+        "x": 10,
+        "z": 20
+      },
+      "rotation": 180,
+      "incline": {
+        "direction": "down",
+        "lowerFloorId": 2,
+        "upperFloorId": 3,
+        "lowPos": {
+          "x": 17,
+          "z": 20
+        },
+        "highPos": {
+          "x": 10,
+          "z": 20
+        },
+        "riseM": 5.25,
+        "runM": 7
+      }
+    },
+    {
+      "id": "wzh_outbound_warehouse",
+      "type": "outboundWarehouse",
+      "floorId": 3,
+      "pos": {
+        "x": 18,
+        "z": 8
+      },
+      "rotation": 180,
+      "displayName": "WZH 出货仓库"
+    },
+    {
+      "id": "wzh_agv_finished_dispatch",
+      "type": "agv",
+      "floorId": 3,
+      "pos": {
+        "x": 17,
+        "z": 5
+      },
+      "rotation": 0,
+      "agvProgram": {
+        "enabled": true,
+        "sourceObjectId": "l3_finished_buffer",
+        "destinationObjectId": "wzh_outbound_warehouse",
+        "itemId": "item_inspected_motor",
+        "loadQuantity": 12,
+        "priority": 3,
+        "policy": "shortest",
+        "dispatchMode": "continuous"
+      }
+    },
+    {
+      "id": "wzh_l3_output_merger",
+      "type": "merger",
+      "floorId": 3,
+      "pos": {
+        "x": 1,
+        "z": 14
+      },
+      "rotation": 0
+    },
+    {
+      "id": "wzh_precision_finishing",
+      "type": "machine",
+      "resourceId": "wzh_precision_finishing_machine",
+      "floorId": 3,
+      "pos": {
+        "x": 15,
+        "z": 6
+      },
+      "rotation": 0,
+      "recipeId": "recipe_packaging"
+    }
+  ],
+  "items": [
+    {
+      "id": "item_steel_blank",
+      "name": "钢制毛坯",
+      "category": "raw",
+      "color": "#87959a",
+      "size": 1,
+      "modelPath": "material/ingot.glb",
+      "modelId": "RAW_INGOT"
+    },
+    {
+      "id": "item_screw",
+      "name": "螺丝",
+      "category": "raw",
+      "color": "#6d7b7b",
+      "size": 1,
+      "modelPath": "mechanical/bolt.glb",
+      "modelId": "PART_BOLT"
+    },
+    {
+      "id": "item_steel_sheet",
+      "name": "冷轧钢板",
+      "category": "raw",
+      "color": "#9ba8aa",
+      "size": 1,
+      "modelPath": "material/plate.glb",
+      "modelId": "MATERIAL_PLATE"
+    },
+    {
+      "id": "item_copper_wire",
+      "name": "铜线盘",
+      "category": "raw",
+      "color": "#c87948",
+      "size": 1,
+      "modelPath": "material/wire-coil.glb",
+      "modelId": "MATERIAL_WIRE_COIL"
+    },
+    {
+      "id": "item_fastener",
+      "name": "标准紧固件",
+      "category": "raw",
+      "color": "#6d7b7b",
+      "size": 1,
+      "modelPath": "mechanical/bolt.glb",
+      "modelId": "PART_BOLT"
+    },
+    {
+      "id": "item_fastener_kit",
+      "name": "紧固件齐套包",
+      "category": "intermediate",
+      "color": "#7f8b88",
+      "size": 1,
+      "modelPath": "package/box.glb",
+      "modelId": "PACK_BOX"
+    },
+    {
+      "id": "item_machined_housing",
+      "name": "机加工壳体",
+      "category": "intermediate",
+      "color": "#71868a",
+      "size": 1,
+      "modelPath": "material/chunk.glb",
+      "modelId": "RAW_CHUNK"
+    },
+    {
+      "id": "item_stamped_shell",
+      "name": "冲压壳体",
+      "category": "intermediate",
+      "color": "#8a9ca0",
+      "size": 1,
+      "modelPath": "material/plate.glb",
+      "modelId": "MATERIAL_PLATE"
+    },
+    {
+      "id": "item_clean_part",
+      "name": "洁净零件",
+      "category": "intermediate",
+      "color": "#5f9c9c",
+      "size": 1,
+      "modelPath": "mechanical/gear.glb",
+      "modelId": "PART_GEAR"
+    },
+    {
+      "id": "item_coil",
+      "name": "定子线圈",
+      "category": "intermediate",
+      "color": "#c28e35",
+      "size": 1,
+      "modelPath": "material/coil.glb",
+      "modelId": "MATERIAL_COIL"
+    },
+    {
+      "id": "item_motor",
+      "name": "电机总成",
+      "category": "product",
+      "color": "#4c9fa0",
+      "size": 1,
+      "modelPath": "electronic/motor.glb",
+      "modelId": "ELEC_MOTOR"
+    },
+    {
+      "id": "item_inspected_motor",
+      "name": "已检电机",
+      "category": "product",
+      "color": "#3f9d79",
+      "size": 1,
+      "modelPath": "electronic/motor.glb",
+      "modelId": "ELEC_MOTOR"
+    }
+  ],
+  "recipes": [
+    {
+      "id": "recipe_machining",
+      "name": "数控车铣复合",
+      "inputs": [
+        {
+          "itemId": "item_steel_blank",
+          "qty": 1
+        }
+      ],
+      "outputs": [
+        {
+          "itemId": "item_machined_housing",
+          "qty": 1
+        }
+      ],
+      "durationSec": 6
+    },
+    {
+      "id": "recipe_stamping",
+      "name": "板材冲压成型",
+      "inputs": [
+        {
+          "itemId": "item_steel_sheet",
+          "qty": 1
+        }
+      ],
+      "outputs": [
+        {
+          "itemId": "item_stamped_shell",
+          "qty": 1
+        }
+      ],
+      "durationSec": 4
+    },
+    {
+      "id": "recipe_coil",
+      "name": "定子线圈绕制",
+      "inputs": [
+        {
+          "itemId": "item_copper_wire",
+          "qty": 1
+        }
+      ],
+      "outputs": [
+        {
+          "itemId": "item_coil",
+          "qty": 1
+        }
+      ],
+      "durationSec": 5.5
+    },
+    {
+      "id": "recipe_fastener_kit",
+      "name": "紧固件自动齐套",
+      "inputs": [
+        {
+          "itemId": "item_fastener",
+          "qty": 4
+        }
+      ],
+      "outputs": [
+        {
+          "itemId": "item_fastener_kit",
+          "qty": 1
+        }
+      ],
+      "durationSec": 2.5
+    },
+    {
+      "id": "recipe_wash",
+      "name": "去毛刺与清洗",
+      "inputs": [
+        {
+          "itemId": "item_machined_housing",
+          "qty": 1
+        }
+      ],
+      "outputs": [
+        {
+          "itemId": "item_clean_part",
+          "qty": 1
+        }
+      ],
+      "durationSec": 3.5
+    },
+    {
+      "id": "recipe_motor",
+      "name": "电机自动装配",
+      "inputs": [
+        {
+          "itemId": "item_clean_part",
+          "qty": 1
+        },
+        {
+          "itemId": "item_stamped_shell",
+          "qty": 1
+        },
+        {
+          "itemId": "item_fastener_kit",
+          "qty": 1
+        },
+        {
+          "itemId": "item_coil",
+          "qty": 1
+        }
+      ],
+      "outputs": [
+        {
+          "itemId": "item_motor",
+          "qty": 1
+        }
+      ],
+      "durationSec": 8
+    },
+    {
+      "id": "recipe_inspection",
+      "name": "视觉终检与追溯",
+      "inputs": [
+        {
+          "itemId": "item_motor",
+          "qty": 1
+        }
+      ],
+      "outputs": [
+        {
+          "itemId": "item_inspected_motor",
+          "qty": 1
+        }
+      ],
+      "durationSec": 2
+    },
+    {
+      "id": "recipe_packaging",
+      "name": "成品包装入库",
+      "inputs": [
+        {
+          "itemId": "item_inspected_motor",
+          "qty": 1
+        }
+      ],
+      "outputs": [
+        {
+          "itemId": "item_inspected_motor",
+          "qty": 1
+        }
+      ],
+      "durationSec": 3
+    }
+  ],
+  "machineDefinitions": [
+    {
+      "id": "wzh_precision_finishing_machine",
+      "name": "精加工与包装工作站",
+      "description": "完成终检后的成品精加工、标签和包装准备。",
+      "modelType": "machine",
+      "footprint": {
+        "w": 1,
+        "d": 1
+      },
+      "height": 1.6,
+      "throughput": "24 / min",
+      "power": "12 kW",
+      "inputPortCount": 1,
+      "outputPortCount": 1,
+      "recipeIds": [
+        "recipe_packaging"
+      ]
+    }
+  ]
+}
