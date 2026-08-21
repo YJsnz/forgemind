@@ -23,7 +23,9 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
   const [selectedType, setSelectedType] = useState<BuildType>('oreMiner')
 
   const entries = useMemo(
-    () => EQUIPMENT_ORDER.filter((type) => OBJECT_DEFS[type].category === category && !['machine', 'smelter', 'press', 'washing', 'inspection', 'storage'].includes(type)),
+    // 保留内置设备目录；“机械制造”新增的 machine 仍单独显示在加工页。
+    // 之前这里把默认加工、质检和仓储设备一并过滤掉，导致空白工厂的设备卡片消失。
+    () => EQUIPMENT_ORDER.filter((type) => OBJECT_DEFS[type].category === category && type !== 'machine'),
     [category],
   )
   const selectedMachine = machineDefinitions.find((definition) => definition.id === selectedMachineDefinitionId)
@@ -58,9 +60,8 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
               setCategory(item.key)
               setImportedResourceId(null)
               setMachineDefinitionId(null)
-              const firstType = EQUIPMENT_ORDER.find((type) => OBJECT_DEFS[type].category === item.key && !['machine', 'smelter', 'press', 'washing', 'inspection', 'storage'].includes(type))
-              if (item.key === '加工' && machineDefinitions[0]) { setSelectedType('machine'); setMachineDefinitionId(machineDefinitions[0].id) }
-              else if (firstType) setSelectedType(firstType)
+              const firstType = EQUIPMENT_ORDER.find((type) => OBJECT_DEFS[type].category === item.key && type !== 'machine')
+              if (firstType) setSelectedType(firstType)
             }}
             role="tab"
             aria-selected={category === item.key}
@@ -73,7 +74,7 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
       <div className="fm-category-caption">{CATEGORIES.find((item) => item.key === category)?.description}</div>
 
       <div className="fm-equipment-list">
-        {category === '加工' && machineDefinitions.length === 0 && <div className="fm-build-note fm-build-note-strong">基础加工目录为空。请先在下栏“机械制造”中新建机器并录入工艺路线。</div>}
+        {category === '加工' && entries.length === 0 && machineDefinitions.length === 0 && <div className="fm-build-note fm-build-note-strong">基础加工目录为空。请先在下栏“机械制造”中新建机器并录入工艺路线。</div>}
         {entries.map((type) => {
           const item = OBJECT_DEFS[type]
           const active = buildType === type
