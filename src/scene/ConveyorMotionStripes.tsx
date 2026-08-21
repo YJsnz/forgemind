@@ -39,14 +39,17 @@ function StripeMesh() {
 export function LinearConveyorMotionStripes({ running, length = 1, direction = 1 }: { running: boolean; length?: number; direction?: 1 | -1 }) {
   const group = useRef<THREE.Group>(null)
   const phaseRef = useRef(0)
+  const initialized = useRef(false)
   const count = conveyorStripeCount(length)
 
   useFrame((_, delta) => {
     if (!group.current) return
+    if (!running && initialized.current) return
     if (running) phaseRef.current = advanceConveyorStripePhase(phaseRef.current, delta, direction)
     group.current.children.forEach((stripe, index) => {
       stripe.position.x = (conveyorStripeProgress(phaseRef.current, index, count) - 0.5) * length
     })
+    initialized.current = true
   })
 
   return <group ref={group} position={[0, CONVEYOR_VISUAL_SURFACE_Y_M + 0.018, 0]}>
@@ -58,12 +61,14 @@ export function LinearConveyorMotionStripes({ running, length = 1, direction = 1
 export function CornerConveyorMotionStripes({ running, inputSide }: { running: boolean; inputSide: 'left' | 'right' }) {
   const group = useRef<THREE.Group>(null)
   const phaseRef = useRef(0)
+  const initialized = useRef(false)
   const spec = useMemo(() => conveyorCornerArcSpec(inputSide), [inputSide])
   const pathLength = Math.PI * CONVEYOR_CORNER_CENTERLINE_RADIUS_M / 2
   const count = conveyorStripeCount(pathLength)
 
   useFrame((_, delta) => {
     if (!group.current) return
+    if (!running && initialized.current) return
     if (running) phaseRef.current = (phaseRef.current + delta * CONVEYOR_DIRECTION_STRIPE_PHASE_RATE) % 1
     group.current.children.forEach((stripe, index) => {
       const progress = conveyorStripeProgress(phaseRef.current, index, count)
@@ -72,6 +77,7 @@ export function CornerConveyorMotionStripes({ running, inputSide }: { running: b
       stripe.position.set(point.x, CONVEYOR_VISUAL_SURFACE_Y_M + 0.018, point.z)
       stripe.rotation.set(0, -Math.atan2(tangent.z, tangent.x), 0)
     })
+    initialized.current = true
   })
 
   return <group ref={group}>

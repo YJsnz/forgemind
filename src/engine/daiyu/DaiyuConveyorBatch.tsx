@@ -52,6 +52,7 @@ export const DaiyuConveyorBatch = memo(function DaiyuConveyorBatch({
   const batchRefs = useRef(new Map<string, THREE.InstancedMesh>())
   const motionRef = useRef<THREE.InstancedMesh>(null)
   const motionPhaseRef = useRef(0)
+  const motionAccumulatorRef = useRef(0)
   const selectedRefs = useRef(new Map<string, THREE.LineSegments>())
   const rootRef = useRef<THREE.Group>(null)
   const normalized = useMemo(() => normalizeConveyor(gltf.scene), [gltf.scene])
@@ -81,8 +82,13 @@ export const DaiyuConveyorBatch = memo(function DaiyuConveyorBatch({
   useFrame(({ clock }, delta) => {
     if (!running || !rootRef.current || !isHierarchyVisible(rootRef.current)) return
     const elapsed = clock.getElapsedTime()
-    motionPhaseRef.current = (motionPhaseRef.current + delta * CONVEYOR_DIRECTION_STRIPE_PHASE_RATE) % 1
-    updateMotionInstances(motionRef.current, objects, motionPhaseRef.current)
+    motionAccumulatorRef.current += Math.min(delta, 0.1)
+    if (motionAccumulatorRef.current >= 1 / 30) {
+      const motionDelta = motionAccumulatorRef.current
+      motionAccumulatorRef.current = 0
+      motionPhaseRef.current = (motionPhaseRef.current + motionDelta * CONVEYOR_DIRECTION_STRIPE_PHASE_RATE) % 1
+      updateMotionInstances(motionRef.current, objects, motionPhaseRef.current)
+    }
     const pulse = 1 + (0.5 + 0.5 * Math.sin(elapsed * 3)) * 0.03
     selectedRefs.current.forEach((outline) => outline.scale.setScalar(pulse))
   })

@@ -75,12 +75,14 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
   type,
   objects,
   motion,
+  running = true,
   castShadows = true,
   onSelect,
 }: {
   type: 'machine' | 'agv' | 'drone' | 'press' | 'washing' | 'storage'
   objects: FactoryObject[]
   motion?: ReadonlyMap<string, DynamicRenderSnapshot & { position: { x: number; y?: number; z: number } }>
+  running?: boolean
   castShadows?: boolean
   onSelect?: (id: string) => void
 }) {
@@ -138,7 +140,7 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
   }, [motion, type])
 
   useFrame((_, delta) => {
-    if ((type !== 'agv' && type !== 'drone') || targetMotionRef.current.size === 0) return
+    if (!running || (type !== 'agv' && type !== 'drone') || targetMotionRef.current.size === 0) return
     // The simulation publishes snapshots at 20Hz. Exponential smoothing keeps
     // the render transform continuous at the display frame rate without
     // changing the authoritative simulation position.

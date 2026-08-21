@@ -204,6 +204,7 @@ export function FactoryScene({
               return floorIsInteractive(runtime ? nearestFloorForDrone(runtime.position.y, factoryFloorIds) : getObjectFloor(object), activeFloor)
             })}
             motion={droneRuntimeMap}
+            running={simPlaying}
             castShadows={castDetailedShadows}
             onSelect={select}
           />
@@ -214,6 +215,7 @@ export function FactoryScene({
               return !floorIsInteractive(runtime ? nearestFloorForDrone(runtime.position.y, factoryFloorIds) : getObjectFloor(object), activeFloor)
             })}
             motion={droneRuntimeMap}
+            running={simPlaying}
             castShadows={false}
           />
         </group>
@@ -242,7 +244,7 @@ export function FactoryScene({
             onSelect={select}
           />
           <DaiyuStaticModelBatch type="machine" objects={staticMachineObjects} castShadows={castDetailedShadows} onSelect={select} />
-          <DaiyuStaticModelBatch type="agv" objects={staticAgvObjects} motion={agvRuntimeMap} castShadows={castDetailedShadows} onSelect={select} />
+          <DaiyuStaticModelBatch type="agv" objects={staticAgvObjects} motion={agvRuntimeMap} running={simPlaying} castShadows={castDetailedShadows} onSelect={select} />
           <DaiyuStaticModelBatch type="press" objects={staticPressObjects} castShadows={castDetailedShadows} onSelect={select} />
           <DaiyuStaticModelBatch type="washing" objects={staticWashingObjects} castShadows={castDetailedShadows} onSelect={select} />
           <DaiyuStaticModelBatch type="storage" objects={staticStorageObjects} castShadows={castDetailedShadows} onSelect={select} />
