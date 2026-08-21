@@ -1,5 +1,7 @@
 ﻿[CmdletBinding()]
 param(
+    # 保留该开关与文档/voice-chat 启动脚本兼容；当前一键启动默认包含 AI 服务。
+    [switch]$IncludeAI,
     [switch]$IncludeSpring,
     [switch]$SkipSpring,
     [switch]$IncludeVoiceChat,
@@ -16,6 +18,13 @@ $btPath = if ($env:FORGEMIND_BT_TTS_ROOT) { $env:FORGEMIND_BT_TTS_ROOT } else { 
 $ollamaModelsPath = if ($env:FORGEMIND_OLLAMA_MODELS) { $env:FORGEMIND_OLLAMA_MODELS } else { 'D:\local\ollama\models' }
 $ollamaModel = if ($env:FORGEMIND_OLLAMA_MODEL) { $env:FORGEMIND_OLLAMA_MODEL } else { 'qwen2.5:7b' }
 $composeFile = Join-Path $rootPath 'docker-compose.yml'
+
+# Vite 在构建/启动时读取 VITE_* 环境变量。若不在启动前注入，
+# AssistantVoiceButton 会把语音和关键字唤醒入口判断为未启用，即使
+# FastAPI 已经监听 8000 端口也无法使用。
+$env:VITE_AI_ENABLED = 'true'
+$env:VITE_AI_BASE_URL = 'http://127.0.0.1:8000'
+$env:FORGEMIND_VOICE_ENABLED = 'true'
 
 function Test-LocalPort([int]$port) {
     $client = [System.Net.Sockets.TcpClient]::new()
