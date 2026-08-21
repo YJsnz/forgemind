@@ -446,7 +446,8 @@ kbd { display: inline-block; min-width: 20px; margin: 0 3px; padding: 2px 4px; b
 .fm-shell:not([data-warehouse-open='true']) .fm-warehouse-zone-label { visibility: hidden; opacity: 0; }
 .fm-shell[data-panel-open='true'] .fm-agv-nav-label,
 .fm-shell[data-panel-open='true'] .fm-drone-nav-label,
-.fm-shell[data-panel-open='true'] .fm-drone-dock-label { visibility: hidden; opacity: 0; }
+.fm-shell[data-panel-open='true'] .fm-drone-dock-label,
+.fm-shell[data-panel-open='true'] .fm-rack-inventory-label { visibility: hidden; opacity: 0; }
 .fm-warehouse-zone-label span, .fm-agv-nav-label span { color: #6c8b82; font: 7px var(--fm-font-mono); letter-spacing: .12em; }
 .fm-warehouse-zone-label strong { margin: 2px 0; font-size: 12px; font-weight: 700; }
 .fm-warehouse-zone-label small, .fm-agv-nav-label b { font: 7px var(--fm-font-mono); letter-spacing: .06em; white-space: nowrap; }
@@ -2403,7 +2404,7 @@ kbd { display: inline-block; min-width: 20px; margin: 0 3px; padding: 2px 4px; b
 .fm-vehicle-program-actions button:disabled { opacity: .38; cursor: not-allowed; }
 .fm-vehicle-program-warning { display: block; margin-top: 7px; color: #efc969; font-size: 8px; line-height: 1.45; }
 
-.fm-rack-inventory-label { min-width: 132px; max-width: 220px; overflow: hidden; border: 1px solid rgba(114,212,210,.58); border-radius: 3px; color: #eef9f6; background: rgba(7,25,29,.88); box-shadow: 0 7px 18px rgba(0,0,0,.24); font-family: var(--fm-font-sans); backdrop-filter: blur(8px); }
+.fm-rack-inventory-label { min-width: 132px; max-width: 220px; overflow: hidden; border: 1px solid rgba(114,212,210,.58); border-radius: 3px; color: #eef9f6; background: #07191d; box-shadow: 0 7px 18px rgba(0,0,0,.24); font-family: var(--fm-font-sans); }
 .fm-rack-inventory-label > span { display: block; overflow: hidden; padding: 5px 7px 4px; color: #9de3dd; border-bottom: 1px solid rgba(114,212,210,.22); font: 700 8px var(--fm-font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .fm-rack-inventory-label > div { display: grid; gap: 2px; padding: 5px 7px; }
 .fm-rack-inventory-label b { display: flex; justify-content: space-between; gap: 12px; color: #edf8f5; font-size: 8px; font-weight: 600; }
