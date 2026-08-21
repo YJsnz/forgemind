@@ -50,12 +50,14 @@ export const CAMERA_PRESETS: Record<FactoryView, { position: [number, number, nu
 export function FactoryScene({
   view,
   visible = true,
+  shadowsEnabled = true,
   activeFloor = 1,
   visibleFloors = DEFAULT_FACTORY_FLOORS,
   floorCount = 1,
 }: {
   view: FactoryView
   visible?: boolean
+  shadowsEnabled?: boolean
   activeFloor?: FactoryFloorId
   visibleFloors?: readonly FactoryFloorId[]
   floorCount?: number
@@ -157,7 +159,7 @@ export function FactoryScene({
     () => new Set([...staticMachineObjects, ...staticAgvObjects, ...staticPressObjects, ...staticWashingObjects, ...staticStorageObjects].map((object) => object.id)),
     [staticAgvObjects, staticMachineObjects, staticPressObjects, staticStorageObjects, staticWashingObjects],
   )
-  const castDetailedShadows = objects.length <= 120
+  const castDetailedShadows = shadowsEnabled && allObjects.length <= 120
   const floorElevation = getFloorElevation(activeFloor)
 
   return (
@@ -174,7 +176,7 @@ export function FactoryScene({
         <directionalLight
           position={[20, 30, 15]}
           intensity={1.2}
-          castShadow
+          castShadow={shadowsEnabled}
           shadow-mapSize={[1024, 1024]}
           shadow-normalBias={0.025}
           shadow-camera-near={1}
@@ -395,19 +397,28 @@ function getDaiyuStressObjects(storedObjects: FactoryObject[]) {
 export function FactoryCanvas({ view = 'overview', activeFloor = 1, visibleFloors = DEFAULT_FACTORY_FLOORS, floorCount = 1 }: { view?: FactoryView; activeFloor?: FactoryFloorId; visibleFloors?: readonly FactoryFloorId[]; floorCount?: number }) {
   const phase = useAuthStore((s) => s.phase)
   const buildType = useForgeMindStore((s) => s.buildType)
+  const sceneObjectCount = useForgeMindStore((s) => s.objects.length)
   const inFactory = phase === 'factory'
   const showFactory = phase !== 'elevator'
   const isPlacing = buildType !== null
   const floorElevation = getFloorElevation(activeFloor)
   const cameraPreset = CAMERA_PRESETS[view]
   const forcedDevelopmentDpr = getForcedDevelopmentDpr()
-  const [dpr, setDpr] = useState(() => forcedDevelopmentDpr ?? Math.min(window.devicePixelRatio, 1.2))
+  const largeScene = sceneObjectCount > 120
+  const [dpr, setDpr] = useState(() => forcedDevelopmentDpr ?? initialDprForScene(sceneObjectCount))
+  const [shadowsEnabled, setShadowsEnabled] = useState(() => sceneObjectCount <= 120)
+
+  useEffect(() => {
+    if (forcedDevelopmentDpr !== null) return
+    setDpr(initialDprForScene(sceneObjectCount))
+    setShadowsEnabled(sceneObjectCount <= 120)
+  }, [forcedDevelopmentDpr, sceneObjectCount])
 
   return (
     <Canvas
-      shadows="basic"
+      shadows={shadowsEnabled ? 'basic' : false}
       dpr={dpr}
-      performance={{ min: 0.55, debounce: 650 }}
+      performance={{ min: largeScene ? 0.38 : 0.55, debounce: 650 }}
       camera={{ position: inFactory ? [cameraPreset.position[0], cameraPreset.position[1] + floorElevation, cameraPreset.position[2]] : CABIN_CAM, fov: 45, near: 0.1, far: 500 }}
       gl={{ antialias: true, powerPreference: 'high-performance', stencil: false }}
       style={{ background: 'transparent' }}
@@ -415,15 +426,24 @@ export function FactoryCanvas({ view = 'overview', activeFloor = 1, visibleFloor
       <PerformanceMonitor
         flipflops={3}
         onChange={({ factor }) => {
-          if (forcedDevelopmentDpr === null && phase !== 'entering') setDpr(Math.max(1, Math.round((0.78 + factor * 0.62) * 100) / 100))
+          if (forcedDevelopmentDpr === null && phase !== 'entering') {
+            const low = largeScene ? 0.72 : 0.84
+            const high = largeScene ? 1.0 : Math.min(window.devicePixelRatio, 1.25)
+            setDpr(Math.round((low + (high - low) * factor) * 100) / 100)
+            if (!largeScene && factor < 0.55) setShadowsEnabled(false)
+            if (!largeScene && factor > 0.86) setShadowsEnabled(true)
+          }
         }}
         onFallback={() => {
-          if (forcedDevelopmentDpr === null) setDpr(1)
+          if (forcedDevelopmentDpr === null) {
+            setDpr(largeScene ? 0.72 : 0.84)
+            setShadowsEnabled(false)
+          }
         }}
       />
       <DaiyuRuntime running={inFactory} />
       <Suspense fallback={null}>
-        <FactoryScene view={view} visible={showFactory} activeFloor={activeFloor} visibleFloors={visibleFloors} floorCount={floorCount} />
+        <FactoryScene view={view} visible={showFactory} shadowsEnabled={shadowsEnabled} activeFloor={activeFloor} visibleFloors={visibleFloors} floorCount={floorCount} />
       </Suspense>
       <CanvasSelectionController enabled={showFactory && view !== 'flow'} activeFloor={activeFloor} visibleFloors={visibleFloors} />
 
@@ -440,7 +460,12 @@ export function FactoryCanvas({ view = 'overview', activeFloor = 1, visibleFloor
 function getForcedDevelopmentDpr() {
   if (!import.meta.env.DEV) return null
   const value = Number(new URLSearchParams(window.location.search).get('daiyuDpr'))
-  return Number.isFinite(value) && value >= 1 && value <= 2 ? value : null
+  return Number.isFinite(value) && value >= 0.5 && value <= 2 ? value : null
+}
+
+function initialDprForScene(objectCount: number) {
+  const native = Math.min(window.devicePixelRatio, 1.2)
+  return objectCount > 120 ? Math.min(native, 0.9) : native
 }
 
 function FactoryCameraController({ view, isPlacing, activeFloor }: { view: FactoryView; isPlacing: boolean; activeFloor: FactoryFloorId }) {

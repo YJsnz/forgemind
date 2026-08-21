@@ -26,7 +26,7 @@ export function DaiyuRuntime({ running }: { running: boolean }) {
   useFrame(({ clock }, delta) => {
     daiyuEngine.sampleFrame(delta, gl)
     const now = clock.getElapsedTime()
-    if (now - lastAuditAt.current >= 2) {
+    if (now - lastAuditAt.current >= 5) {
       lastAuditAt.current = now
       document.documentElement.dataset.daiyuSceneAudit = JSON.stringify(auditScene(scene))
     }
