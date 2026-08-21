@@ -1,57 +1,67 @@
-# ForgeMind AI 服务（FastAPI）
+# ForgeMind 可选智能服务
 
-离线 AI / LLM 编排服务（补充设计 §5.1：只做离线，绝不进实时仿真链路）。
+FastAPI 服务负责受限规则助手、可选远程 DeepSeek、工厂需求约束提取、工具协议、ASR/TTS 网关和视觉检测辅助。它不进入实时仿真 tick，也不是默认启动依赖。
 
-> 当前状态（2026-08-19）：本服务只负责 AI 助手、工具协议、ASR、TTS 和视觉检测辅助。用户登录、工厂存档、用户私有设备资源和 GLB 下载由 `backend/` 的 Spring Boot/MySQL 服务负责，不要把资源导入请求发送到本服务。
+## 默认原则
 
-## 安装 & 运行
+- 默认 `FORGEMIND_LLM_PROVIDER=rule`，不安装、不启动、不探测本地大语言模型。
+- 前端未启用本服务时，生成式工厂继续使用确定性规则解析，助手使用浏览器内规则降级。
+- 模型不能直接生成布局坐标、碰撞结论、路线或仿真指标。
+- 工具动作必须经过服务端基础校验和前端二次校验；高风险动作仍需确认。
 
-```bash
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-```
+## 启动
 
-## 接口
-
-- `GET /api/ai/health` — 健康检查
-- `GET /api/ai/tools` — ForgeMind 1.0.0 工具目录
-- `POST /api/ai/assistant` — 本地千问助手入口，返回文本和可选结构化动作
-- `POST /api/ai/assistant/stream` — Ollama NDJSON 流式文本 + 最终校验后的工具动作
-- `POST /api/ai/asr` — 16-bit PCM WAV → 本地 Paraformer 中文文本
-- `POST /api/ai/tts` — 文字 → 本地 WAV；默认使用预热后的 BT Bert-VITS2，失联时自动回退 sherpa VITS
-
-```bash
-curl -X POST http://localhost:8000/api/ai/assistant \
-  -H "Content-Type: application/json" \
-  -d '{"question": "怎么提高产量？", "context": {"simulation": {"running": true}}}'
-```
-
-默认连接 `http://127.0.0.1:11434` 的 `qwen2.5:7b`。可用环境变量覆盖：
+项目根目录推荐：
 
 ```powershell
-$env:FORGEMIND_OLLAMA_URL = 'http://127.0.0.1:11434'
-$env:FORGEMIND_OLLAMA_MODEL = 'qwen2.5:7b'
-$env:FORGEMIND_OLLAMA_TIMEOUT = '120'
-$env:FORGEMIND_OLLAMA_KEEP_ALIVE = '30m'
-$env:FORGEMIND_TTS_BACKEND = 'bt' # 默认保留 BT-7274 音色；可改为 sherpa 追求最低合成延迟
+.\start-forgemind.bat -IncludeAI
 ```
 
-当 Ollama 不可用时，接口返回 `source: "fallback"`，不会阻塞前端，也不会伪造动作。模型生成的动作会先经过 ai-service 基础校验，再由前端 `assistantExecutor` 进行第二次白名单、对象和确认校验。
+也可以手动启动：
 
-前端运行桥可以通过统一事件发起请求：
-
-```js
-window.dispatchEvent(new CustomEvent('forgemind:assistant-request', {
-  detail: { question: '现在工厂运行情况怎么样？' }
-}))
+```powershell
+cd ai-service
+py -3 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements-core.txt
+.venv\Scripts\python -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-ai-service 启动后会在后台预加载千问、ASR，并用一条短语预热 BT TTS。前端一边读取 Ollama token，一边按标点切分并立即发起 TTS；后续短语的合成与当前短语播放并行。播放期间会派发 `forgemind:assistant-audio-level`，底部 `BT-7274` 字节码球旁的短声波会随真实音频能量变化。
+前端只有在启动时设置 `VITE_AI_ENABLED=true` 才会访问该服务；一键启动器使用 `-IncludeAI` 时会自动设置。
 
-网页底栏的“语音”按钮会直接录制单声道音频，并在浏览器内重采样为 16kHz WAV，再调用 `/api/ai/asr`。ASR 识别结果会复用 `/api/ai/assistant` 的工厂上下文、工具校验和 TTS 播报链路。
+`requirements-core.txt` 只安装规则/远程助手所需的轻量 Web 依赖；需要视觉、ASR 或本地 TTS 时，再安装完整的 `requirements.txt`。两者都不包含本地大语言模型。
 
-## 职责边界（§5.2）
+## 可选 DeepSeek
 
-- 当前前端通过 HTTP 直接调用本服务；Redis Stream / Kafka 仍是未来多实例部署的异步通信方案，不是当前启动依赖。
-- Spring Boot 的 `/api/factory` 和 `/api/resources` 不经过 AI 服务，资源权限与用户隔离在 Spring Boot/数据库层完成。
-- LLM 只做**动作库选型 + 结构化 schema 填参**，产出数字以副本仿真为准，不自由改工厂。
+```powershell
+$env:FORGEMIND_LLM_PROVIDER = 'deepseek'
+$env:DEEPSEEK_API_KEY = '<本机密钥>'
+$env:DEEPSEEK_MODEL = 'deepseek-chat'
+.\start-forgemind.bat -IncludeAI
+```
+
+密钥只由服务端读取。未配置密钥、远程请求失败或响应不符合约束时，服务返回规则/降级结果，不会再回退到本地 Qwen。
+
+## 可选语音
+
+ASR/TTS 默认不预热。需要语音时显式设置 `FORGEMIND_VOICE_ENABLED=true`，并准备 `voice-chat/models/` 下的 Paraformer/VITS 文件或外部 TTS 服务。语音模型缺失不影响规则助手、视觉检测和核心前端。
+
+## 主要接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/ai/health` | 服务、协议、provider 和语音状态 |
+| GET | `/api/ai/tools` | `1.0.0` 工具目录 |
+| POST | `/api/ai/assistant` | 规则/远程助手和受限动作信封 |
+| POST | `/api/ai/assistant/stream` | NDJSON 兼容响应 |
+| POST | `/api/ai/factory-spec` | 只提取受限生成约束 |
+| POST | `/api/ai/asr` | 可选 WAV 中文识别 |
+| POST | `/api/ai/tts` | 可选语音合成 |
+| POST | `/api/vision/detect` | 视觉检测辅助 |
+
+## 验证
+
+```powershell
+py -3 -m py_compile main.py vision.py
+```
+
+启动后检查 `http://127.0.0.1:8000/api/ai/health`，应显示 `localModelRequired: false`。规则模式下可用 `/api/ai/assistant` 测试“查询工厂状态”“启动仿真”“暂停仿真”“设置 2 倍速”和“重置仿真”。

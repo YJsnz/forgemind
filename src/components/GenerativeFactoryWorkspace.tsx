@@ -31,6 +31,7 @@ export function GenerativeFactoryWorkspace() {
   const objects = useForgeMindStore((s) => s.objects)
   const snapshot = useForgeMindStore((s) => s.simSnapshot)
   const recipes = useForgeMindStore((s) => s.recipes)
+  const floorCount = useForgeMindStore((s) => s.floorCount)
   const [brief, setBrief] = useState(DEFAULT_BRIEF)
   const [spec, setSpec] = useState<GenerationSpec>({
     product: '齿轮箱',
@@ -48,7 +49,7 @@ export function GenerativeFactoryWorkspace() {
   const [generationStep, setGenerationStep] = useState(-1)
   const [isGenerating, setIsGenerating] = useState(false)
   const [notice, setNotice] = useState('A-02 等待设计任务')
-  const [specSource, setSpecSource] = useState<'deepseek' | 'qwen' | 'rule' | 'fallback'>('rule')
+  const [specSource, setSpecSource] = useState<'deepseek' | 'rule' | 'fallback'>('rule')
   const [whatIf, setWhatIf] = useState<WhatIfResult | null>(null)
   const [isWhatIfRunning, setIsWhatIfRunning] = useState(false)
   const [selectedDiagnosticFloor, setSelectedDiagnosticFloor] = useState<FactoryFloorId | 0>(0)
@@ -57,7 +58,7 @@ export function GenerativeFactoryWorkspace() {
     () => candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0] ?? null,
     [candidates, selectedId],
   )
-  const liveDiagnostic = useMemo(() => diagnoseFactory(objects, snapshot, recipes), [objects, recipes, snapshot])
+  const liveDiagnostic = useMemo(() => diagnoseFactory(objects, snapshot, recipes, floorCount), [floorCount, objects, recipes, snapshot])
   const hasCurrentLine = objects.length > 0
 
   useEffect(() => {
@@ -266,7 +267,7 @@ export function GenerativeFactoryWorkspace() {
   )
 }
 
-const FLOOR_DIAGNOSTIC_META: Record<FactoryFloorId, { name: string; role: string; description: string }> = {
+const FLOOR_DIAGNOSTIC_META: Record<number, { name: string; role: string; description: string }> = {
   1: { name: '基础物流层', role: 'RECEIVING / CORE LINE', description: '原料接收、核心加工与成品缓存' },
   2: { name: '工艺制造层', role: 'PROCESS / DRONE SUPPLY', description: '无人机供料的柔性制造单元' },
   3: { name: '装配交付层', role: 'ASSEMBLY / QA', description: '装配、质检与交付前缓冲' },
@@ -299,7 +300,7 @@ function FloorDiagnosticsPanel({
 
       <div className="fm-floor-diagnostics-grid">
         {floors.map((floor) => {
-          const meta = FLOOR_DIAGNOSTIC_META[floor.floorId]
+          const meta = FLOOR_DIAGNOSTIC_META[floor.floorId] ?? { name: `扩展层 ${floor.floorId}`, role: `EXPANSION / L${floor.floorId}`, description: '用户追加的柔性制造与物流空间' }
           const statusClass = `is-${floor.status.toLowerCase()}`
           return (
             <button

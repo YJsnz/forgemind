@@ -17,11 +17,11 @@ const PHASE_COPY: Record<AssistantPresencePhase, { label: string; detail: string
   listening: { label: '聆听中', detail: '正在接收语音输入' },
   thinking: { label: '分析中', detail: '正在读取工厂信号' },
   speaking: { label: '播报中', detail: '正在向驾驶员报告' },
-  error: { label: '链路异常', detail: '本地智能服务需要检查' },
+  error: { label: '链路异常', detail: '可选智能服务未连接' },
 }
 
 /**
- * Local LLM presence surface. The voice service can drive it with:
+ * Assistant presence surface. The optional voice service can drive it with:
  * window.dispatchEvent(new CustomEvent('forgemind:assistant-state', {
  *   detail: { phase: 'speaking', message: '...', level: 0.72 }
  * }))
@@ -94,10 +94,10 @@ export function AssistantOrb({ compact = false }: { compact?: boolean }) {
   const displayPercent = compact ? Math.min(16, Math.round(displayLevel * 16)) : Math.round(displayLevel * 100)
 
   return (
-    <section className={`fm-assistant-orb ${compact ? 'is-compact' : ''} fm-assistant-orb-${phase}`} aria-label="ForgeMind BT-7274 本地智能管家" role="status" aria-live="polite">
+    <section className={`fm-assistant-orb ${compact ? 'is-compact' : ''} fm-assistant-orb-${phase}`} aria-label="ForgeMind BT-7274 智能管家" role="status" aria-live="polite">
       {compact ? (
         <div className="fm-assistant-compact-copy">
-          <span className="fm-assistant-orb-kicker">LOCAL AI / QWEN 2.5</span>
+          <span className="fm-assistant-orb-kicker">RULE CORE / OPTIONAL AI</span>
           <div>
             <strong>BT-7274</strong>
             <b>{copy.label}</b>
@@ -112,10 +112,10 @@ export function AssistantOrb({ compact = false }: { compact?: boolean }) {
       ) : (
         <div className="fm-assistant-orb-head">
           <div>
-            <span className="fm-assistant-orb-kicker">LOCAL INTELLIGENCE / QWEN 2.5</span>
+            <span className="fm-assistant-orb-kicker">RULE INTELLIGENCE / OPTIONAL AI</span>
             <strong>BT-7274</strong>
           </div>
-          <span className="fm-assistant-orb-link"><i /> LOCAL</span>
+          <span className="fm-assistant-orb-link"><i /> READY</span>
         </div>
       )}
 

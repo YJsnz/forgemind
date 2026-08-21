@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AgvProgram, AgvRouteAction, AgvRouteWaypoint, FactoryObject } from '../game/types'
-import { getObjectDef } from '../game/types'
+import { canReceiveVehicle, canSupplyVehicle, getFactoryObjectDisplayName, getObjectDef, isStorageFacilityType } from '../game/types'
 import { useForgeMindStore } from '../store/forgeMind'
 
 const EMPTY_PROGRAM: AgvProgram = {
@@ -8,28 +8,34 @@ const EMPTY_PROGRAM: AgvProgram = {
   sourceObjectId: null,
   destinationObjectId: null,
   itemId: null,
-  loadQuantity: 100,
+  loadQuantity: 1,
+  dispatchMode: 'continuous',
+  sourceMinQuantity: 1,
+  destinationMaxQuantity: 100,
 }
 
-function programFor(object: FactoryObject | undefined, storage: FactoryObject[], itemId: string | null): AgvProgram {
-  const sourceId = object?.agvProgram?.sourceObjectId ?? storage[0]?.id ?? null
-  const destinationId = object?.agvProgram?.destinationObjectId ?? storage[1]?.id ?? storage[0]?.id ?? null
+function programFor(object: FactoryObject | undefined, storage: FactoryObject[]): AgvProgram {
+  const sourceId = object?.agvProgram?.sourceObjectId ?? null
+  const destinationId = object?.agvProgram?.destinationObjectId ?? null
   return {
     ...EMPTY_PROGRAM,
     sourceObjectId: sourceId,
     destinationObjectId: destinationId,
-    itemId: object?.agvProgram?.itemId ?? itemId,
+    itemId: object?.agvProgram?.itemId ?? null,
     ...object?.agvProgram,
     route: object?.agvProgram?.route ?? defaultRoute(storage, sourceId, destinationId),
     priority: object?.agvProgram?.priority ?? 0,
     policy: object?.agvProgram?.policy ?? 'balanced',
+    dispatchMode: object?.agvProgram?.dispatchMode ?? 'continuous',
+    sourceMinQuantity: object?.agvProgram?.sourceMinQuantity ?? object?.agvProgram?.loadQuantity ?? 1,
+    destinationMaxQuantity: object?.agvProgram?.destinationMaxQuantity ?? 100,
   }
 }
 
 function waypointFor(object: FactoryObject | undefined, action: AgvRouteAction, fallbackLabel: string): AgvRouteWaypoint {
   return {
     id: `${action}-${object?.id ?? fallbackLabel}`,
-    label: object ? getObjectDef(object.type, object.resourceId).label : fallbackLabel,
+    label: object ? getFactoryObjectDisplayName(object) : fallbackLabel,
     objectId: object?.id ?? null,
     position: object ? { x: object.pos.x + 0.5, z: object.pos.z + 0.5 } : { x: 0, z: 0 },
     action,
@@ -51,7 +57,7 @@ function routeWithEndpoints(draft: AgvProgram, storage: FactoryObject[]): AgvRou
 }
 
 function objectLabel(object: FactoryObject) {
-  return `${getObjectDef(object.type, object.resourceId).label} · ${object.id.replace(/^a01_/, '')}`
+  return `${getFactoryObjectDisplayName(object)}${object.displayName ? ` · ${getObjectDef(object.type, object.resourceId).label}` : ''} · ${object.id.replace(/^a01_/, '')}`
 }
 
 function phaseLabel(phase: string | undefined) {
@@ -68,10 +74,12 @@ export function AgvNavigationControl() {
   const snapshot = useForgeMindStore((state) => state.simSnapshot)
   const setAgvProgram = useForgeMindStore((state) => state.setAgvProgram)
   const vehicles = useMemo(() => objects.filter((object) => object.type === 'agv'), [objects])
-  const storageObjects = useMemo(() => objects.filter((object) => object.type === 'storage' || object.type === 'oreMiner'), [objects])
+  const storageObjects = useMemo(() => objects.filter((object) => isStorageFacilityType(object.type)), [objects])
+  const sourceObjects = useMemo(() => storageObjects.filter((object) => canSupplyVehicle(object.type)), [storageObjects])
+  const destinationObjects = useMemo(() => storageObjects.filter((object) => canReceiveVehicle(object.type)), [storageObjects])
   const [selectedId, setSelectedId] = useState(vehicles[0]?.id ?? '')
   const selected = vehicles.find((vehicle) => vehicle.id === selectedId) ?? vehicles[0]
-  const [draft, setDraft] = useState<AgvProgram>(() => programFor(selected, storageObjects, items[0]?.id ?? null))
+  const [draft, setDraft] = useState<AgvProgram>(() => programFor(selected, storageObjects))
   const runtime = snapshot.agvs.find((agv) => agv.objectId === selected?.id)
 
   useEffect(() => {
@@ -79,7 +87,7 @@ export function AgvNavigationControl() {
   }, [selectedId, vehicles])
 
   useEffect(() => {
-    setDraft(programFor(selected, storageObjects, items[0]?.id ?? null))
+    setDraft(programFor(selected, storageObjects))
   }, [selectedId, selected?.agvProgram, storageObjects, items, selected])
 
   const selectedItem = items.find((item) => item.id === draft.itemId)
@@ -145,11 +153,11 @@ export function AgvNavigationControl() {
             </div>
 
             <div className="fm-agv-program-flow">
-              <label className="fm-agv-program-node"><span>01 / 起点</span><b>装货位置</b><select className="fm-agv-control-select" value={draft.sourceObjectId ?? ''} onChange={(event) => setDraft((current) => ({ ...current, sourceObjectId: event.target.value || null }))}><option value="">未设置</option>{storageObjects.map((object) => <option key={object.id} value={object.id}>{objectLabel(object)}</option>)}</select></label>
+              <label className="fm-agv-program-node"><span>01 / 起点</span><b>装货位置</b><select className="fm-agv-control-select" value={draft.sourceObjectId ?? ''} onChange={(event) => setDraft((current) => ({ ...current, sourceObjectId: event.target.value || null }))}><option value="">未设置</option>{sourceObjects.map((object) => <option key={object.id} value={object.id}>{objectLabel(object)}</option>)}</select></label>
               <span className="fm-agv-program-arrow">→</span>
               <label className="fm-agv-program-node"><span>02 / 货物</span><b>搬运内容</b><select className="fm-agv-control-select" value={draft.itemId ?? ''} onChange={(event) => setDraft((current) => ({ ...current, itemId: event.target.value || null }))}><option value="">未设置</option>{items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><input className="fm-agv-quantity" type="number" min={1} step={1} value={draft.loadQuantity} onChange={(event) => setDraft((current) => ({ ...current, loadQuantity: Math.max(1, Number(event.target.value) || 1) }))} aria-label="每趟数量" /><small>每趟数量 / units</small></label>
               <span className="fm-agv-program-arrow">→</span>
-              <label className="fm-agv-program-node"><span>03 / 终点</span><b>卸货位置</b><select className="fm-agv-control-select" value={draft.destinationObjectId ?? ''} onChange={(event) => setDraft((current) => ({ ...current, destinationObjectId: event.target.value || null }))}><option value="">未设置</option>{storageObjects.map((object) => <option key={object.id} value={object.id}>{objectLabel(object)}</option>)}</select></label>
+              <label className="fm-agv-program-node"><span>03 / 终点</span><b>卸货位置</b><select className="fm-agv-control-select" value={draft.destinationObjectId ?? ''} onChange={(event) => setDraft((current) => ({ ...current, destinationObjectId: event.target.value || null }))}><option value="">未设置</option>{destinationObjects.map((object) => <option key={object.id} value={object.id}>{objectLabel(object)}</option>)}</select></label>
             </div>
 
             <div className="fm-agv-route-designer">
@@ -160,7 +168,9 @@ export function AgvNavigationControl() {
 
             <div className="fm-agv-live-route"><span>LIVE ROUTE</span><b>{selectedItem?.name ?? '未选择货物'} × {draft.loadQuantity}</b><small>{runtime ? `${phaseLabel(runtime.phase)} · ${runtime.currentWaypointLabel} · ${runtime.decision === 'yielding' ? '正在避让车辆' : runtime.decision === 'replanning' ? '正在重新规划' : runtime.decision === 'recovering' ? '恢复动作中' : runtime.motionStatus === 'moving' ? '导航中' : '待命'} · 已完成 ${runtime.completedTrips} 趟 · ${runtime.distanceTravelled.toFixed(1)} m` : '启动仿真后显示实时路径'}</small></div>
 
-            <div className="fm-agv-control-actions"><label className="fm-agv-enable-toggle"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))} /><span>启用导航任务</span></label><label className="fm-agv-policy-field">策略<select value={draft.policy ?? 'balanced'} onChange={(event) => setDraft((current) => ({ ...current, policy: event.target.value as AgvProgram['policy'] }))}><option value="balanced">平衡交通</option><option value="shortest">最短路径</option><option value="priority">优先级通行</option></select></label><label className="fm-agv-policy-field">优先级<input type="number" min={0} max={9} value={draft.priority ?? 0} onChange={(event) => setDraft((current) => ({ ...current, priority: Math.max(0, Math.min(9, Number(event.target.value) || 0)) }))} /></label><button type="button" className="fm-agv-apply" onClick={() => applyProgram(true)}>应用导航任务</button><button type="button" className="fm-agv-disable" onClick={() => applyProgram(false)}>停用</button></div>
+            <div className="fm-vehicle-dispatch-settings"><label>供货方式<select value={draft.dispatchMode ?? 'continuous'} onChange={(event) => setDraft((current) => ({ ...current, dispatchMode: event.target.value as AgvProgram['dispatchMode'] }))}><option value="continuous">一直运输</option><option value="threshold">库存条件触发</option></select></label>{draft.dispatchMode === 'threshold' && <><label>起点库存至少<input type="number" min={0} max={1000000} value={draft.sourceMinQuantity ?? draft.loadQuantity} onChange={(event) => setDraft((current) => ({ ...current, sourceMinQuantity: Math.max(0, Math.round(Number(event.target.value) || 0)) }))} /></label><label>终点库存至多<input type="number" min={0} max={1000000} value={draft.destinationMaxQuantity ?? 100} onChange={(event) => setDraft((current) => ({ ...current, destinationMaxQuantity: Math.max(0, Math.round(Number(event.target.value) || 0)) }))} /></label></>}<small>普通货架直接作为起终点；没有对应物品或数量不足时，车辆等待且不会生成虚拟货物。</small></div>
+
+            <div className="fm-agv-control-actions"><label className="fm-agv-enable-toggle"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))} /><span>启用导航任务</span></label><label className="fm-agv-policy-field">策略<select value={draft.policy ?? 'balanced'} onChange={(event) => setDraft((current) => ({ ...current, policy: event.target.value as AgvProgram['policy'] }))}><option value="balanced">平衡交通</option><option value="shortest">最短路径</option><option value="priority">优先级通行</option></select></label><label className="fm-agv-policy-field">优先级<input type="number" min={0} max={9} value={draft.priority ?? 0} onChange={(event) => setDraft((current) => ({ ...current, priority: Math.max(0, Math.min(9, Number(event.target.value) || 0)) }))} /></label><button type="button" className="fm-agv-apply" disabled={!draft.sourceObjectId || !draft.destinationObjectId || !draft.itemId} onClick={() => applyProgram(true)}>应用导航任务</button><button type="button" className="fm-agv-disable" onClick={() => applyProgram(false)}>停用</button></div>
           </section>
         ) : <div className="fm-agv-control-empty">选择一台 AGV 开始配置。</div>}
       </div>

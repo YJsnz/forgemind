@@ -2483,7 +2483,11 @@ export function createProceduralEquipment(def: ObjectDef): ProceduralModel {
     case 'washing': return createDeburrMachine(def)  // 使用新的去毛刺机模型
     case 'storage': return createStorage(def)
     case 'oreMiner': return createRawRack(def)
-    case 'conveyor': return createBelt(def)
+    case 'inboundWarehouse': return createStorage(def)
+    case 'outboundWarehouse': return createStorage(def)
+    case 'conveyor':
+    case 'inclineUp':
+    case 'inclineDown': return createBelt(def)
     case 'splitter': return createFlowNode(def, 3, false)
     case 'merger': return createFlowNode(def, 3, true)
     case 'inspection': return createInspectionCell(def)

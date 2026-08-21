@@ -20,7 +20,7 @@ export function AgvRouteVisual({ agvs }: { agvs: AgvRuntimeSnapshot[] }) {
             <Html position={[agv.position.x, 1.25, agv.position.z]} center distanceFactor={13} style={{ pointerEvents: 'none' }}>
               <div className="fm-agv-nav-label">
                 <b>{agv.phase === 'to-warehouse' ? '→ 仓储' : agv.phase === 'to-source' ? '→ 起点' : agv.phase === 'to-destination' ? '→ 终点' : '→ 产线'}</b>
-                <span>{agv.cargoQuantity > 0 ? `钢制毛坯 ×${agv.cargoQuantity}` : '空载调度'}</span>
+                <span>{agv.cargoQuantity > 0 ? `任务货物 ×${agv.cargoQuantity}` : '空载调度'}</span>
               </div>
             </Html>
           )}

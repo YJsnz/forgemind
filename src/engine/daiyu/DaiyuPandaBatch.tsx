@@ -5,13 +5,14 @@ import type { URDFRobot } from 'urdf-loader'
 import { objectToWorld } from '../../game/grid'
 import type { FactoryObject } from '../../game/types'
 import { loadPandaTemplate } from '../../scene/PandaArmModel'
+import { NON_VEHICLE_BUILDING_VISUAL_SCALE } from '../../scene/industrialVisualScale'
 
 const UP = new THREE.Vector3(0, 1, 0)
 const ONE = new THREE.Vector3(1, 1, 1)
 const STATION_LOCAL = new THREE.Matrix4().compose(
-  new THREE.Vector3(-0.25, 0.18, -0.05),
+  new THREE.Vector3(-0.25, 0.18, -0.05).multiplyScalar(NON_VEHICLE_BUILDING_VISUAL_SCALE),
   new THREE.Quaternion(),
-  new THREE.Vector3(1.05, 1.05, 1.05),
+  new THREE.Vector3(1.14, 1.14, 1.14).multiplyScalar(NON_VEHICLE_BUILDING_VISUAL_SCALE),
 )
 
 interface PandaBatchPart {

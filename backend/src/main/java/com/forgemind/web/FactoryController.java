@@ -10,8 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 /**
- * 工厂存档 REST 接口（MySQL 持久化 CRUD）。
- * GET/PUT /api/factory —— 整厂存档的读取与写入。
+ * 旧版单工厂兼容接口。新项目库使用 /api/factories，保存完整 v5 载荷。
  */
 @RestController
 @RequestMapping("/api/factory")

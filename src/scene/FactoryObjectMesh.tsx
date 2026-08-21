@@ -1,10 +1,12 @@
 import { memo, useEffect, useLayoutEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import { getObjectDef } from '../game/types'
-import { gridToWorld, objectPortCells, objectPortCellsForSide, objectToWorld, occupiedCells, rotatedFootprint } from '../game/grid'
+import { getObjectDef, objectRole } from '../game/types'
+import { gridToWorld, objectCompatiblePortCells, objectInterfacePortCellsForSide, objectToWorld, occupiedCells, rotatedFootprint } from '../game/grid'
 import { rotationToDir } from '../game/dir'
 import { EquipmentModel, RuntimeDetailSignal } from './EquipmentModel'
+import { buildingVisualScaleForType } from './industrialVisualScale'
+import { CornerConveyorMotionStripes, LinearConveyorMotionStripes } from './ConveyorMotionStripes'
 import type { FactoryObject, PortSide } from '../game/types'
 import type { MachineRuntime, SourceRuntimeSnapshot } from '../game/simulation'
 
@@ -18,6 +20,7 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   objects,
   selected,
   active = false,
+  running = false,
   runtime,
   sourceRuntime,
   suppressEquipmentModel = false,
@@ -31,6 +34,7 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   objects: FactoryObject[]
   selected: boolean
   active?: boolean
+  running?: boolean
   runtime?: MachineRuntime
   sourceRuntime?: SourceRuntimeSnapshot
   suppressEquipmentModel?: boolean
@@ -38,7 +42,7 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   castShadows?: boolean
   suppressPanda?: boolean
   suppressConveyor?: boolean
-  onClick: (id: string) => void
+  onClick?: (id: string) => void
 }) {
   const def = getObjectDef(obj.type, obj.resourceId)
   const fp = rotatedFootprint(def.footprint, obj.rotation)
@@ -46,6 +50,7 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   const group = useRef<THREE.Group>(null)
 
   const stateColor = machineStateColor(runtime)
+  const visualScale = buildingVisualScaleForType(obj.type)
   const conveyorLinks = def.role === 'conveyor' && obj.type === 'conveyor'
     ? getConveyorLinks(obj, objects)
     : null
@@ -77,10 +82,10 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
       name={`factory-object:${obj.type}:${obj.id}`}
       position={[x, 0, z]}
       rotation={[0, obj.rotation === 90 ? -Math.PI / 2 : obj.rotation === 180 ? Math.PI : obj.rotation === 270 ? Math.PI / 2 : 0, 0]}
-      onClick={(e) => {
+      onClick={onClick ? (e) => {
         e.stopPropagation()
         onClick(obj.id)
-      }}
+      } : undefined}
     >
       {isMachine ? (
         <>
@@ -100,9 +105,9 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
           </mesh>
         </>
       ) : def.role === 'conveyor' || def.role === 'storage' ? (
-        !suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
+        !suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={def.role === 'conveyor' ? running && active : active} running={running} runtime={runtime} sourceRuntime={sourceRuntime} stationMode={obj.stationProgram?.mode} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
       ) : (
-        !suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} conveyorCorner={Boolean(conveyorLinks?.corner)} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
+        !suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} running={running} runtime={runtime} sourceRuntime={sourceRuntime} stationMode={obj.stationProgram?.mode} conveyorCorner={Boolean(conveyorLinks?.corner)} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
       )}
 
       {suppressEquipmentModel && obj.type === 'press' && (
@@ -123,15 +128,9 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
         </mesh>
       )}
 
-      {/* 传送带方向指示箭头 */}
-      {def.role === 'conveyor' && (
-        <>
-          {conveyorLinks?.corner
-            ? <ConveyorCornerArrow height={Math.max(def.height, 0.52)} inputSide={conveyorLinks.inputSide} />
-            : <ConveyorArrow height={Math.max(def.height, 0.52)} />}
-          {!conveyorLinks?.corner && <ConveyorMotion active={active} height={Math.max(def.height, 0.52)} />}
-        </>
-      )}
+      {obj.type === 'conveyor' && conveyorLinks?.corner
+        ? <CornerConveyorMotionStripes running={running} inputSide={conveyorLinks.inputSide ?? 'left'} />
+        : obj.type === 'conveyor' && <LinearConveyorMotionStripes running={running} />}
 
       {showPortMarkers && (
         <PortMarkers
@@ -145,8 +144,8 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
 
       {/* 选中描边（按足迹高度） */}
       {selected && (
-        <lineSegments position={[0, def.height / 2, 0]}>
-          <edgesGeometry args={[new THREE.BoxGeometry(fp.w, def.height, fp.d)]} />
+        <lineSegments position={[0, def.height * visualScale / 2, 0]}>
+          <edgesGeometry args={[new THREE.BoxGeometry(fp.w * visualScale, def.height * visualScale, fp.d * visualScale)]} />
           <lineBasicMaterial color="#4fc3f7" linewidth={1} />
         </lineSegments>
       )}
@@ -157,9 +156,12 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
 export function getConveyorLinks(obj: FactoryObject, objects: FactoryObject[]) {
   const sharesCell = (cells: { x: number; z: number }[], target: { x: number; z: number }[]) => cells.some((a) => target.some((b) => a.x === b.x && a.z === b.z))
   const isConnected = (upstream: FactoryObject, downstream: FactoryObject) => {
-    const inputCells = objectPortCells(downstream, 'input')
-    return sharesCell(objectPortCells(upstream, 'output'), occupiedCells(downstream))
-      && (inputCells.length === 0 || sharesCell(occupiedCells(upstream), inputCells))
+    const inputCells = objectCompatiblePortCells(downstream, 'input')
+    const outputHitsDownstream = sharesCell(objectCompatiblePortCells(upstream, 'output'), occupiedCells(downstream))
+    const upstreamOccupiesInput = inputCells.length === 0 || sharesCell(occupiedCells(upstream), inputCells)
+    if (objectRole(upstream.type, upstream.resourceId) === 'machine') return outputHitsDownstream
+    if (objectRole(downstream.type, downstream.resourceId) === 'machine') return upstreamOccupiesInput
+    return outputHitsDownstream && upstreamOccupiesInput
   }
   // A belt is placed on the upstream output cell. Therefore the visual link
   // must compare that output with the belt footprint, not with its external
@@ -193,31 +195,24 @@ export function getConveyorLinks(obj: FactoryObject, objects: FactoryObject[]) {
 }
 
 function PortMarkers({ obj, input, output, hideInput = false, hideOutput = false }: { obj: FactoryObject; input: PortSide | null; output: PortSide | null; hideInput?: boolean; hideOutput?: boolean }) {
-  // Conveyors communicate direction through the belt arrow. Rendering a full
+  // Conveyors communicate direction through the belt flow. Rendering a full
   // input/output marker pair on every 1x1 segment creates floating dots at
   // every joint, especially where a route turns.
   if (obj.type === 'conveyor') return null
-  const inputSides: PortSide[] = obj.type === 'merger' || obj.type === 'assembler' ? ['back', 'left', 'right'] : input ? [input] : []
-  const outputSides: PortSide[] = obj.type === 'splitter' ? ['front', 'left', 'right'] : output ? [output] : []
-  return <>{inputSides.filter(() => !hideInput).map((side) => <PortMarker key={`input-${side}`} kind="input" port="input" side={side} obj={obj} color="#4d9bb1" />)}{outputSides.filter(() => !hideOutput).map((side) => <PortMarker key={`output-${side}`} kind="output" port="output" side={side} obj={obj} color="#e6ad26" />)}</>
+  const sides: PortSide[] = ['front', 'back', 'left', 'right']
+  const markers = (port: 'input' | 'output', kind: 'input' | 'output', color: string) => sides.flatMap((side) => objectInterfacePortCellsForSide(obj, port, side).map((cell, index) => <PortMarker key={`${port}-${side}-${cell.x}-${cell.z}-${index}`} kind={kind} side={side} obj={obj} cell={cell} color={color} />))
+  void input; void output
+  return <>{!hideInput && markers('input', 'input', '#4d9bb1')}{!hideOutput && markers('output', 'output', '#e6ad26')}</>
 }
 
-function PortMarker({ kind, port, side, obj, color }: { kind: 'input' | 'output'; port: 'input' | 'output'; side: PortSide; obj: FactoryObject; color: string }) {
+function PortMarker({ kind, side, obj, cell, color }: { kind: 'input' | 'output'; side: PortSide; obj: FactoryObject; cell: { x: number; z: number }; color: string }) {
   const beacon = useRef<THREE.Group>(null)
   useFrame(({ clock }) => {
     if (!beacon.current) return
     const pulse = 0.92 + Math.sin(clock.getElapsedTime() * 3.2 + (kind === 'output' ? 0.8 : 0)) * 0.08
     beacon.current.scale.setScalar(pulse)
   })
-  const cells = objectPortCellsForSide(obj, port, side)
-  if (cells.length === 0) return null
-  // Port cells are the actual connection coordinates. Average the two middle
-  // lanes of an even-sized footprint so the marker stays centered while the
-  // simulation accepts either lane.
-  const world = cells.reduce((sum, cell) => {
-    const point = gridToWorld(cell)
-    return { x: sum.x + point.x / cells.length, z: sum.z + point.z / cells.length }
-  }, { x: 0, z: 0 })
+  const world = gridToWorld(cell)
   const centre = objectToWorld(obj)
   const angle = rotationAngle(obj.rotation)
   const cos = Math.cos(angle)
@@ -235,20 +230,27 @@ function PortMarker({ kind, port, side, obj, color }: { kind: 'input' | 'output'
   }
   const sideDirection = sideData[side]
   const arrow = kind === 'output' ? sideDirection : { dx: -sideDirection.dx, dz: -sideDirection.dz }
-  const footprint = rotatedFootprint(getObjectDef(obj.type, obj.resourceId).footprint, obj.rotation)
+  // `edge` is already transformed back into the rotated object's local
+  // frame, so the unrotated definition footprint is the correct envelope.
+  const footprint = getObjectDef(obj.type, obj.resourceId).footprint
   const bodyEdgeDistance = side === 'front' || side === 'back' ? footprint.w / 2 : footprint.d / 2
   const markerDistance = Math.abs(side === 'front' || side === 'back' ? edge.x : edge.z)
+  const markerPosition = edge
   const bridgeLength = Math.max(0.32, markerDistance - bodyEdgeDistance)
   const bridgeCentre = bodyEdgeDistance + bridgeLength / 2
+  const bridgePosition = {
+    x: sideDirection.dx !== 0 ? sideDirection.dx * bridgeCentre : edge.x,
+    z: sideDirection.dz !== 0 ? sideDirection.dz * bridgeCentre : edge.z,
+  }
   return (
     <>
       <mesh
-        position={[sideDirection.dx * bridgeCentre, 0.16, sideDirection.dz * bridgeCentre]}
+        position={[bridgePosition.x, 0.16, bridgePosition.z]}
       >
         <boxGeometry args={sideDirection.dx !== 0 ? [bridgeLength, 0.026, 0.12] : [0.12, 0.026, bridgeLength]} />
         <meshBasicMaterial color={color} transparent opacity={0.52} />
       </mesh>
-      <group ref={beacon} position={[edge.x, 0.27, edge.z]}>
+      <group ref={beacon} position={[markerPosition.x, 0.31, markerPosition.z]}>
         <mesh position={[0, -0.18, 0]}>
           <cylinderGeometry args={[0.245, 0.245, 0.032, 8]} />
           <meshStandardMaterial color="#172526" roughness={0.64} metalness={0.72} />
@@ -283,59 +285,6 @@ function arrowRotation(dx: number, dz: number): [number, number, number] {
   if (dx === -1) return [0, 0, Math.PI / 2]
   if (dz === 1) return [Math.PI / 2, 0, 0]
   return [-Math.PI / 2, 0, 0]
-}
-
-function ConveyorMotion({ active, height }: { active: boolean; height: number }) {
-  const ref = useRef<THREE.Mesh>(null)
-  useFrame(({ clock }) => {
-    if (!ref.current) return
-    const phase = (clock.getElapsedTime() * (active ? 1.6 : 0.45)) % 1
-    ref.current.position.x = phase - 0.5
-    ref.current.scale.x = active ? 1 : 0.65
-    ;(ref.current.material as THREE.MeshBasicMaterial).opacity = active ? 0.7 : 0.18
-  })
-  return (
-    <mesh ref={ref} position={[-0.5, height + 0.015, 0]}>
-      <boxGeometry args={[0.16, 0.018, 0.42]} />
-      <meshBasicMaterial color="#f0c24b" transparent opacity={active ? 0.7 : 0.18} />
-    </mesh>
-  )
-}
-
-/** 传送带方向指示（小三角箭头） */
-function ConveyorArrow({ height }: { height: number }) {
-  return (
-    <group position={[0, height + 0.035, 0]}>
-      <mesh position={[0.1, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
-        <coneGeometry args={[0.11, 0.26, 8]} />
-        <meshBasicMaterial color="#8be28a" />
-      </mesh>
-      <mesh position={[-0.1, 0, 0]}>
-        <boxGeometry args={[0.24, 0.028, 0.028]} />
-        <meshBasicMaterial color="#8be28a" />
-      </mesh>
-    </group>
-  )
-}
-
-function ConveyorCornerArrow({ height, inputSide = 'left' }: { height: number; inputSide?: 'left' | 'right' }) {
-  const inputZ = inputSide === 'left' ? 1 : -1
-  return (
-    <group position={[0, height + 0.045, 0]}>
-      <mesh position={[0, 0, inputZ * 0.25]}>
-        <boxGeometry args={[0.045, 0.018, 0.34]} />
-        <meshBasicMaterial color="#8be28a" transparent opacity={0.72} />
-      </mesh>
-      <mesh position={[0.18, 0, 0]}>
-        <boxGeometry args={[0.36, 0.018, 0.045]} />
-        <meshBasicMaterial color="#8be28a" transparent opacity={0.72} />
-      </mesh>
-      <mesh position={[0.38, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
-        <coneGeometry args={[0.075, 0.17, 8]} />
-        <meshBasicMaterial color="#8be28a" />
-      </mesh>
-    </group>
-  )
 }
 
 /** 机器状态 → 颜色 */

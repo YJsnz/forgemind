@@ -26,6 +26,8 @@ const MODEL_PATH_MAP: Partial<Record<BuildType, string>> = {
   splitter: '/models/industrial/flow_node_detail.glb',
   merger: '/models/industrial/flow_node_detail.glb',
   conveyor: '/models/industrial/roller_conveyor_segment.glb',
+  inclineUp: '/models/industrial/roller_conveyor_segment.glb',
+  inclineDown: '/models/industrial/roller_conveyor_segment.glb',
   agv: '/models/forklift_agv.glb',
   inspection: '/models/industrial/sensor_pack.glb',
   assembler: '/models/robot_irb2400.glb',

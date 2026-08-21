@@ -8,9 +8,14 @@
 /** 物品类别 */
 export type ItemCategory = 'raw' | 'intermediate' | 'product'
 
+export type ModelParameterValue = string | number | boolean
+export type ModelParameters = Record<string, ModelParameterValue>
+
 /** 物品类型定义 */
 export interface Item {
   id: string
+  /** 用户维护的业务编码；默认与稳定 id 相同。 */
+  code?: string
   name: string
   category: ItemCategory
   /** 占位色（Day 3 视觉用；后续接默认模型） */
@@ -23,6 +28,18 @@ export interface Item {
   modelPath?: string
   /** Stable ForgeCore model identity; modelPath remains for backwards compatibility. */
   modelId?: string
+  /** ForgeCore 参数化模型覆盖值。 */
+  modelParameters?: ModelParameters
+  description?: string
+  massKg?: number
+  maxStackSize?: number
+}
+
+/** One appearance payload shared by editor previews, thumbnails, and scene cargo. */
+export function resolveItemAppearanceParameters(item: Pick<Item, 'color' | 'modelParameters'>): ModelParameters {
+  const parameters = { ...(item.modelParameters ?? {}) }
+  if (!Object.prototype.hasOwnProperty.call(parameters, 'color') && item.color) parameters.color = item.color
+  return parameters
 }
 
 /** 配方单条输入 / 输出 */
@@ -34,7 +51,10 @@ export interface RecipePort {
 /** 生产配方：多输入 → 多输出 + 加工时长 */
 export interface Recipe {
   id: string
+  code?: string
   name: string
+  description?: string
+  enabled?: boolean
   inputs: RecipePort[]
   outputs: RecipePort[]
   /** 基准加工时长（秒） */

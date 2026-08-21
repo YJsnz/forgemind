@@ -16,16 +16,21 @@ import { AssistantVoiceButton } from './components/AssistantVoiceButton'
 import { ProductionWorkspace } from './components/ProductionWorkspace'
 import { ProductionRouteWorkspace } from './components/ProductionRouteWorkspace'
 import { WarehouseWorkspace } from './components/WarehouseWorkspace'
+import { MachineManufacturingWorkspace } from './components/MachineManufacturingWorkspace'
+import { ItemDetailWorkspace } from './components/ItemDetailWorkspace'
 import { GenerativeFactoryWorkspace } from './components/GenerativeFactoryWorkspace'
-import type { FactoryId } from './store/forgeMind'
 import { ForgeMindIntro } from './components/ForgeMindIntro'
 import { FloorSwitcher } from './components/FloorSwitcher'
 import type { FactoryFloorId } from './scene/FactoryFloorSystem'
+import { FactoryProjectControls, FactoryProjectDialog } from './components/FactoryProjectDialog'
 import './forgemind-intro.css'
 import './production.css'
 import './generative.css'
 import { animateIfAllowed } from './utils/animeMotion'
 import { loadImportedResources } from './api/resources'
+import { getFactoryFloors, MAX_FACTORY_FLOORS } from './game/floorConfig'
+import type { FactoryProjectSummary } from './api/factoryProjects'
+import { selectionKeyboardAction } from './game/selection'
 
 const VIEW_META: Record<FactoryView, { code: string; label: string; title: string; description: string }> = {
   overview: {
@@ -59,12 +64,16 @@ const VIEW_ORDER: FactoryView[] = ['overview', 'build', 'flow', 'diagnostics']
 function App() {
   const [portalOpen, setPortalOpen] = useState(true)
   const [view, setView] = useState<FactoryView>('overview')
-  const [auxPanel, setAuxPanel] = useState<'productionRoute' | 'warehouse' | null>(null)
+  const [auxPanel, setAuxPanel] = useState<'manufacturing' | 'productionRoute' | 'itemDetails' | 'warehouse' | null>(null)
   const [topMenu, setTopMenu] = useState<'help' | 'settings' | 'user' | null>(null)
   const [showViewportTools, setShowViewportTools] = useState(true)
   const [showInterfaceHints, setShowInterfaceHints] = useState(true)
   const [reducedMotion, setReducedMotion] = useState(false)
   const [activeFloor, setActiveFloor] = useState<FactoryFloorId>(1)
+  const [visibleFloors, setVisibleFloors] = useState<Set<FactoryFloorId>>(() => new Set())
+  const [projectReady, setProjectReady] = useState(false)
+  const [projectDialogOpen, setProjectDialogOpen] = useState(true)
+  const [currentProject, setCurrentProject] = useState<FactoryProjectSummary | null>(null)
   const shellRef = useRef<HTMLDivElement>(null)
   const topActionsRef = useRef<HTMLDivElement>(null)
   const objects = useForgeMindStore((s) => s.objects)
@@ -74,12 +83,18 @@ function App() {
   const playing = useForgeMindStore((s) => s.simPlaying)
   const buildType = useForgeMindStore((s) => s.buildType)
   const selectedId = useForgeMindStore((s) => s.selectedId)
+  const selectedIds = useForgeMindStore((s) => s.selectedIds)
+  const selectedObject = objects.find((object) => object.id === selectedId)
+  const selectedIsVehicle = selectedObject?.type === 'agv' || selectedObject?.type === 'drone'
   const select = useForgeMindStore((s) => s.select)
   const setBuildType = useForgeMindStore((s) => s.setBuildType)
   const undo = useForgeMindStore((s) => s.undo)
   const redo = useForgeMindStore((s) => s.redo)
-  const factoryId = useForgeMindStore((s) => s.factoryId)
-  const setFactory = useForgeMindStore((s) => s.setFactory)
+  const factoryName = useForgeMindStore((s) => s.factoryName)
+  const floorCount = useForgeMindStore((s) => s.floorCount)
+  const floorNames = useForgeMindStore((s) => s.floorNames)
+  const addFloor = useForgeMindStore((s) => s.addFloor)
+  const renameFloor = useForgeMindStore((s) => s.renameFloor)
   const registerImportedResource = useForgeMindStore((s) => s.registerImportedResource)
   const clearImportedResources = useForgeMindStore((s) => s.clearImportedResources)
 
@@ -96,16 +111,42 @@ function App() {
     if (next !== 'build') setBuildType(null)
   }
 
-  const changeFactory = (next: FactoryId) => {
-    setFactory(next)
-    setAuxPanel(null)
+  const toggleFloorVisibility = (floorId: FactoryFloorId) => {
+    setVisibleFloors((current) => {
+      const next = new Set(current)
+      if (next.has(floorId)) next.delete(floorId)
+      else next.add(floorId)
+      return next
+    })
+  }
+
+  const selectFloor = (floorId: FactoryFloorId) => {
     setBuildType(null)
+    select(null)
+    setActiveFloor(floorId)
+  }
+
+  const handleAddFloor = () => {
+    const nextFloor = addFloor()
+    selectFloor(nextFloor)
+  }
+
+  const handleProjectReady = (project: FactoryProjectSummary | null) => {
     setActiveFloor(1)
+    setVisibleFloors(new Set())
+    setView('overview')
+    setAuxPanel(null)
+    setProjectReady(true)
+    setCurrentProject(project)
+    setProjectDialogOpen(false)
   }
 
   const handleLogout = () => {
     setTopMenu(null)
     setAuxPanel(null)
+    setProjectReady(false)
+    setCurrentProject(null)
+    setProjectDialogOpen(true)
     void logout()
   }
 
@@ -149,6 +190,49 @@ function App() {
       const target = event.target as HTMLElement | null
       if (target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)) return
 
+      const selectionAction = selectionKeyboardAction(event.key)
+        ?? selectionKeyboardAction(event.code)
+        ?? (event.keyCode === 46 ? { type: 'delete' as const } : null)
+      const selectionState = useForgeMindStore.getState()
+      const currentSelection = [...selectionState.selectedIds]
+
+      if (
+        selectionAction?.type === 'delete'
+        && useAuthStore.getState().phase === 'factory'
+        && currentSelection.length > 0
+        && !event.ctrlKey
+        && !event.metaKey
+        && !event.altKey
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
+        selectionState.removeMany(currentSelection)
+        return
+      }
+
+      if (
+        phase === 'factory'
+        && !portalOpen
+        && projectReady
+        && !projectDialogOpen
+        && auxPanel === null
+        && topMenu === null
+        && view !== 'flow'
+        && !event.ctrlKey
+        && !event.metaKey
+        && !event.altKey
+      ) {
+        if (selectionAction && currentSelection.length > 0) {
+          if (currentSelection.length === 1) {
+            event.preventDefault()
+            event.stopPropagation()
+            if (selectionAction.type === 'move') selectionState.moveObject(currentSelection[0], selectionAction.dx, selectionAction.dz)
+            else if (selectionAction.type === 'rotate') selectionState.rotateObject(currentSelection[0], selectionAction.direction)
+            return
+          }
+        }
+      }
+
       if (event.key === 'Escape') {
         event.preventDefault()
         setTopMenu(null)
@@ -171,9 +255,9 @@ function App() {
       }
     }
 
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [redo, setBuildType, undo, view])
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [auxPanel, phase, portalOpen, projectDialogOpen, projectReady, redo, setBuildType, topMenu, undo, view])
 
   useEffect(() => {
     if (!topMenu) return
@@ -192,7 +276,7 @@ function App() {
     // Keep transform-based layout rules out of this batch. In particular, the
     // dock uses translateX(-50%) for centering and should not be rewritten by
     // a generic translateY entrance animation.
-    const surfaces = shell.querySelectorAll<HTMLElement>('.fm-viewport-header, .fm-viewport-tools, .fm-viewport-footer, .fm-production-workspace, .fm-route-workspace, .fm-warehouse-workspace')
+    const surfaces = shell.querySelectorAll<HTMLElement>('.fm-viewport-header, .fm-viewport-tools, .fm-viewport-footer, .fm-production-workspace, .fm-route-workspace, .fm-manufacturing-workspace, .fm-item-detail-workspace, .fm-warehouse-workspace')
     const animation = animateIfAllowed(surfaces, {
       opacity: [0, 1],
       translateY: [6, 0],
@@ -233,7 +317,7 @@ function App() {
     const productionEfficiency = snapshot.timeSec > 0 && theoreticalRatePerMinute > 0
       ? Math.min(100, (outputRatePerMinute / theoreticalRatePerMinute) * 100)
       : 0
-    const diagnostic = diagnoseFactory(objects, snapshot, recipes)
+    const diagnostic = diagnoseFactory(objects, snapshot, recipes, floorCount)
     const logisticsLoad = counts.conveyors > 0
       ? Math.min(100, (snapshot.itemLots.length / counts.conveyors) * 100)
       : 0
@@ -247,10 +331,10 @@ function App() {
       producedTotal,
       activeMachines,
     }
-  }, [counts.conveyors, objects, recipes, snapshot])
+  }, [counts.conveyors, floorCount, objects, recipes, snapshot])
 
   const meta = VIEW_META[view]
-  const activeTool = auxPanel === 'productionRoute' ? '生产路线工作区已打开' : auxPanel === 'warehouse' ? '仓储工作区已打开' : buildType ? '建造工具已启用' : '浏览与选择'
+  const activeTool = auxPanel === 'manufacturing' ? '机械制造工作区已打开' : auxPanel === 'productionRoute' ? '生产路线工作区已打开' : auxPanel === 'itemDetails' ? '物品详情工作区已打开' : auxPanel === 'warehouse' ? '货物仓储工作区已打开' : buildType ? '建造工具已启用' : '浏览与选择'
 
   if (portalOpen) {
     return <ForgeMindIntro onEnterWorkspace={() => setPortalOpen(false)} />
@@ -260,14 +344,14 @@ function App() {
   if (phase !== 'factory') {
     return (
       <div className="fm-login-shell">
-        <FactoryCanvas view="overview" activeFloor={1} />
+        <FactoryCanvas view="overview" activeFloor={1} floorCount={1} />
         <LoginOverlay />
       </div>
     )
   }
 
   return (
-    <div ref={shellRef} className="fm-shell" data-reduced-motion={reducedMotion ? 'true' : 'false'} data-warehouse-open={auxPanel === 'warehouse' ? 'true' : 'false'} data-panel-open={Boolean(auxPanel || view !== 'overview' || selectedId || topMenu) ? 'true' : 'false'}>
+    <div ref={shellRef} className="fm-shell" data-reduced-motion={reducedMotion ? 'true' : 'false'} data-warehouse-open={auxPanel === 'warehouse' ? 'true' : 'false'} data-panel-open={Boolean(auxPanel || view !== 'overview' || selectedIds.length === 1 || topMenu) ? 'true' : 'false'}>
       <SimulationRunner />
       <AssistantRuntime />
 
@@ -278,17 +362,16 @@ function App() {
           </div>
           <div>
             <img className="fm-brand-wordmark" src="/brand/forgemind-wordmark.png" alt="FORGEMIND" />
-            <div className="fm-brand-sub">DIGITAL FACTORY / {factoryId.toUpperCase()}</div>
+            <div className="fm-brand-sub">DIGITAL FACTORY / {factoryName.toUpperCase()}</div>
           </div>
         </div>
 
         <div className="fm-facility-status">
           <span className="fm-live-dot" />
-          <div className="fm-facility-switcher" aria-label="工厂场地切换">
-            {(['a01', 'a02'] as FactoryId[]).map((id) => <button key={id} type="button" className={factoryId === id ? 'is-active' : ''} onClick={() => changeFactory(id)}><b>{id.toUpperCase()}</b><small>{id === 'a01' ? 'LIVE LINE' : 'AI LAB'}</small></button>)}
-          </div>
+          <strong className="fm-current-factory">{factoryName}</strong>
           <span className="fm-status-divider" />
-          <span className="fm-muted">{factoryId === 'a01' ? '数字孪生已同步' : '生成实验场已就绪'}</span>
+          <span className="fm-muted">{floorCount} 层 · 后端存档</span>
+          {projectReady && <FactoryProjectControls currentProject={currentProject} onProjectChange={setCurrentProject} onManage={() => setProjectDialogOpen(true)} />}
         </div>
 
         <div ref={topActionsRef} className="fm-top-actions">
@@ -325,11 +408,15 @@ function App() {
               <p className="fm-top-popover-lead">在工厂视口中直接浏览、选择和调整设备。当前页面的快捷操作如下。</p>
               <div className="fm-top-shortcut-list">
                 <div><span><kbd>拖动</kbd></span><small>旋转镜头</small></div>
-                <div><span><kbd>右键</kbd></span><small>平移镜头 / 锁定转角</small></div>
+                <div><span><kbd>右键</kbd></span><small>水平平移 / 建造时取消</small></div>
                 <div><span><kbd>滚轮</kbd></span><small>缩放镜头</small></div>
                 <div><span><kbd>ESC</kbd></span><small>退出建造或返回总览</small></div>
                 <div><span><kbd>CTRL</kbd><kbd>Z</kbd></span><small>撤回上一步操作</small></div>
                 <div><span><kbd>R</kbd></span><small>旋转待放置组件</small></div>
+                <div><span><kbd>WASD</kbd></span><small>移动单个选中对象</small></div>
+                <div><span><kbd>Q</kbd><kbd>E</kbd></span><small>选中对象左旋 / 右旋</small></div>
+                <div><span><kbd>SHIFT</kbd><kbd>拖动</kbd></span><small>框选多个对象</small></div>
+                <div><span><kbd>DELETE</kbd></span><small>删除全部选中对象</small></div>
               </div>
               <div className="fm-top-popover-foot"><span className="fm-context-dot" /> 系统在线 · BUILD 0.1.0</div>
             </div>
@@ -350,7 +437,7 @@ function App() {
           {topMenu === 'user' && (
             <div className="fm-top-popover fm-user-popover" role="dialog" aria-label="操作员信息">
               <div className="fm-top-popover-head"><div><span className="fm-top-popover-kicker">OPERATOR / SESSION</span><h2>{user ? user.toUpperCase() : 'OPERATOR'}</h2></div><button type="button" onClick={() => setTopMenu(null)} aria-label="关闭操作员菜单">×</button></div>
-              <div className="fm-user-status"><span className="fm-live-dot" /><div><b>会话已授权</b><small>当前场地 · {factoryId.toUpperCase()}</small></div></div>
+              <div className="fm-user-status"><span className="fm-live-dot" /><div><b>会话已授权</b><small>当前工厂 · {factoryName}</small></div></div>
               <button type="button" className="fm-top-popover-action" onClick={handleLogout}>退出当前会话 <span>⏻</span></button>
             </div>
           )}
@@ -383,17 +470,22 @@ function App() {
 
         <main className="fm-main">
           <section className="fm-viewport" data-building={buildType ? 'true' : 'false'} aria-label="3D 工厂视口">
-            <FactoryCanvas view={view} activeFloor={activeFloor} />
-            <FloorSwitcher activeFloor={activeFloor} onChange={setActiveFloor} />
+            <FactoryCanvas view={view} activeFloor={activeFloor} visibleFloors={[...visibleFloors]} floorCount={floorCount} />
+            {projectReady && <FloorSwitcher activeFloor={activeFloor} visibleFloors={visibleFloors} floors={getFactoryFloors(floorCount, floorNames)} onChange={selectFloor} onToggleVisibility={toggleFloorVisibility} onAddFloor={handleAddFloor} onRenameFloor={renameFloor} canAddFloor={floorCount < MAX_FACTORY_FLOORS} />}
 
-            {selectedId && view !== 'flow' && (
-              <aside className="fm-device-drawer glass3d" aria-label="设备详情">
+            {selectedIds.length === 1 && selectedId && view !== 'flow' && (
+              <aside className={`fm-device-drawer glass3d ${view === 'build' || auxPanel === 'manufacturing' ? 'is-workspace-compact' : ''}`} aria-label={selectedIsVehicle ? '载具状态' : '设备详情'}>
                 <div className="fm-device-drawer-bar">
-                  <span>DEVICE / LIVE INSPECTOR</span>
-                  <button type="button" onClick={() => select(null)} aria-label="关闭设备详情">×</button>
+                  <span>{selectedIsVehicle ? 'VEHICLE / LIVE STATUS' : 'DEVICE / LIVE INSPECTOR'}</span>
+                  <button type="button" onClick={() => select(null)} aria-label={selectedIsVehicle ? '关闭载具状态' : '关闭设备详情'}>×</button>
                 </div>
                 <InfoPanel />
               </aside>
+            )}
+            {selectedIds.length > 1 && view !== 'flow' && (
+              <div className="fm-multi-selection-badge glass3d" role="status" data-testid="multi-selection-count">
+                <span>MULTI SELECT</span><b>已选择 {selectedIds.length} 个对象</b><small>DELETE 批量删除 · 点击空白处取消</small>
+              </div>
             )}
 
             {view !== 'flow' && <div className="fm-viewport-header">
@@ -416,7 +508,7 @@ function App() {
 
             {view !== 'flow' && <div className="fm-viewport-footer">
               {showInterfaceHints && <div className="fm-key-hint fm-key-hint-undo"><kbd>CTRL</kbd><kbd>Z</kbd> 撤回 <kbd>CTRL</kbd><kbd>SHIFT</kbd><kbd>Z</kbd> 重做</div>}
-              {showInterfaceHints && <div className="fm-key-hint"><kbd>R</kbd> 旋转组件 <kbd>ESC</kbd> 退出建造 <kbd>右键</kbd> 锁定传送带转角</div>}
+              {showInterfaceHints && <div className="fm-key-hint"><kbd>WASD</kbd> 移动 <kbd>Q/E</kbd> 左右旋转 <kbd>SHIFT+拖动</kbd> 框选 <kbd>DELETE</kbd> 删除</div>}
               <div className={`fm-run-state ${playing ? 'is-running' : ''}`}><span /> {playing ? '仿真运行中' : '仿真已暂停'}</div>
             </div>}
 
@@ -429,8 +521,10 @@ function App() {
                 ))}
               </div>
               {view === 'overview' && <div className="fm-aux-dock">
-                <button type="button" className={auxPanel === 'productionRoute' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('productionRoute') }}><span>05</span>生产路线</button>
-                <button type="button" className={auxPanel === 'warehouse' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('warehouse') }}><span>06</span>仓储</button>
+                <button type="button" className={auxPanel === 'manufacturing' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('manufacturing') }}><span>05</span>机械制造</button>
+                <button type="button" className={auxPanel === 'productionRoute' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('productionRoute') }}><span>06</span>生产路线</button>
+                <button type="button" className={auxPanel === 'itemDetails' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('itemDetails') }}><span>07</span>物品详情</button>
+                <button type="button" className={auxPanel === 'warehouse' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('warehouse') }}><span>08</span>货物仓储</button>
               </div>}
             </div>}
 
@@ -446,7 +540,9 @@ function App() {
               </div>
             )}
             {auxPanel === 'productionRoute' && <ProductionRouteWorkspace onClose={() => setAuxPanel(null)} />}
+            {auxPanel === 'itemDetails' && <ItemDetailWorkspace onClose={() => setAuxPanel(null)} />}
             {auxPanel === 'warehouse' && <WarehouseWorkspace onClose={() => setAuxPanel(null)} />}
+            {auxPanel === 'manufacturing' && <MachineManufacturingWorkspace onClose={() => setAuxPanel(null)} />}
 
           </section>
 
@@ -464,7 +560,7 @@ function App() {
         <aside className="fm-right-panel" aria-label="数据面板">
           <div className="fm-panel-heading">
             <div><span className="fm-eyebrow">FACTORY STATUS</span><h2>基地运行舱</h2></div>
-            <span className="fm-panel-index">{factoryId.toUpperCase()}</span>
+            <span className="fm-panel-index">{floorCount}F</span>
           </div>
           <div className="fm-stat-grid">
             <MiniStat label="设施" value={objects.length} />
@@ -478,7 +574,14 @@ function App() {
           </div>
         </aside>
       </div>
-
+      <FactoryProjectDialog
+        open={projectDialogOpen}
+        required={!projectReady}
+        currentProject={currentProject}
+        onReady={handleProjectReady}
+        onProjectDeleted={(projectId) => setCurrentProject((project) => project?.id === projectId ? null : project)}
+        onClose={() => setProjectDialogOpen(false)}
+      />
     </div>
   )
 }
@@ -495,7 +598,7 @@ function ViewSummary({ view, counts }: { view: FactoryView; counts: { machines: 
   const copy: Record<FactoryView, { lead: string; items: string[] }> = {
     overview: { lead: '基地正在以设备、物流和产能三个层面汇总运行状态。选择设备可查看端口与配方。', items: ['设备健康度', `${counts.machines} 台加工单元在线`, `${counts.conveyors} 条物流段`, '点击视口中的设备查看详情'] },
     build: { lead: '', items: [] },
-    flow: { lead: '物流视图突出显示入口、出口和物料运动方向。输送带按箭头方向逐段传递货物。', items: ['入口 / 蓝色端口', '出口 / 琥珀端口', '货物沿连接方向移动', '切换到建造页编辑线路'] },
+    flow: { lead: '物流视图突出显示入口、出口和物料运动方向。物料沿真实吸附接口逐段传递。', items: ['入口 / 蓝色端口', '出口 / 琥珀端口', '货物沿连接方向移动', '切换到建造页编辑线路'] },
     diagnostics: { lead: '诊断视图聚焦节拍、堵塞和设备利用率，为下一轮布局优化提供依据。', items: ['检查无配方设备', '定位输送带末端堵塞', '观察实时利用率', '使用右侧仿真控制'] },
   }
   const data = copy[view]

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { animateIfAllowed } from '../utils/animeMotion'
+import { AI_SERVICE_ENABLED } from '../game/api'
 import { dispatchAssistantState, requestAssistant } from '../game/assistantRuntime'
 import {
   ASSISTANT_WAKE_WORD,
@@ -144,6 +145,10 @@ export function AssistantVoiceButton() {
 
   // 默认开启；浏览器首次访问麦克风时会先请求用户授权。
   useEffect(() => {
+    if (!AI_SERVICE_ENABLED) {
+      dispatchAssistantState({ phase: 'idle', message: '规则模式已启用；语音服务为可选项' })
+      return
+    }
     void enableWake()
     return () => {
       if (autoStopRef.current !== null) window.clearTimeout(autoStopRef.current)
@@ -170,8 +175,9 @@ export function AssistantVoiceButton() {
         className={`fm-assistant-mic ${recording ? 'is-recording' : ''} ${busy ? 'is-busy' : ''}`}
         type="button"
         onClick={() => void toggle()}
+        disabled={!AI_SERVICE_ENABLED}
         aria-label={recording ? '结束语音输入' : '开始语音输入'}
-        title={recording ? '结束语音输入' : '开始语音输入'}
+        title={!AI_SERVICE_ENABLED ? '使用 -IncludeAI 启动可选语音服务' : recording ? '结束语音输入' : '开始语音输入'}
       >
         <span>{recording ? '■' : '◉'}</span>
         <small>{recording ? '结束' : '语音'}</small>
@@ -180,8 +186,9 @@ export function AssistantVoiceButton() {
         className={`fm-assistant-wake ${wakeEnabled ? 'is-enabled' : ''} ${busy ? 'is-busy' : ''}`}
         type="button"
         onClick={() => void toggleWake()}
+        disabled={!AI_SERVICE_ENABLED}
         aria-label={wakeEnabled ? `关闭${ASSISTANT_WAKE_WORD}关键字唤醒` : `开启${ASSISTANT_WAKE_WORD}关键字唤醒`}
-        title={wakeEnabled ? `关闭${ASSISTANT_WAKE_WORD}关键字唤醒` : `开启${ASSISTANT_WAKE_WORD}关键字唤醒`}
+        title={!AI_SERVICE_ENABLED ? '使用 -IncludeAI 启动可选语音服务' : wakeEnabled ? `关闭${ASSISTANT_WAKE_WORD}关键字唤醒` : `开启${ASSISTANT_WAKE_WORD}关键字唤醒`}
       >
         <span>⌁</span>
         <small>{wakeEnabled ? '已启用' : '唤醒'}</small>

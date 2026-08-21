@@ -24,6 +24,8 @@ export const DaiyuEmbeddedModelBatch = memo(function DaiyuEmbeddedModelBatch({
   localPosition,
   rotationOffsetY = 0,
   stripDirectionTexture = false,
+  crossSectionScale = 1,
+  visualScale = 1,
   objects,
   castShadows = true,
   onSelect,
@@ -35,6 +37,8 @@ export const DaiyuEmbeddedModelBatch = memo(function DaiyuEmbeddedModelBatch({
   localPosition: [number, number, number]
   rotationOffsetY?: number
   stripDirectionTexture?: boolean
+  crossSectionScale?: number
+  visualScale?: number
   objects: FactoryObject[]
   castShadows?: boolean
   onSelect: (id: string) => void
@@ -42,13 +46,17 @@ export const DaiyuEmbeddedModelBatch = memo(function DaiyuEmbeddedModelBatch({
   const gltf = useGLTF(path)
   const refs = useRef(new Map<string, THREE.InstancedMesh>())
   const normalized = useMemo(
-    () => normalizeModel(gltf.scene, targetFootprint, targetHeight, rotationOffsetY, stripDirectionTexture),
-    [gltf.scene, rotationOffsetY, stripDirectionTexture, targetFootprint, targetHeight],
+    () => normalizeModel(gltf.scene, targetFootprint, targetHeight, rotationOffsetY, stripDirectionTexture, crossSectionScale),
+    [crossSectionScale, gltf.scene, rotationOffsetY, stripDirectionTexture, targetFootprint, targetHeight],
   )
   const parts = useMemo(() => collectParts(normalized), [normalized])
   const local = useMemo(
-    () => new THREE.Matrix4().compose(new THREE.Vector3(...localPosition), new THREE.Quaternion(), ONE),
-    [localPosition[0], localPosition[1], localPosition[2]],
+    () => new THREE.Matrix4().compose(
+      new THREE.Vector3(...localPosition).multiplyScalar(visualScale),
+      new THREE.Quaternion(),
+      new THREE.Vector3(visualScale, visualScale, visualScale),
+    ),
+    [localPosition[0], localPosition[1], localPosition[2], visualScale],
   )
 
   useLayoutEffect(() => {
@@ -96,7 +104,7 @@ export const DaiyuEmbeddedModelBatch = memo(function DaiyuEmbeddedModelBatch({
   )
 })
 
-function normalizeModel(source: THREE.Group, targetFootprint: number, targetHeight: number, rotationOffsetY: number, stripDirectionTexture: boolean) {
+function normalizeModel(source: THREE.Group, targetFootprint: number, targetHeight: number, rotationOffsetY: number, stripDirectionTexture: boolean, crossSectionScale: number) {
   const scene = source.clone(true)
   scene.position.set(0, 0, 0)
   scene.rotation.set(0, rotationOffsetY, 0)
@@ -130,7 +138,11 @@ function normalizeModel(source: THREE.Group, targetFootprint: number, targetHeig
     node.material = Array.isArray(node.material) ? node.material.map(replace) : replace(node.material)
   })
   scene.updateMatrixWorld(true)
-  return scene
+  const wrapper = new THREE.Group()
+  wrapper.scale.set(1, crossSectionScale, crossSectionScale)
+  wrapper.add(scene)
+  wrapper.updateMatrixWorld(true)
+  return wrapper
 }
 
 function collectParts(scene: THREE.Group) {

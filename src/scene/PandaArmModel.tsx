@@ -55,7 +55,7 @@ export function preloadPandaArm() {
   void loadPandaTemplate().catch(() => {})
 }
 
-export function PandaArmModel({ behavior = 'assembly', active = true, progress = 0, castShadows = true }: { behavior?: PandaArmBehavior; active?: boolean; progress?: number; castShadows?: boolean }) {
+export function PandaArmModel({ behavior = 'assembly', active = true, running = true, progress = 0, rackSide = 'back', reverse = false, castShadows = true }: { behavior?: PandaArmBehavior; active?: boolean; running?: boolean; progress?: number; rackSide?: 'back' | 'left' | 'right'; reverse?: boolean; castShadows?: boolean }) {
   const [robot, setRobot] = useState<URDFRobot | null>(null)
   const [robotReady, setRobotReady] = useState(false)
 
@@ -79,7 +79,7 @@ export function PandaArmModel({ behavior = 'assembly', active = true, progress =
   }, [castShadows])
 
   if (!robot || !robotReady) return <PandaArmFallback />
-  return <PandaArmRuntime robot={robot} behavior={behavior} active={active} progress={progress} />
+  return <PandaArmRuntime robot={robot} behavior={behavior} active={active} running={running} progress={progress} rackSide={rackSide} reverse={reverse} />
 }
 
 async function waitForRobotVisuals(robot: URDFRobot): Promise<void> {
@@ -120,7 +120,7 @@ function PandaArmFallback() {
   </group>
 }
 
-function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRobot; behavior: PandaArmBehavior; active: boolean; progress: number }) {
+function PandaArmRuntime({ robot, behavior, active, running, progress, rackSide, reverse }: { robot: URDFRobot; behavior: PandaArmBehavior; active: boolean; running: boolean; progress: number; rackSide: 'back' | 'left' | 'right'; reverse: boolean }) {
   const runtimeRef = useRef<THREE.Group>(null)
   const control = useRef<RobotControl>({ mode: 'auto', task: 'sort', gripOpen: true, reset: false })
   const targetPos = useRef(new THREE.Vector3())
@@ -173,6 +173,7 @@ function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRob
     }
 
     if (behavior === 'infeed') {
+      if (!running) return
       if (!active) {
         visualProgress.current = THREE.MathUtils.damp(visualProgress.current, 0, 3.5, delta)
         if (homePose.current) {
@@ -189,8 +190,8 @@ function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRob
       const targetPhase = THREE.MathUtils.clamp(progress, 0, 0.9999)
       if (targetPhase + 0.35 < visualProgress.current) visualProgress.current = targetPhase
       visualProgress.current = THREE.MathUtils.damp(visualProgress.current, targetPhase, 9, delta)
-      const phase = visualProgress.current
-      const pose = sampleInfeedPose(phase)
+      const phase = reverse ? 1 - visualProgress.current : visualProgress.current
+      const pose = sampleInfeedPose(phase, rackSide)
       targetPos.current.set(pose[0], pose[1], pose[2])
       runtimeRef.current?.localToWorld(targetPos.current)
       if (homePose.current) targetQuat.current.copy(homePose.current.quaternion)
@@ -209,9 +210,9 @@ function PandaArmRuntime({ robot, behavior, active, progress }: { robot: URDFRob
         } else {
           const beltPhase = smootherstep(THREE.MathUtils.clamp((phase - 0.84) / 0.155, 0, 1))
           payloadPosition.current.set(
-            THREE.MathUtils.lerp(1.04, 1.42, beltPhase),
+            THREE.MathUtils.lerp(0.95, 1.33, beltPhase),
             0.49,
-            -0.43,
+            -0.31,
           )
         }
         payloadRef.current.position.copy(payloadPosition.current)
@@ -331,17 +332,17 @@ function boxInParentSpace(box: THREE.Box3, parent: THREE.Object3D | null) {
 
 const INFEED_POSES: Array<{ at: number; position: [number, number, number] }> = [
   { at: 0, position: [-0.02, 0.82, 0.1] },
-  { at: 0.14, position: [-0.68, 0.82, 0.52] },
-  { at: 0.28, position: [-0.68, 0.58, 0.52] },
-  { at: 0.38, position: [-0.68, 0.58, 0.52] },
-  { at: 0.5, position: [-0.68, 0.82, 0.52] },
-  { at: 0.68, position: [1.04, 0.82, -0.43] },
-  { at: 0.8, position: [1.04, 0.59, -0.43] },
-  { at: 0.88, position: [1.04, 0.59, -0.43] },
+  { at: 0.14, position: [-1.08, 0.82, 0.1] },
+  { at: 0.28, position: [-1.08, 0.58, 0.1] },
+  { at: 0.38, position: [-1.08, 0.58, 0.1] },
+  { at: 0.5, position: [-1.08, 0.82, 0.1] },
+  { at: 0.68, position: [1.145, 0.82, -0.31] },
+  { at: 0.8, position: [1.145, 0.59, -0.31] },
+  { at: 0.88, position: [1.145, 0.59, -0.31] },
   { at: 1, position: [-0.02, 0.82, 0.1] },
 ]
 
-function sampleInfeedPose(phase: number): [number, number, number] {
+function sampleInfeedPose(phase: number, rackSide: 'back' | 'left' | 'right' = 'back'): [number, number, number] {
   const value = THREE.MathUtils.clamp(phase, 0, 0.9999)
   const nextIndex = INFEED_POSES.findIndex((keyframe) => keyframe.at > value)
   const index = Math.max(0, nextIndex < 0 ? INFEED_POSES.length - 2 : nextIndex - 1)
@@ -349,11 +350,18 @@ function sampleInfeedPose(phase: number): [number, number, number] {
   const to = INFEED_POSES[Math.min(index + 1, INFEED_POSES.length - 1)]
   const t = (value - from.at) / Math.max(to.at - from.at, 0.0001)
   const eased = smootherstep(THREE.MathUtils.clamp(t, 0, 1))
-  return [
+  const pose: [number, number, number] = [
     THREE.MathUtils.lerp(from.position[0], to.position[0], eased),
     THREE.MathUtils.lerp(from.position[1], to.position[1], eased),
     THREE.MathUtils.lerp(from.position[2], to.position[2], eased),
   ]
+  // Only retarget the rack half of the cycle; the conveyor hand-off remains
+  // fixed on the station's front side.
+  if (value < 0.58) {
+    if (rackSide === 'left') { pose[0] = -0.18; pose[2] = 1.18 }
+    if (rackSide === 'right') { pose[0] = -0.18; pose[2] = -1.18 }
+  }
+  return pose
 }
 
 function smootherstep(value: number) {

@@ -1,219 +1,40 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import type { Item, Recipe, RecipePort } from '../game/item'
 import { useForgeMindStore } from '../store/forgeMind'
-import type { RecipePort } from '../game/item'
+import { ItemModelThumbnail } from './ItemModelThumbnail'
 
-/**
- * 配方（Recipe）面板：多输入 → 多输出 + 加工时长（Day 3）。
- */
-export function RecipePanel() {
-  const items = useForgeMindStore((s) => s.items)
-  const recipes = useForgeMindStore((s) => s.recipes)
-  const addRecipe = useForgeMindStore((s) => s.addRecipe)
-  const removeRecipe = useForgeMindStore((s) => s.removeRecipe)
+const blankRecipe = (): Recipe => ({ id: '', code: '', name: '', description: '', enabled: true, inputs: [], outputs: [], durationSec: 1 })
 
-  const [name, setName] = useState('')
-  const [duration, setDuration] = useState('1')
-  const [inputs, setInputs] = useState<RecipePort[]>([])
-  const [outputs, setOutputs] = useState<RecipePort[]>([])
-  const [inItem, setInItem] = useState('')
-  const [inQty, setInQty] = useState('1')
-  const [outItem, setOutItem] = useState('')
-  const [outQty, setOutQty] = useState('1')
-
-  const itemName = (id: string) => items.find((i) => i.id === id)?.name ?? id
-
-  const addInput = () => {
-    if (!inItem || Number(inQty) <= 0) return
-    setInputs((p) => [...p, { itemId: inItem, qty: Number(inQty) }])
-    setInItem('')
-    setInQty('1')
+export function RecipePanel({ initialRecipeId, onDone }: { initialRecipeId?: string; onDone?: () => void } = {}) {
+  const items = useForgeMindStore((state) => state.items)
+  const recipes = useForgeMindStore((state) => state.recipes)
+  const createRecipe = useForgeMindStore((state) => state.createRecipe)
+  const updateRecipe = useForgeMindStore((state) => state.updateRecipe)
+  const initial = initialRecipeId ? recipes.find((recipe) => recipe.id === initialRecipeId) : undefined
+  const [draft, setDraft] = useState<Recipe>(() => initial ? { ...initial, inputs: initial.inputs.map((entry) => ({ ...entry })), outputs: initial.outputs.map((entry) => ({ ...entry })) } : blankRecipe())
+  const [error, setError] = useState('')
+  const patch = (value: Partial<Recipe>) => setDraft((current) => ({ ...current, ...value }))
+  const save = () => {
+    if (items.length === 0) return setError('请先在“物品详情”中创建物品')
+    if (!draft.id.trim() || !draft.name.trim() || !draft.inputs.length || !draft.outputs.length) return setError('工艺 ID、名称、输入和输出都不能为空')
+    if (new Set(draft.inputs.map((entry) => entry.itemId)).size !== draft.inputs.length || new Set(draft.outputs.map((entry) => entry.itemId)).size !== draft.outputs.length) return setError('同一侧不能重复选择同一种物品')
+    const next = { ...draft, id: draft.id.trim(), code: draft.code?.trim() || draft.id.trim(), name: draft.name.trim(), description: draft.description?.trim(), durationSec: Math.max(.1, Number(draft.durationSec) || 1), enabled: draft.enabled !== false }
+    const ok = initial ? updateRecipe(initial.id, next) : createRecipe(next)
+    if (!ok) return setError('工艺路线 ID 已存在')
+    onDone?.()
   }
-  const addOutput = () => {
-    if (!outItem || Number(outQty) <= 0) return
-    setOutputs((p) => [...p, { itemId: outItem, qty: Number(outQty) }])
-    setOutItem('')
-    setOutQty('1')
-  }
-
-  const reset = () => {
-    setName('')
-    setDuration('1')
-    setInputs([])
-    setOutputs([])
-  }
-
-  const submit = () => {
-    const n = name.trim()
-    if (!n || inputs.length === 0 || outputs.length === 0) return
-    addRecipe(n, inputs, outputs, Number(duration) || 1)
-    reset()
-  }
-
-  const portLine = (p: RecipePort, list: RecipePort[], setList: (v: RecipePort[]) => void) => (
-    <div className="flex items-center justify-between text-xs">
-      <span className="text-[var(--fm-text)]">
-        {itemName(p.itemId)} <span className="font-mono text-[var(--fm-text-dim)]">×{p.qty}</span>
-      </span>
-      <button
-        onClick={() => setList(list.filter((x) => x !== p))}
-        className="font-mono text-[10px] text-[var(--fm-danger)]"
-      >
-        ×
-      </button>
-    </div>
-  )
-
-  const selectStyle: React.CSSProperties = {
-    borderColor: 'var(--fm-edge)',
-    background: 'var(--fm-bg-2)',
-    color: 'var(--fm-text)',
-  }
-
-  return (
-    <div className="flex flex-col gap-3 px-3 py-2">
-      {/* 新建表单 */}
-      <div className="space-y-2 border-b pb-3" style={{ borderColor: 'var(--fm-edge)' }}>
-        <p className="font-mono text-[10px] tracking-widest text-[var(--fm-text-dim)]">
-          NEW RECIPE
-        </p>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="配方名称"
-          className="w-full border bg-transparent px-2 py-1 text-sm text-[var(--fm-text)] outline-none placeholder:text-[var(--fm-text-dim)]"
-          style={{ borderColor: 'var(--fm-edge)' }}
-        />
-
-        {/* 输入 */}
-        <div className="space-y-1">
-          <div className="flex gap-1">
-            <select
-              value={inItem}
-              onChange={(e) => setInItem(e.target.value)}
-              className="flex-1 border px-1 py-1 text-xs"
-              style={selectStyle}
-            >
-              <option value="">选择输入物品…</option>
-              {items.map((i) => (
-                <option key={i.id} value={i.id}>{i.name}</option>
-              ))}
-            </select>
-            <input
-              value={inQty}
-              onChange={(e) => setInQty(e.target.value)}
-              className="w-12 border bg-transparent px-1 py-1 text-center font-mono text-xs text-[var(--fm-text)]"
-              style={{ borderColor: 'var(--fm-edge)' }}
-            />
-            <button
-              onClick={addInput}
-              className="border px-2 text-xs text-[var(--fm-accent)]"
-              style={{ borderColor: 'var(--fm-edge)' }}
-            >
-              +
-            </button>
-          </div>
-          {inputs.length > 0 && (
-            <div className="space-y-1 border-l-2 pl-2" style={{ borderColor: 'var(--fm-accent)' }}>
-              {inputs.map((p, i) => (
-                <div key={i}>{portLine(p, inputs, setInputs)}</div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* 输出 */}
-        <div className="space-y-1">
-          <div className="flex gap-1">
-            <select
-              value={outItem}
-              onChange={(e) => setOutItem(e.target.value)}
-              className="flex-1 border px-1 py-1 text-xs"
-              style={selectStyle}
-            >
-              <option value="">选择输出物品…</option>
-              {items.map((i) => (
-                <option key={i.id} value={i.id}>{i.name}</option>
-              ))}
-            </select>
-            <input
-              value={outQty}
-              onChange={(e) => setOutQty(e.target.value)}
-              className="w-12 border bg-transparent px-1 py-1 text-center font-mono text-xs text-[var(--fm-text)]"
-              style={{ borderColor: 'var(--fm-edge)' }}
-            />
-            <button
-              onClick={addOutput}
-              className="border px-2 text-xs text-[var(--fm-accent)]"
-              style={{ borderColor: 'var(--fm-edge)' }}
-            >
-              +
-            </button>
-          </div>
-          {outputs.length > 0 && (
-            <div className="space-y-1 border-l-2 pl-2" style={{ borderColor: 'var(--fm-ok)' }}>
-              {outputs.map((p, i) => (
-                <div key={i}>{portLine(p, outputs, setOutputs)}</div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* 时长 */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-[var(--fm-text-dim)]">加工时长</span>
-          <input
-            value={duration}
-            onChange={(e) => setDuration(e.target.value)}
-            className="w-20 border bg-transparent px-2 py-1 text-center font-mono text-xs text-[var(--fm-text)]"
-            style={{ borderColor: 'var(--fm-edge)' }}
-          />
-          <span className="font-mono text-[10px] text-[var(--fm-text-dim)]">秒</span>
-        </div>
-
-        <button
-          onClick={submit}
-          disabled={inputs.length === 0 || outputs.length === 0}
-          className="w-full border px-2 py-1 text-xs text-[var(--fm-accent)] transition-colors hover:bg-[rgba(79,195,247,0.10)] disabled:opacity-40"
-          style={{ borderColor: 'var(--fm-accent)' }}
-        >
-          + 添加配方
-        </button>
-      </div>
-
-      {/* 列表 */}
-      <div className="space-y-2">
-        <p className="font-mono text-[10px] tracking-widest text-[var(--fm-text-dim)]">
-          RECIPES ({recipes.length})
-        </p>
-        {recipes.length === 0 ? (
-          <p className="text-xs text-[var(--fm-text-dim)]">暂无配方。</p>
-        ) : (
-          recipes.map((r) => (
-            <div key={r.id} className="border px-2 py-1.5" style={{ borderColor: 'var(--fm-edge)' }}>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--fm-text)]">{r.name}</span>
-                <button
-                  onClick={() => removeRecipe(r.id)}
-                  className="font-mono text-[10px] text-[var(--fm-danger)]"
-                >
-                  ×
-                </button>
-              </div>
-              <div className="mt-1 font-mono text-[10px] text-[var(--fm-text-dim)]">
-                <div>
-                  入{' '}
-                  {r.inputs.map((p) => `${itemName(p.itemId)}×${p.qty}`).join(' + ') || '—'}
-                </div>
-                <div>
-                  出{' '}
-                  {r.outputs.map((p) => `${itemName(p.itemId)}×${p.qty}`).join(' + ') || '—'}
-                </div>
-                <div>{r.durationSec}s</div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  )
+  return <div className="fm-recipe-editor">
+    <section className="fm-recipe-identity"><div className="fm-form-grid"><Field label="工艺路线 ID"><input value={draft.id} onChange={(event) => patch({ id: event.target.value })} placeholder="ROUTE_CNC_001" /></Field><Field label="业务编码"><input value={draft.code ?? ''} onChange={(event) => patch({ code: event.target.value })} placeholder="默认等于工艺 ID" /></Field><Field label="路线名称"><input value={draft.name} onChange={(event) => patch({ name: event.target.value })} placeholder="例如：机械轴精车" /></Field><Field label="加工时长 / 秒"><input type="number" min=".1" step=".1" value={draft.durationSec} onChange={(event) => patch({ durationSec: Number(event.target.value) })} /></Field></div><Field label="工艺说明"><textarea rows={2} value={draft.description ?? ''} onChange={(event) => patch({ description: event.target.value })} placeholder="说明加工目标、质量标准或适用机器" /></Field><label className="fm-toggle-line"><input type="checkbox" checked={draft.enabled !== false} onChange={(event) => patch({ enabled: event.target.checked })} /><span>启用这条工艺路线并允许机器录入</span></label></section>
+    <section className="fm-recipe-flow-builder"><PortEditor title="INPUT / 输入物品" ports={draft.inputs} items={items} onChange={(inputs) => patch({ inputs })} /><div className="fm-recipe-process-node"><span>PROCESS</span><b>{Math.max(.1, Number(draft.durationSec) || 1)} s</b><small>标准加工周期</small><i>→</i></div><PortEditor title="OUTPUT / 输出物品" ports={draft.outputs} items={items} onChange={(outputs) => patch({ outputs })} output /></section>
+    {error && <p className="fm-form-error">{error}</p>}<footer className="fm-modal-actions"><button type="button" onClick={onDone}>取消</button><button type="button" className="primary" onClick={save}>{initial ? '保存工艺修改' : '加入生产路线'}</button></footer>
+  </div>
 }
+
+function PortEditor({ title, ports, items, onChange, output = false }: { title: string; ports: RecipePort[]; items: Item[]; onChange: (ports: RecipePort[]) => void; output?: boolean }) {
+  const [itemId, setItemId] = useState('')
+  const [qty, setQty] = useState(1)
+  const add = () => { if (!itemId || ports.some((entry) => entry.itemId === itemId)) return; onChange([...ports, { itemId, qty: Math.max(1, qty) }]); setItemId(''); setQty(1) }
+  return <section className={`fm-recipe-port-editor${output ? ' is-output' : ''}`}><header><span>{title}</span><b>{ports.length} 种</b></header><div className="fm-route-port-add"><select aria-label={`${title}选择物品`} value={itemId} onChange={(event) => setItemId(event.target.value)}><option value="">选择物品</option>{items.filter((item) => !ports.some((entry) => entry.itemId === item.id)).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id}</option>)}</select><input aria-label={`${title}数量`} type="number" min="1" step="1" value={qty} onChange={(event) => setQty(Math.max(1, Number(event.target.value) || 1))} /><button type="button" onClick={add}>＋ 添加</button></div><div className="fm-recipe-port-list">{ports.length === 0 && <p>尚未添加{output ? '输出' : '输入'}物品</p>}{ports.map((port) => { const item = items.find((entry) => entry.id === port.itemId); return <article key={port.itemId}><ItemModelThumbnail item={item} /><span><strong>{item?.name ?? port.itemId}</strong><small>{port.itemId}</small></span><label>数量<input type="number" min="1" step="1" value={port.qty} onChange={(event) => onChange(ports.map((entry) => entry.itemId === port.itemId ? { ...entry, qty: Math.max(1, Number(event.target.value) || 1) } : entry))} /></label><button type="button" onClick={() => onChange(ports.filter((entry) => entry.itemId !== port.itemId))}>×</button></article>})}</div></section>
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="fm-manufacturing-field"><span>{label}</span>{children}</label> }

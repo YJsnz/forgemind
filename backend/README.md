@@ -31,9 +31,13 @@ mvn spring-boot:run
 | POST | `/api/auth/login` | 否 | 登录 |
 | GET | `/api/auth/me` | 是 | 当前用户 |
 | POST | `/api/auth/logout` | 是 | 注销 |
-| GET | `/api/factory` | 是 | 读取工厂 |
-| PUT | `/api/factory` | 是 | 保存工厂 |
+| GET | `/api/factory` | 是 | 旧版单工厂兼容读取 |
+| PUT | `/api/factory` | 是 | 旧版单工厂兼容保存 |
 | GET | `/api/factory/health` | 否 | 健康检查 |
+| GET | `/api/factories` | 是 | 列出当前账号的全部工厂存档 |
+| POST | `/api/factories` | 是 | 新建完整工厂项目 |
+| GET | `/api/factories/{projectId}` | 是 | 读取指定工厂项目 |
+| PUT | `/api/factories/{projectId}` | 是 | 覆盖保存指定工厂项目 |
 | GET | `/api/resources` | 是 | 当前用户的资源目录 |
 | POST | `/api/resources` | 是 | multipart 导入资源 |
 | GET | `/api/resources/{resourceId}/model` | 是 | 下载当前用户的 GLB |
@@ -48,7 +52,7 @@ mvn spring-boot:run
 
 ## 数据库迁移
 
-迁移文件在 `src/main/resources/db/migration/`。`V5__create_user_imported_resources.sql` 新增私有资源表，`V6__add_resource_reference_to_factory_objects.sql` 为工厂设备增加资源引用。
+迁移文件在 `src/main/resources/db/migration/`。`V5__create_user_imported_resources.sql` 新增私有资源表，`V6__add_resource_reference_to_factory_objects.sql` 为工厂设备增加资源引用，`V7__add_full_factory_project_save.sql` 为每个工厂保存完整的版本化项目载荷。
 
 ## 验证
 

@@ -4,8 +4,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 工厂存档模型（对应前端 FactorySave）。
- * 极薄后端只做静态结构的 CRUD，仿真运行时仍在引擎（前端本地 / 未来 Java 引擎）。
+ * 旧版 v2 单工厂模型，仅供 /api/factory 和历史结构化数据兼容。
+ * 当前完整项目载荷由 /api/factories 以 JsonNode 无损保存。
  */
 public record FactorySave(
         Integer version,

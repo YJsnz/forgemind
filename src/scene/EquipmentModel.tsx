@@ -4,8 +4,14 @@ import { useGLTF } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { PandaArmModel } from './PandaArmModel'
 import { IncomingStationModel } from './IncomingStationModel'
+import { ConveyorCornerModel } from './ConveyorCornerModel'
 import { getObjectDef, type BuildType } from '../game/types'
 import type { MachineRuntime, SourceRuntimeSnapshot } from '../game/simulation'
+import {
+  CONVEYOR_CROSS_SECTION_SCALE,
+  NON_VEHICLE_BUILDING_VISUAL_SCALE,
+  PRODUCTION_MACHINE_VISUAL_SCALE,
+} from './industrialVisualScale'
 
 interface EquipmentModelProps {
   type: BuildType
@@ -14,8 +20,10 @@ interface EquipmentModelProps {
   accent: string
   height: number
   active?: boolean
+  running?: boolean
   runtime?: MachineRuntime
   sourceRuntime?: SourceRuntimeSnapshot
+  stationMode?: 'pickup' | 'store'
   conveyorCorner?: boolean
   conveyorCornerInput?: 'left' | 'right'
   castShadows?: boolean
@@ -23,47 +31,59 @@ interface EquipmentModelProps {
   suppressConveyor?: boolean
 }
 
-export function EquipmentModel({ type, resourceId, color, accent, height, active = false, runtime, sourceRuntime, conveyorCorner = false, conveyorCornerInput = 'left', castShadows = true, suppressPanda = false, suppressConveyor = false }: EquipmentModelProps) {
+export function EquipmentModel({ type, resourceId, color, accent, height, active = false, running = false, runtime, sourceRuntime, stationMode, conveyorCorner = false, conveyorCornerInput = 'left', castShadows = true, suppressPanda = false, suppressConveyor = false }: EquipmentModelProps) {
   if (type === 'imported') {
     const importedDef = getObjectDef(type, resourceId)
-    return importedDef.assetPath
+    const model = importedDef.assetPath
       ? <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path={importedDef.assetPath} targetFootprint={Math.max(importedDef.footprint.w, importedDef.footprint.d)} targetHeight={height} castShadows={castShadows} /></Suspense>
       : <SolidUnit color={color} height={height} />
+    return <ProductionMachineScale>{model}</ProductionMachineScale>
   }
   switch (type) {
     case 'machine':
-      return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/industrial/realvirtual_high_detail.glb" targetFootprint={1.3} targetHeight={height} /></Suspense>
+      { const machineDef = getObjectDef(type, resourceId); return <ProductionMachineScale><Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path={machineDef.assetPath ?? '/models/industrial/realvirtual_high_detail.glb'} targetFootprint={Math.max(1.3, Math.max(machineDef.footprint.w, machineDef.footprint.d) * 0.86)} targetHeight={height} castShadows={castShadows} /></Suspense></ProductionMachineScale> }
     case 'oreMiner':
-      return <RawRack color={color} accent={accent} />
+      return <NonVehicleBuildingScale><RawRack color={color} accent={accent} /></NonVehicleBuildingScale>
+    case 'inboundWarehouse':
+    case 'outboundWarehouse':
+      return <NonVehicleBuildingScale><Suspense fallback={<RawRack color={color} accent={accent} />}><DetailedAsset path="/models/industrial/pallet_buffer_detail.glb" targetFootprint={2.55} targetHeight={height} accent={accent} active={active} kind="storage" /></Suspense></NonVehicleBuildingScale>
     case 'source':
-      return <IncomingStationModel color={color} accent={accent} active={active} runtime={sourceRuntime} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
+      return <NonVehicleBuildingScale><IncomingStationModel color={color} accent={accent} active={active} running={running} runtime={sourceRuntime} stationMode={stationMode} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} /></NonVehicleBuildingScale>
     case 'smelter':
-      return <Suspense fallback={<CncCell color={color} accent={accent} />}><ImportedModel path="/models/industrial/cnc_machining_center.glb" targetFootprint={2.8} targetHeight={height} /></Suspense>
+      return <ProductionMachineScale><Suspense fallback={<CncCell color={color} accent={accent} />}><ImportedModel path="/models/industrial/cnc_machining_center.glb" targetFootprint={2.8} targetHeight={height} /></Suspense></ProductionMachineScale>
     case 'press':
-      return <Suspense fallback={<Press color={color} accent={accent} runtime={runtime} />}><DetailedAsset path="/models/industrial/hydraulic_press_detail.glb" targetFootprint={1.72} targetHeight={height} accent={accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="press" /></Suspense>
+      return <ProductionMachineScale><Suspense fallback={<Press color={color} accent={accent} runtime={runtime} />}><DetailedAsset path="/models/industrial/hydraulic_press_detail.glb" targetFootprint={1.72} targetHeight={height} accent={accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="press" /></Suspense></ProductionMachineScale>
     case 'assembler':
-      return <ImportedAssemblyCell targetFootprint={2.6} targetHeight={height} active={runtime?.state === 'loading' || runtime?.state === 'processing' || runtime?.state === 'output'} />
+      return <ProductionMachineScale><ImportedAssemblyCell targetFootprint={2.6} targetHeight={height} active={runtime?.state === 'loading' || runtime?.state === 'processing' || runtime?.state === 'output'} /></ProductionMachineScale>
     case 'inspection':
-      return <Suspense fallback={<InspectionCell color={color} accent={accent} />}><ImportedInspectionCell accent={accent} castShadows={castShadows} /></Suspense>
+      return <ProductionMachineScale><Suspense fallback={<InspectionCell color={color} accent={accent} />}><ImportedInspectionCell accent={accent} castShadows={castShadows} /></Suspense></ProductionMachineScale>
     case 'washing':
-      return <Suspense fallback={<WashCell color={color} accent={accent} runtime={runtime} />}><DetailedAsset path="/models/industrial/wash_deburr_detail.glb" targetFootprint={1.7} targetHeight={height} accent={accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="wash" /></Suspense>
+      return <ProductionMachineScale><Suspense fallback={<WashCell color={color} accent={accent} runtime={runtime} />}><DetailedAsset path="/models/industrial/wash_deburr_detail.glb" targetFootprint={1.7} targetHeight={height} accent={accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="wash" /></Suspense></ProductionMachineScale>
     case 'agv':
-      return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/forgecore/forgecore_agv.glb" targetFootprint={1.85} targetHeight={height} /></Suspense>
+      return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/forgecore/forgecore_agv.glb" targetFootprint={1.85} targetHeight={height} sourceObjectName="GeoContainer_572__16_36" /></Suspense>
     case 'drone':
       return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/forgecore/forgecore_drone.glb" targetFootprint={2.25} targetHeight={height} /></Suspense>
     case 'storage':
-      return <Suspense fallback={<Storage color={color} accent={accent} />}><DetailedAsset path="/models/industrial/pallet_buffer_detail.glb" targetFootprint={1.7} targetHeight={height} accent={accent} active={active} kind="storage" /></Suspense>
+      return <NonVehicleBuildingScale><RawRack color={color} accent={accent} /></NonVehicleBuildingScale>
     case 'splitter':
-      return <Suspense fallback={<FlowNode color={color} accent={accent} branches={3} scale={0.64} active={active} />}><DetailedAsset path="/models/industrial/flow_node_detail.glb" targetFootprint={1.02} targetHeight={0.8} accent={accent} active={active} kind="flow" /></Suspense>
+      return <NonVehicleBuildingScale><Suspense fallback={<FlowNode color={color} accent={accent} branches={3} scale={0.64} active={active} />}><DetailedAsset path="/models/industrial/flow_node_detail.glb" targetFootprint={1.02} targetHeight={0.8} accent={accent} active={active} kind="flow" /></Suspense></NonVehicleBuildingScale>
     case 'merger':
-      return <Suspense fallback={<FlowNode color={color} accent={accent} branches={3} merger scale={0.64} active={active} />}><DetailedAsset path="/models/industrial/flow_node_detail.glb" targetFootprint={1.02} targetHeight={0.8} accent={accent} active={active} kind="flow" /></Suspense>
+      return <NonVehicleBuildingScale><Suspense fallback={<FlowNode color={color} accent={accent} branches={3} merger scale={0.64} active={active} />}><DetailedAsset path="/models/industrial/flow_node_detail.glb" targetFootprint={1.02} targetHeight={0.8} accent={accent} active={active} kind="flow" /></Suspense></NonVehicleBuildingScale>
     case 'conveyor':
       return conveyorCorner
-        ? <ConveyorCorner accent={accent} height={Math.max(height, 0.52)} inputSide={conveyorCornerInput} />
-        : <Suspense fallback={<Belt color={color} accent={accent} active={active} />}><ImportedModel path="/models/industrial/roller_conveyor_segment.glb" targetFootprint={1.05} targetHeight={Math.max(height, 0.52)} rotationOffsetY={Math.PI / 2} stripDirectionTexture /></Suspense>
+        ? <ConveyorCornerModel accent={accent} inputSide={conveyorCornerInput} />
+        : <group scale={[1, CONVEYOR_CROSS_SECTION_SCALE, CONVEYOR_CROSS_SECTION_SCALE]}><Suspense fallback={<Belt color={color} accent={accent} active={active} />}><ImportedModel path="/models/industrial/roller_conveyor_segment.glb" targetFootprint={1.05} targetHeight={Math.max(height, 0.52)} rotationOffsetY={Math.PI / 2} stripDirectionTexture /></Suspense></group>
     default:
       return <Belt color={color} accent={accent} />
   }
+}
+
+function ProductionMachineScale({ children }: { children: React.ReactNode }) {
+  return <group scale={PRODUCTION_MACHINE_VISUAL_SCALE}>{children}</group>
+}
+
+function NonVehicleBuildingScale({ children }: { children: React.ReactNode }) {
+  return <group scale={NON_VEHICLE_BUILDING_VISUAL_SCALE}>{children}</group>
 }
 
 function Metal({ color, roughness = 0.5, metalness = 0.72 }: { color: string; roughness?: number; metalness?: number }) {
@@ -182,27 +202,6 @@ function WashCell({ color, accent, runtime }: { color: string; accent: string; r
   </Base>
 }
 
-function Storage({ color, accent }: { color: string; accent: string }) {
-  return <Base width={1.75} depth={1.75}>
-    <group position={[0, 0.18, 0]}>
-      {[-0.68, 0.68].flatMap((x) => [-0.58, 0.58].map((z) => <mesh key={`${x}-${z}`} position={[x, 0.82, z]} castShadow><boxGeometry args={[0.07, 1.52, 0.07]} /><Metal color="#9da9a3" /></mesh>))}
-      {[0.28, 0.78, 1.28].map((y) => <group key={y}>
-        <mesh position={[0, y, 0]} castShadow><boxGeometry args={[1.5, 0.07, 1.24]} /><Metal color={color} /></mesh>
-        {[-0.47, 0.47].map((x) => <mesh key={x} position={[x, y + 0.065, 0]}><boxGeometry args={[0.045, 0.025, 1.18]} /><Metal color="#d1d9d3" /></mesh>)}
-      </group>)}
-      {[0.47, 0.97].map((y) => <group key={y}>
-        <mesh position={[-0.34, y, -0.12]} castShadow><boxGeometry args={[0.52, 0.3, 0.62]} /><meshStandardMaterial color="#b7864f" roughness={0.78} /></mesh>
-        <mesh position={[0.34, y, -0.12]} castShadow><boxGeometry args={[0.52, 0.3, 0.62]} /><meshStandardMaterial color="#a87342" roughness={0.78} /></mesh>
-        <mesh position={[0, y + 0.16, -0.12]}><boxGeometry args={[1.08, 0.025, 0.66]} /><meshStandardMaterial color="#e1b152" emissive="#e1b152" emissiveIntensity={0.08} /></mesh>
-      </group>)}
-      {[-0.5, 0.5].map((x) => <mesh key={x} position={[x, 0.82, -0.61]} rotation={[0, 0, x < 0 ? -0.34 : 0.34]}><boxGeometry args={[0.035, 1.22, 0.035]} /><Metal color="#d1d9d3" /></mesh>)}
-      <mesh position={[0, 1.56, 0]}><boxGeometry args={[1.48, 0.08, 1.3]} /><Metal color="#6d7a75" /></mesh>
-      <mesh position={[0, 1.61, 0.67]}><boxGeometry args={[0.84, 0.035, 0.025]} /><meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.65} /></mesh>
-      <mesh position={[0.73, 0.94, 0.64]}><boxGeometry args={[0.04, 0.72, 0.04]} /><meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.24} /></mesh>
-    </group>
-  </Base>
-}
-
 function FlowNode({ color, accent, branches, merger = false, scale = 1, active = false }: { color: string; accent: string; branches: number; merger?: boolean; scale?: number; active?: boolean }) {
   const pulseRef = useRef<THREE.Mesh>(null)
   useFrame(({ clock }) => {
@@ -224,7 +223,7 @@ function FlowNode({ color, accent, branches, merger = false, scale = 1, active =
 function Belt({ color, accent, active = false }: { color: string; accent: string; active?: boolean }) {
   const rollerRef = useRef<THREE.Group>(null)
   useFrame((_, delta) => {
-    if (rollerRef.current) rollerRef.current.rotation.x += delta * (active ? 4 : 0.2)
+    if (rollerRef.current && active) rollerRef.current.rotation.x += delta * 4
   })
   return <Base width={1.1} depth={1.1}>
     <group position={[0, 0.25, 0]}>
@@ -234,73 +233,6 @@ function Belt({ color, accent, active = false }: { color: string; accent: string
       <mesh position={[0, 0.18, 0]}><boxGeometry args={[0.16, 0.025, 0.16]} /><meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.2} /></mesh>
     </group>
   </Base>
-}
-
-function ConveyorCorner({ accent, height, inputSide }: { accent: string; height: number; inputSide: 'left' | 'right' }) {
-  const inputZ = inputSide === 'left' ? 1 : -1
-  const frameColor = '#52605c'
-  const rollerColor = '#8c9893'
-  const deckHeight = Math.max(0.27, height * 0.56)
-  const rollerHeight = deckHeight + 0.055
-  const rollerSteps = [0.1, 0.22, 0.34, 0.46]
-
-  return (
-    <group>
-      {/* 两条半宽底盘在中心重叠，完整接到相邻网格边界。 */}
-      <mesh position={[0.25, 0.15, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.52, 0.2, 0.68]} />
-        <meshStandardMaterial color="#26322f" roughness={0.66} metalness={0.48} />
-      </mesh>
-      <mesh position={[0, 0.15, inputZ * 0.25]} castShadow receiveShadow>
-        <boxGeometry args={[0.68, 0.2, 0.52]} />
-        <meshStandardMaterial color="#26322f" roughness={0.66} metalness={0.48} />
-      </mesh>
-
-      {/* 中央转盘消除两段直角拼接产生的孔洞。 */}
-      <mesh position={[0, deckHeight, 0]} receiveShadow>
-        <cylinderGeometry args={[0.35, 0.35, 0.055, 24]} />
-        <meshStandardMaterial color="#192421" roughness={0.6} metalness={0.4} />
-      </mesh>
-      <mesh position={[0, deckHeight + 0.031, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.2, 0.27, 24, 1, inputZ > 0 ? Math.PI : Math.PI / 2, Math.PI / 2]} />
-        <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.16} roughness={0.55} metalness={0.28} />
-      </mesh>
-
-      {/* 出口臂滚筒：物流沿本地 +X 离开。 */}
-      {rollerSteps.map((x) => (
-        <mesh key={`out-${x}`} position={[x, rollerHeight, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-          <cylinderGeometry args={[0.038, 0.038, 0.56, 10]} />
-          <meshStandardMaterial color={rollerColor} roughness={0.38} metalness={0.78} />
-        </mesh>
-      ))}
-
-      {/* 入口臂滚筒：从本地左/右侧进入中央转盘。 */}
-      {rollerSteps.map((distance) => (
-        <mesh key={`in-${distance}`} position={[0, rollerHeight, inputZ * distance]} rotation={[0, 0, Math.PI / 2]} castShadow>
-          <cylinderGeometry args={[0.038, 0.038, 0.56, 10]} />
-          <meshStandardMaterial color={rollerColor} roughness={0.38} metalness={0.78} />
-        </mesh>
-      ))}
-
-      {/* 外侧护轨保持转角轮廓连续，内侧在中心处留出转向空间。 */}
-      <mesh position={[0.25, rollerHeight + 0.08, -inputZ * 0.34]} castShadow>
-        <boxGeometry args={[0.52, 0.1, 0.045]} />
-        <meshStandardMaterial color={frameColor} roughness={0.48} metalness={0.7} />
-      </mesh>
-      <mesh position={[-0.34, rollerHeight + 0.08, inputZ * 0.25]} castShadow>
-        <boxGeometry args={[0.045, 0.1, 0.52]} />
-        <meshStandardMaterial color={frameColor} roughness={0.48} metalness={0.7} />
-      </mesh>
-
-      {/* 四个支脚让转角高度与正式滚筒段一致。 */}
-      {[[0.4, -0.25], [0.4, 0.25], [-0.25, inputZ * 0.4], [0.25, inputZ * 0.4]].map(([x, z], index) => (
-        <mesh key={`leg-${index}`} position={[x, 0.065, z]} castShadow>
-          <boxGeometry args={[0.065, 0.13, 0.065]} />
-          <meshStandardMaterial color="#45514d" roughness={0.62} metalness={0.64} />
-        </mesh>
-      ))}
-    </group>
-  )
 }
 
 function ImportedAssemblyCell({ targetFootprint, targetHeight, active }: { targetFootprint: number; targetHeight: number; active: boolean }) {
@@ -387,10 +319,11 @@ function CameraHead({ accent, position }: { accent: string; position: [number, n
   </group>
 }
 
-function ImportedModel({ path, targetFootprint, targetHeight, rotationOffsetY = 0, stripDirectionTexture = false, castShadows = true }: { path: string; targetFootprint: number; targetHeight: number; rotationOffsetY?: number; stripDirectionTexture?: boolean; castShadows?: boolean }) {
+function ImportedModel({ path, targetFootprint, targetHeight, rotationOffsetY = 0, stripDirectionTexture = false, castShadows = true, sourceObjectName }: { path: string; targetFootprint: number; targetHeight: number; rotationOffsetY?: number; stripDirectionTexture?: boolean; castShadows?: boolean; sourceObjectName?: string }) {
   const gltf = useGLTF(path)
   const normalized = useMemo(() => {
-    const scene = gltf.scene.clone(true)
+    const source = sourceObjectName ? gltf.scene.getObjectByName(sourceObjectName) : gltf.scene
+    const scene = (source ?? gltf.scene).clone(true)
     // Apply the asset correction before measuring its bounds. Rotating the
     // primitive after centering leaves an internal GLB translation orbiting
     // around the cell origin, which makes the belt drift away from its arrow.
@@ -424,7 +357,7 @@ function ImportedModel({ path, targetFootprint, targetHeight, rotationOffsetY = 
       }
     })
     return scene
-  }, [castShadows, gltf, rotationOffsetY, stripDirectionTexture, targetFootprint, targetHeight])
+  }, [castShadows, gltf, rotationOffsetY, sourceObjectName, stripDirectionTexture, targetFootprint, targetHeight])
   return <primitive object={normalized} />
 }
 

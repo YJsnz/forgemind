@@ -182,7 +182,7 @@ export const BASE_A01_OBJECTS: FactoryObject[] = [
   // capacity, not decorative machines embedded in the conveyor backbone.
   unit('a01_agv_logistics_01', 'agv', -12, -14, 0, { agvProgram: { enabled: true, sourceObjectId: 'a01_warehouse_finished_rack_01', destinationObjectId: 'a01_raw_material_rack', itemId: 'item_steel_blank', loadQuantity: 100, priority: 0, policy: 'balanced' } }),
   unit('a01_agv_logistics_02', 'agv', 6, -14, 180, { agvProgram: { enabled: true, sourceObjectId: 'a01_warehouse_raw_rack_01', destinationObjectId: 'a01_finished_buffer', itemId: 'item_steel_blank', loadQuantity: 100, priority: 0, policy: 'shortest' } }),
-  unit('a01_drone_logistics_01', 'drone', 18, -14, 180),
+  unit('a01_drone_logistics_01', 'drone', 18, -14, 180, { agvProgram: { enabled: true, sourceObjectId: 'l2_clean_buffer', destinationObjectId: 'l3_finished_buffer', itemId: 'item_clean_part', loadQuantity: 3, priority: 2, policy: 'shortest' } }),
 
   // 07 左侧仓储区：两组原料货架 + 两组成品缓存，东侧留出 AGV 装卸通道。
   ...WAREHOUSE_RACKS.map((rack) => unit(

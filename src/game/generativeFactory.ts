@@ -1,8 +1,8 @@
 import { CARDINALS, cellKey, dirToRotation } from './dir'
-import { objectPortCells, objectPortCellsForSide, occupiedCells } from './grid'
+import { objectCompatiblePortCells, objectPortCells, objectPortCellsForSide, occupiedCells } from './grid'
 import { DEFAULT_ITEMS, DEFAULT_RECIPES, type Item, type Recipe, type RecipePort } from './item'
 import { SimulationEngine } from './simulation'
-import { OBJECT_DEFS, type BuildType, type FactoryObject, type PortSide, type Rotation } from './types'
+import { OBJECT_DEFS, objectRole, type BuildType, type FactoryObject, type PortSide, type Rotation } from './types'
 
 export interface GenerationSpec {
   product: string
@@ -693,7 +693,7 @@ function footprintFloor(objects: FactoryObject[], spec: GenerationSpec): { width
 }
 
 function createAdjustmentLayout(currentObjects: FactoryObject[], factoryKey: string, graph: RecipeGraph, variant: 'reroute' | 'compact-left' | 'compact-right'): { objects: FactoryObject[]; adjustments: AdjustmentAction[]; variant: string } | null {
-  const findSource = (itemId: string) => currentObjects.find((object) => object.type === 'source' && object.itemId === itemId)
+  const findSource = (itemId: string) => currentObjects.find((object) => (object.type === 'source' || object.type === 'inboundWarehouse') && object.itemId === itemId)
   const findMachine = (recipeId: string) => currentObjects.find((object) => object.recipeId === recipeId)
   const sourceSteel = findSource(graph.sourceItems.steel)
   const sourceSheet = findSource(graph.sourceItems.sheet)
@@ -707,7 +707,8 @@ function createAdjustmentLayout(currentObjects: FactoryObject[], factoryKey: str
   const assembly = findMachine(graph.recipeIds.assembly)
   const inspection = findMachine(graph.recipeIds.inspection)
   const packaging = findMachine(graph.recipeIds.packaging)
-  const storage = currentObjects.find((object) => object.type === 'storage' && /finished|成品/i.test(object.id))
+  const storage = currentObjects.find((object) => object.type === 'outboundWarehouse')
+    ?? currentObjects.find((object) => object.type === 'storage' && /finished|成品/i.test(object.id))
     ?? currentObjects.filter((object) => object.type === 'storage').sort((a, b) => b.pos.x - a.pos.x)[0]
   if (!sourceSteel || !sourceSheet || !sourceFastener || !sourceCopper || !cnc || !washing || !press || !fastenerKit || !coil || !assembly || !inspection || !storage) return null
 
@@ -814,10 +815,10 @@ function assemblyRows(count: number): number[] {
 
 function createConnectedLayout(prefix: string, parallelPlan: Record<string, number>, agvCount: number, graph: RecipeGraph): FactoryObject[] {
   const builder: LayoutBuilder = { prefix, objects: [], conveyorIndex: 1 }
-  const sourceSteel = unit(`${prefix}_source_steel`, 'source', -14, -4, 0, { itemId: graph.sourceItems.steel })
-  const sourceSheet = unit(`${prefix}_source_sheet`, 'source', -14, 8, 0, { itemId: graph.sourceItems.sheet })
-  const sourceFastener = unit(`${prefix}_source_fastener`, 'source', -14, -9, 0, { itemId: graph.sourceItems.fastener })
-  const sourceCopper = unit(`${prefix}_source_copper`, 'source', -14, 5, 0, { itemId: graph.sourceItems.auxiliary })
+  const sourceSteel = unit(`${prefix}_source_steel`, 'inboundWarehouse', -14, -4, 0, { itemId: graph.sourceItems.steel })
+  const sourceSheet = unit(`${prefix}_source_sheet`, 'inboundWarehouse', -14, 8, 0, { itemId: graph.sourceItems.sheet })
+  const sourceFastener = unit(`${prefix}_source_fastener`, 'inboundWarehouse', -14, -9, 0, { itemId: graph.sourceItems.fastener })
+  const sourceCopper = unit(`${prefix}_source_copper`, 'inboundWarehouse', -14, 5, 0, { itemId: graph.sourceItems.auxiliary })
   const cnc = createParallelStage(prefix, 'cnc', 'smelter', graph.recipeIds.machining, -7, -7, parallelPlan.machining ?? 1, 3, { x: -10, z: -4 }, { x: -2, z: -4 }, cncRows(parallelPlan.machining ?? 1))
   const washing = createParallelStage(prefix, 'washing', 'washing', graph.recipeIds.washing, 0, -2, parallelPlan.washing ?? 1, 3, { x: -3, z: -2 }, { x: 2, z: -2 })
   const press = createParallelStage(prefix, 'press', 'press', graph.recipeIds.stamping, -7, 8, parallelPlan.stamping ?? 1, -2, { x: -10, z: 8 }, { x: -4, z: 8 }, [8, 6, 4])
@@ -833,7 +834,7 @@ function createConnectedLayout(prefix: string, parallelPlan: Record<string, numb
         unit(`${prefix}_assembly_input_coil_splitter`, 'splitter', -2, 5, 0),
       ]
     : []
-  const storage = unit(`${prefix}_storage`, 'storage', 13, -4, 0)
+  const storage = unit(`${prefix}_storage`, 'outboundWarehouse', 13, -4, 0)
   const fixedObjects = [
     sourceSteel, sourceSheet, sourceFastener, sourceCopper,
     ...cnc.machines, cnc.inputSplitter, cnc.outputMerger,
@@ -1028,9 +1029,14 @@ export function validateGeneratedLayout(objects: FactoryObject[], floorWidth = 3
   }
 
   const connects = (upstream: FactoryObject, downstream: FactoryObject) => {
-    const inputCells = objectPortCells(downstream, 'input')
-    return objectPortCells(upstream, 'output').some((output) => occupiedCells(downstream).some((cell) => sameCell(output, cell)))
-      && (inputCells.length === 0 || occupiedCells(upstream).some((cell) => inputCells.some((input) => sameCell(cell, input))))
+    const inputCells = objectCompatiblePortCells(downstream, 'input')
+    const outputHitsDownstream = objectCompatiblePortCells(upstream, 'output')
+      .some((output) => occupiedCells(downstream).some((cell) => sameCell(output, cell)))
+    const upstreamOccupiesInput = inputCells.length === 0
+      || occupiedCells(upstream).some((cell) => inputCells.some((input) => sameCell(cell, input)))
+    if (objectRole(upstream.type, upstream.resourceId) === 'machine') return outputHitsDownstream
+    if (objectRole(downstream.type, downstream.resourceId) === 'machine') return upstreamOccupiesInput
+    return outputHitsDownstream && upstreamOccupiesInput
   }
 
   for (const object of objects.filter((candidate) => candidate.type === 'conveyor')) {
@@ -1038,11 +1044,12 @@ export function validateGeneratedLayout(objects: FactoryObject[], floorWidth = 3
       issues.push({ objectId: object.id, message: '没有找到有效的上游输出接口' })
     }
     const output = objectPortCells(object, 'output')[0]
-    const downstream = output ? byCell.get(cellKey(output.x, output.z)) : undefined
+    const downstream = (output ? byCell.get(cellKey(output.x, output.z)) : undefined)
+      ?? objects.find((candidate) => candidate.id !== object.id && objectRole(candidate.type, candidate.resourceId) === 'machine' && connects(object, candidate))
     if (!downstream || !connects(object, downstream)) issues.push({ objectId: object.id, message: '输出端没有接入下游设备或传送带' })
   }
 
-  for (const object of objects.filter((candidate) => candidate.type === 'source' && candidate.itemId)) {
+  for (const object of objects.filter((candidate) => (candidate.type === 'source' || candidate.type === 'inboundWarehouse') && candidate.itemId)) {
     if (!objects.some((candidate) => candidate.id !== object.id && connects(object, candidate))) {
       issues.push({ objectId: object.id, message: '来料站没有连接到物流入口' })
     }

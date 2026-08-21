@@ -1,11 +1,12 @@
 import { useMemo } from 'react'
 import * as THREE from 'three'
 import { useGLTF } from '@react-three/drei'
+import { CONVEYOR_CROSS_SECTION_SCALE } from './industrialVisualScale'
 
 const PATH = '/models/industrial/roller_conveyor_segment.glb'
 
 /** The normalized conveyor asset used by build-mode conveyor objects. */
-export function FormalConveyorSegment({ targetFootprint = 1.05, targetHeight = 0.52 }: { targetFootprint?: number; targetHeight?: number }) {
+export function FormalConveyorSegment({ targetFootprint = 1.05, targetHeight = 0.52, crossSectionScale = CONVEYOR_CROSS_SECTION_SCALE }: { targetFootprint?: number; targetHeight?: number; crossSectionScale?: number }) {
   const gltf = useGLTF(PATH)
   const normalized = useMemo(() => {
     const scene = gltf.scene.clone(true)
@@ -45,7 +46,7 @@ export function FormalConveyorSegment({ targetFootprint = 1.05, targetHeight = 0
     return scene
   }, [gltf, targetFootprint, targetHeight])
 
-  return <primitive object={normalized} />
+  return <group scale={[1, crossSectionScale, crossSectionScale]}><primitive object={normalized} /></group>
 }
 
 useGLTF.preload(PATH)

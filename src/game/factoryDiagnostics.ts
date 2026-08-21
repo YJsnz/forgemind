@@ -1,6 +1,6 @@
 import type { Recipe } from './item'
 import type { SimulationSnapshot } from './simulation'
-import { objectPortCells, occupiedCells } from './grid'
+import { objectCompatiblePortCells, occupiedCells } from './grid'
 import { cellKey } from './dir'
 import { objectRole, type FactoryFloorId, type FactoryObject } from './types'
 
@@ -48,6 +48,7 @@ export function diagnoseFactory(
   objects: FactoryObject[],
   snapshot: SimulationSnapshot,
   recipes: Recipe[],
+  floorCount = Math.max(3, ...objects.map((object) => object.floorId ?? 1)),
 ): FactoryDiagnosticState {
   const recipeIds = new Set(recipes.map((recipe) => recipe.id))
   const machines = objects.filter((object) => objectRole(object.type) === 'machine')
@@ -58,11 +59,11 @@ export function diagnoseFactory(
   const blockedSources = snapshot.sources.filter((source) => source.state === 'blocked').length
   const sourceObjects = objects.filter((object) => object.type === 'source' && object.itemId)
   const disconnectedSourcesByFloor = new Map<number, number>()
-  const disconnectedSourceIds = new Set(sourceObjects.filter((source) => !objectPortCells(source, 'output').some((cell) => {
+  const disconnectedSourceIds = new Set(sourceObjects.filter((source) => !objectCompatiblePortCells(source, 'output').some((cell) => {
     const downstream = objectsByCell.get(diagnosticCellKey(source, cell.x, cell.z))
     if (!downstream) return false
     if ((downstream.floorId ?? 1) !== (source.floorId ?? 1)) return false
-    const inputCells = objectPortCells(downstream, 'input')
+    const inputCells = objectCompatiblePortCells(downstream, 'input')
     return inputCells.length === 0 || occupiedCells(source).some((occupied) => inputCells.some((input) => occupied.x === input.x && occupied.z === input.z))
   })).map((source) => {
     const floorId = source.floorId ?? 1
@@ -103,7 +104,7 @@ export function diagnoseFactory(
       ? '建议运行一次副本诊断，检查下游满载背压是否需要增加缓存或并行设备。'
       : '当前结构可以继续仿真；可用 Generative Factory 比较下一轮布局。'
 
-  const floors = ([1, 2, 3] as FactoryFloorId[]).map((floorId): FactoryFloorDiagnostic => {
+  const floors = Array.from({ length: Math.max(1, floorCount) }, (_, index) => index + 1).map((floorId): FactoryFloorDiagnostic => {
     const floorObjects = objects.filter((object) => (object.floorId ?? 1) === floorId)
     const floorMachines = floorObjects.filter((object) => objectRole(object.type) === 'machine')
     const floorMachineIds = new Set(floorMachines.map((machine) => machine.id))
@@ -113,7 +114,7 @@ export function diagnoseFactory(
     const floorDisconnectedSources = sourceObjects.filter((source) => (source.floorId ?? 1) === floorId && disconnectedSourceIds.has(source.id)).length
     const floorBlockedSources = floorSourcesRuntime.filter((source) => source.state === 'blocked').length
     const floorBackpressureSources = floorSourcesRuntime.filter((source) => source.state === 'blocked' && !disconnectedSourceIds.has(source.objectId)).length
-    const floorStats = snapshot.floorStats[floorId]
+    const floorStats = snapshot.floorStats[floorId] ?? { consumed: {}, produced: {} }
     const floorLots = snapshot.itemLots.filter((lot) => lot.floorId === floorId).length
     const floorNoRecipeMachines = floorMachines.filter((machine) => !machine.recipeId || !recipeIds.has(machine.recipeId)).length
     const floorActiveMachines = floorMachinesRuntime.filter((machine) => machine.state === 'processing' || machine.state === 'output').length

@@ -1,4 +1,4 @@
-import { streamAssistant } from './api'
+import { streamAssistant, type AssistantReply } from './api'
 import { executeAssistantToolCall, getCurrentFactoryAssistantContext, type AssistantExecutionResult } from './assistantExecutor'
 import type { AssistantToolCall } from './assistantProtocol'
 
@@ -28,18 +28,24 @@ export async function requestAssistant(question: string): Promise<AssistantReque
     const speech = createSpeechQueue()
     let streamedText = ''
     let speechBuffer = ''
-    const reply = await streamAssistant(
-      prompt,
-      context as unknown as Record<string, unknown>,
-      (delta) => {
-        streamedText += delta
-        speechBuffer += delta
-        dispatchAssistantState({ phase: 'speaking', message: streamedText.trim().slice(-54) })
-        const extracted = extractSpeechFragments(speechBuffer)
-        speechBuffer = extracted.remainder
-        extracted.fragments.forEach((fragment) => speech.enqueue(fragment))
-      },
-    )
+    let reply: AssistantReply
+    try {
+      reply = await streamAssistant(
+        prompt,
+        context as unknown as Record<string, unknown>,
+        (delta) => {
+          streamedText += delta
+          speechBuffer += delta
+          dispatchAssistantState({ phase: 'speaking', message: streamedText.trim().slice(-54) })
+          const extracted = extractSpeechFragments(speechBuffer)
+          speechBuffer = extracted.remainder
+          extracted.fragments.forEach((fragment) => speech.enqueue(fragment))
+        },
+      )
+    } catch {
+      reply = createBuiltInRuleReply(prompt)
+      dispatchAssistantState({ phase: 'speaking', message: reply.answer })
+    }
     let execution: AssistantExecutionResult | null = null
     let pendingConfirmation: AssistantToolCall | null = null
 
@@ -50,10 +56,10 @@ export async function requestAssistant(question: string): Promise<AssistantReque
       execution = { status: 'rejected', answer: reply.note || '动作未通过安全校验。' }
     }
 
-    const answer = execution?.status === 'rejected' ? execution.answer : reply.answer
-    if (execution?.status === 'rejected') {
+    const answer = execution?.answer ?? reply.answer
+    if (execution) {
       speechBuffer = ''
-      speech.enqueue(execution.answer)
+      speech.enqueue(answer)
     } else if (streamedText.trim()) {
       const tail = speechBuffer.trim()
       if (tail) speech.enqueue(tail)
@@ -63,9 +69,40 @@ export async function requestAssistant(question: string): Promise<AssistantReque
     await speech.finish()
     return { answer, execution, pendingConfirmation }
   } catch (error) {
-    const message = error instanceof Error ? error.message : '本地智能服务不可用。'
+    const message = error instanceof Error ? error.message : '智能助手暂不可用。'
     dispatchAssistantState({ phase: 'error', message })
     throw error
+  }
+}
+
+function createBuiltInRuleReply(question: string): AssistantReply {
+  const normalized = question.toLowerCase().replace(/\s+/gu, '')
+  let action: AssistantToolCall | null = null
+
+  if (['重置仿真', '重新开始', '清空进度'].some((word) => normalized.includes(word))) {
+    action = { protocolVersion: '1.0.0', name: 'reset_simulation', arguments: {} }
+  } else {
+    const speedMatch = normalized.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:倍|x)/u)
+    if (speedMatch && ['倍率', '倍速', '速度', '调到', '设置'].some((word) => normalized.includes(word))) {
+      action = { protocolVersion: '1.0.0', name: 'set_simulation_speed', arguments: { speed: Number(speedMatch[1]) } }
+    } else if (['暂停仿真', '停止仿真', '暂停生产'].some((word) => normalized.includes(word))) {
+      action = { protocolVersion: '1.0.0', name: 'set_simulation_running', arguments: { running: false } }
+    } else if (['启动仿真', '开始仿真', '开始生产', '继续仿真'].some((word) => normalized.includes(word))) {
+      action = { protocolVersion: '1.0.0', name: 'set_simulation_running', arguments: { running: true } }
+    } else if (['工厂状态', '运行情况', '生产情况', '累计产出', '在途物料'].some((word) => normalized.includes(word))) {
+      action = { protocolVersion: '1.0.0', name: 'query_factory_status', arguments: {} }
+    }
+  }
+
+  const validSpeed = action?.name !== 'set_simulation_speed' || (action.arguments.speed >= 0.1 && action.arguments.speed <= 4)
+  return {
+    answer: action ? '规则助手已识别工厂操作。' : '规则助手已就绪。可查询工厂状态、启停仿真、调整倍率或发起重置确认。',
+    source: 'rule',
+    note: '浏览器规则模式，不需要本地部署大语言模型。',
+    protocolVersion: '1.0.0',
+    action,
+    validated: Boolean(action && validSpeed),
+    requiresConfirmation: action?.name === 'reset_simulation',
   }
 }
 

@@ -1,15 +1,17 @@
 """
-ForgeMind AI 服务（FastAPI）—— 只做离线 AI / LLM 编排（补充设计 §5.1）。
+ForgeMind 可选智能服务（FastAPI）—— 规则助手、远程 LLM、语音和视觉网关。
 
 职责边界（§5.2）：
 - 绝不进实时仿真链路（AGV/产能/瓶颈在 Java 引擎侧）。
-- 只暴露离线入口：AI 助手、未来方案评分。
+- 默认规则模式不依赖本地部署大模型；远程模型只能显式启用。
+- 只暴露辅助入口：受限助手、需求约束提取、语音和视觉网关。
 - 当前通过 HTTP 被前端调用；Redis Stream/Kafka 仅是未来多实例部署的异步通信方案。
 """
 import base64
 import io
 import json
 import os
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -30,14 +32,14 @@ with PROTOCOL_PATH.open("r", encoding="utf-8") as protocol_file:
 PROTOCOL_VERSION = TOOL_CATALOG["protocolVersion"]
 TOOL_NAMES = {tool["name"] for tool in TOOL_CATALOG["tools"]}
 TOOL_BY_NAME = {tool["name"]: tool for tool in TOOL_CATALOG["tools"]}
-OLLAMA_BASE_URL = os.getenv("FORGEMIND_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
-OLLAMA_MODEL = os.getenv("FORGEMIND_OLLAMA_MODEL", "qwen2.5:7b")
-OLLAMA_TIMEOUT_SEC = float(os.getenv("FORGEMIND_OLLAMA_TIMEOUT", "120"))
-OLLAMA_KEEP_ALIVE = os.getenv("FORGEMIND_OLLAMA_KEEP_ALIVE", "30m")
-LLM_PROVIDER = os.getenv("FORGEMIND_LLM_PROVIDER", "ollama").lower()
+LLM_PROVIDER = os.getenv("FORGEMIND_LLM_PROVIDER", "rule").lower()
+if LLM_PROVIDER not in {"rule", "deepseek"}:
+    LLM_PROVIDER = "rule"
+LLM_TIMEOUT_SEC = float(os.getenv("FORGEMIND_LLM_TIMEOUT", "45"))
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+VOICE_ENABLED = os.getenv("FORGEMIND_VOICE_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 TTS_BASE_URL = os.getenv("FORGEMIND_TTS_URL", "http://127.0.0.1:8001").rstrip("/")
 TTS_TIMEOUT_SEC = float(os.getenv("FORGEMIND_TTS_TIMEOUT", "45"))
 TTS_BACKEND = os.getenv("FORGEMIND_TTS_BACKEND", "bt").lower()
@@ -55,7 +57,7 @@ _asr_lock = threading.Lock()
 _fast_tts: Any = None
 _fast_tts_lock = threading.Lock()
 
-SYSTEM_PROMPT = """你是 ForgeMind 工厂的本地智能管家 BT-7274。
+SYSTEM_PROMPT = """你是 ForgeMind 工厂的智能管家 BT-7274。
 你称呼用户为“驾驶员”，语气沉稳、冷静、专业、简洁；对简短问候正常回应，不使用活泼语气词。
 你只能依据提供的工厂上下文回答，不得编造设备、配方、产量或运行状态。
 当用户要求查询或控制工厂时，使用工具调用；工具参数必须使用上下文中的真实字符串 ID，不要把自然语言编号当成 ID。
@@ -64,13 +66,12 @@ SYSTEM_PROMPT = """你是 ForgeMind 工厂的本地智能管家 BT-7274。
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Ollama 官方建议用空请求预加载模型。后台预热不会阻塞 AI 服务启动。
-    threading.Thread(target=preload_ollama, name="forgemind-ollama-preload", daemon=True).start()
-    threading.Thread(target=preload_asr, name="forgemind-asr-preload", daemon=True).start()
-    if TTS_BACKEND == "sherpa":
-        threading.Thread(target=preload_fast_tts, name="forgemind-tts-preload", daemon=True).start()
-    else:
-        threading.Thread(target=preload_bt_tts, name="forgemind-bt-tts-preload", daemon=True).start()
+    if VOICE_ENABLED:
+        threading.Thread(target=preload_asr, name="forgemind-asr-preload", daemon=True).start()
+        if TTS_BACKEND == "sherpa":
+            threading.Thread(target=preload_fast_tts, name="forgemind-tts-preload", daemon=True).start()
+        else:
+            threading.Thread(target=preload_bt_tts, name="forgemind-bt-tts-preload", daemon=True).start()
     yield
 
 
@@ -130,7 +131,7 @@ class FactorySpecRequest(BaseModel):
 
 class FactorySpecReply(BaseModel):
     spec: dict[str, Any]
-    source: Literal["deepseek", "qwen", "rule", "fallback"]
+    source: Literal["deepseek", "rule", "fallback"]
     note: str | None = None
 
 
@@ -141,8 +142,12 @@ def health() -> dict:
         "service": "forgemind-ai",
         "protocolVersion": PROTOCOL_VERSION,
         "tools": len(TOOL_NAMES),
-        "llm": {"provider": LLM_PROVIDER, "deepseekConfigured": bool(DEEPSEEK_API_KEY), "ollamaModel": OLLAMA_MODEL},
-        "ollama": {"url": OLLAMA_BASE_URL, "model": OLLAMA_MODEL, "available": ollama_available()},
+        "llm": {
+            "provider": LLM_PROVIDER,
+            "deepseekConfigured": bool(DEEPSEEK_API_KEY),
+            "localModelRequired": False,
+        },
+        "voiceEnabled": VOICE_ENABLED,
         "tts": {
             "backend": TTS_BACKEND,
             "model": str(TTS_MODEL_DIR) if TTS_BACKEND == "sherpa" else TTS_BASE_URL,
@@ -165,23 +170,15 @@ def factory_spec(req: FactorySpecRequest) -> FactorySpecReply:
     if not brief:
         return FactorySpecReply(spec=defaults, source="rule", note="需求为空，使用表单约束。")
 
+    if LLM_PROVIDER != "deepseek":
+        return FactorySpecReply(spec=defaults, source="rule", note="规则模式：使用前端已提取并校验的约束。")
+    if not DEEPSEEK_API_KEY:
+        return FactorySpecReply(spec=defaults, source="fallback", note="未配置 DeepSeek API Key，使用规则约束。")
     try:
-        if LLM_PROVIDER == "deepseek" and DEEPSEEK_API_KEY:
-            try:
-                raw = deepseek_factory_spec(brief, defaults)
-                return FactorySpecReply(spec=normalize_factory_spec(raw, defaults), source="deepseek", note="DeepSeek 已完成约束提取。")
-            except Exception as deepseek_exc:  # noqa: BLE001
-                # Keep local/offline demos useful when the remote provider is
-                # rate-limited, unavailable, or missing a compatible response.
-                try:
-                    raw = ollama_factory_spec(brief, defaults)
-                    return FactorySpecReply(spec=normalize_factory_spec(raw, defaults), source="qwen", note=f"DeepSeek 不可用，已切换本地 {OLLAMA_MODEL}。")
-                except Exception as ollama_exc:  # noqa: BLE001
-                    raise RuntimeError(f"DeepSeek 与本地 Qwen 均不可用：{deepseek_exc}; {ollama_exc}") from ollama_exc
-        raw = ollama_factory_spec(brief, defaults)
-        return FactorySpecReply(spec=normalize_factory_spec(raw, defaults), source="qwen", note=f"本地 {OLLAMA_MODEL} 已完成约束提取。")
+        raw = deepseek_factory_spec(brief, defaults)
+        return FactorySpecReply(spec=normalize_factory_spec(raw, defaults), source="deepseek", note="DeepSeek 已完成受限约束提取。")
     except Exception as exc:  # noqa: BLE001
-        return FactorySpecReply(spec=defaults, source="fallback", note=f"模型不可用，使用规则解析：{exc}")
+        return FactorySpecReply(spec=defaults, source="fallback", note=f"远程模型不可用，使用规则约束：{exc}")
 
 
 class AsrReply(BaseModel):
@@ -315,49 +312,16 @@ def synthesize_fast_tts(text: str, length_scale: float) -> bytes:
 
 @app.post("/api/ai/assistant", response_model=AssistantReply)
 def assistant(req: AssistantRequest) -> AssistantReply:
-    """调用本地千问，并把工具调用转换成 ForgeMind 1.0.0 动作信封。"""
+    """使用规则助手或显式配置的远程模型生成 ForgeMind 1.0.0 动作信封。"""
     question = req.question.strip()
     if not question:
         return fallback_reply("驾驶员，请告诉我需要检查或调整什么。", "问题不能为空。")
-
-    try:
-        message = ollama_chat(question, req.context or {})
-    except Exception as exc:  # noqa: BLE001
-        return fallback_reply(
-            "本地智能链路暂不可用，驾驶员。请检查 Ollama 服务。",
-            f"Ollama 调用失败：{exc}",
-        )
-
-    action = parse_tool_call(message.get("tool_calls"))
-    if action is None:
-        answer = clean_answer(message.get("content", "")) or "收到，驾驶员。当前没有需要执行的动作。"
-        return AssistantReply(
-            answer=answer,
-            source="llm",
-            note="本地千问文本回复",
-            protocolVersion=PROTOCOL_VERSION,
-            action=None,
-            validated=False,
-            requiresConfirmation=False,
-        )
-
-    valid, note = validate_action(action, req.context or {})
-    definition = TOOL_BY_NAME[action.name]
-    answer = clean_answer(message.get("content", "")) or action_ack(action)
-    return AssistantReply(
-        answer=answer,
-        source="llm",
-        note=note if not valid else "动作已通过服务端基础校验；前端执行层仍须再次校验。",
-        protocolVersion=PROTOCOL_VERSION,
-        action=action,
-        validated=valid,
-        requiresConfirmation=bool(definition.get("requiresConfirmation", False)),
-    )
+    return create_assistant_reply(question, req.context or {})
 
 
 @app.post("/api/ai/assistant/stream")
 def assistant_stream(req: AssistantRequest) -> StreamingResponse:
-    """把 Ollama NDJSON 原样转成前端可消费的增量事件，工具动作只在最终校验后发出。"""
+    """返回前端可消费的 NDJSON；工具动作只在最终校验后发出。"""
     question = req.question.strip()
     if not question:
         reply = fallback_reply("驾驶员，请告诉我需要检查或调整什么。", "问题不能为空。")
@@ -372,65 +336,11 @@ def assistant_stream(req: AssistantRequest) -> StreamingResponse:
     )
 
 
-def ollama_available() -> bool:
-    try:
-        request = urllib.request.Request(f"{OLLAMA_BASE_URL}/api/tags", method="GET")
-        with urllib.request.urlopen(request, timeout=2) as response:
-            return response.status == 200
-    except (OSError, urllib.error.URLError):
-        return False
-
-
-def preload_ollama() -> None:
-    """在 ai-service 启动后立即加载千问，消除首次指令的模型装载等待。"""
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": [],
-        "stream": False,
-        "keep_alive": OLLAMA_KEEP_ALIVE,
-    }
-    try:
-        with post_ollama(payload, timeout=OLLAMA_TIMEOUT_SEC) as response:
-            response.read()
-    except Exception:
-        # Ollama 可独立晚于 ai-service 启动，预热失败不能阻止服务可用。
-        return
-
-
-def ollama_chat(question: str, context: dict[str, Any]) -> dict[str, Any]:
-    with post_ollama(ollama_payload(question, context, stream=False), timeout=OLLAMA_TIMEOUT_SEC) as response:
-        result = json.loads(response.read().decode("utf-8"))
-    message = result.get("message")
-    if not isinstance(message, dict):
-        raise ValueError("Ollama 返回缺少 message")
-    return message
-
-
 FACTORY_SPEC_PROMPT = """你是 ForgeMind 的工厂需求解析器。
 只从用户需求中提取生产约束，不设计机器、不生成布局、不解释过程。
 必须只返回 JSON 对象，字段只能是：product、targetThroughputPerHour、floorWidth、floorDepth、cncLimit、agvLimit、objective。
 objective 只能是 balanced、throughput、energy；缺失字段沿用默认值。
 """
-
-
-def ollama_factory_spec(brief: str, defaults: dict[str, Any]) -> dict[str, Any]:
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": [
-            {"role": "system", "content": FACTORY_SPEC_PROMPT},
-            {"role": "user", "content": json.dumps({"defaults": defaults, "brief": brief}, ensure_ascii=False)},
-        ],
-        "format": "json",
-        "stream": False,
-        "keep_alive": OLLAMA_KEEP_ALIVE,
-        "options": {"num_predict": 160, "num_ctx": 2048, "temperature": 0.05},
-    }
-    with post_ollama(payload, timeout=OLLAMA_TIMEOUT_SEC) as response:
-        result = json.loads(response.read().decode("utf-8"))
-    message = result.get("message")
-    if not isinstance(message, dict):
-        raise ValueError("Ollama 需求解析缺少 message")
-    return parse_json_object(message.get("content"))
 
 
 def deepseek_factory_spec(brief: str, defaults: dict[str, Any]) -> dict[str, Any]:
@@ -452,7 +362,7 @@ def deepseek_factory_spec(brief: str, defaults: dict[str, Any]) -> dict[str, Any
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=OLLAMA_TIMEOUT_SEC) as response:
+    with urllib.request.urlopen(request, timeout=LLM_TIMEOUT_SEC) as response:
         result = json.loads(response.read().decode("utf-8"))
     choices = result.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
@@ -505,68 +415,125 @@ def clamp_number(value: Any, fallback: float, minimum: float, maximum: float) ->
     return max(minimum, min(maximum, number))
 
 
-def iter_assistant_events(question: str, context: dict[str, Any]):
-    content_parts: list[str] = []
-    raw_tool_calls: Any = None
-    try:
-        with post_ollama(ollama_payload(question, context, stream=True), timeout=OLLAMA_TIMEOUT_SEC) as response:
-            for raw_line in response:
-                if not raw_line.strip():
-                    continue
-                chunk = json.loads(raw_line.decode("utf-8"))
-                message = chunk.get("message")
-                if not isinstance(message, dict):
-                    continue
-                content = message.get("content")
-                if isinstance(content, str) and content:
-                    content_parts.append(content)
-                    yield stream_event("delta", text=content)
-                calls = message.get("tool_calls")
-                if isinstance(calls, list) and calls:
-                    raw_tool_calls = calls
-
-        action = parse_tool_call(raw_tool_calls)
-        answer = clean_answer("".join(content_parts))
-        if action is None:
-            reply = AssistantReply(
-                answer=answer or "收到，驾驶员。当前没有需要执行的动作。",
-                source="llm",
-                note="本地千问流式文本回复",
-                protocolVersion=PROTOCOL_VERSION,
-                action=None,
-                validated=False,
-                requiresConfirmation=False,
-            )
-        else:
-            valid, note = validate_action(action, context)
-            definition = TOOL_BY_NAME[action.name]
-            reply = AssistantReply(
-                answer=answer or action_ack(action),
-                source="llm",
-                note=note if not valid else "动作已通过服务端基础校验；前端执行层仍须再次校验。",
-                protocolVersion=PROTOCOL_VERSION,
-                action=action,
-                validated=valid,
-                requiresConfirmation=bool(definition.get("requiresConfirmation", False)),
-            )
-        yield stream_event("done", reply=reply.model_dump(by_alias=True))
-    except Exception as exc:  # noqa: BLE001
-        yield stream_event("error", message=f"Ollama 流式调用失败：{exc}")
+def create_assistant_reply(question: str, context: dict[str, Any]) -> AssistantReply:
+    if LLM_PROVIDER == "deepseek" and DEEPSEEK_API_KEY:
+        try:
+            message = deepseek_assistant_message(question, context)
+            return assistant_reply_from_message(message, context)
+        except Exception as exc:  # noqa: BLE001
+            return rule_assistant_reply(question, context, f"远程模型不可用，已切换规则助手：{exc}")
+    return rule_assistant_reply(question, context, "规则助手不需要本地大语言模型。")
 
 
-def ollama_payload(question: str, context: dict[str, Any], *, stream: bool) -> dict[str, Any]:
+def deepseek_assistant_message(question: str, context: dict[str, Any]) -> dict[str, Any]:
     context_text = json.dumps(compact_model_context(context), ensure_ascii=False, separators=(",", ":"))
-    return {
-        "model": OLLAMA_MODEL,
+    payload = {
+        "model": DEEPSEEK_MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"工厂实时上下文：{context_text}\n\n驾驶员请求：{question}"},
         ],
-        "tools": ollama_tools(),
-        "stream": stream,
-        "keep_alive": OLLAMA_KEEP_ALIVE,
-        "options": {"num_predict": 96, "num_ctx": 4096, "temperature": 0.15},
+        "tools": llm_tools(),
+        "tool_choice": "auto",
+        "stream": False,
+        "temperature": 0.15,
+        "max_tokens": 240,
     }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        f"{DEEPSEEK_BASE_URL}/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=LLM_TIMEOUT_SEC) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    choices = result.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise ValueError("DeepSeek 助手响应缺少 choices")
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        raise ValueError("DeepSeek 助手响应缺少 message")
+    return message
+
+
+def assistant_reply_from_message(message: dict[str, Any], context: dict[str, Any]) -> AssistantReply:
+    action = parse_tool_call(message.get("tool_calls"))
+    if action is None:
+        return AssistantReply(
+            answer=clean_answer(message.get("content", "")) or "收到，驾驶员。当前没有需要执行的动作。",
+            source="llm",
+            note="远程模型文本回复",
+            protocolVersion=PROTOCOL_VERSION,
+            action=None,
+            validated=False,
+            requiresConfirmation=False,
+        )
+    valid, note = validate_action(action, context)
+    definition = TOOL_BY_NAME[action.name]
+    return AssistantReply(
+        answer=clean_answer(message.get("content", "")) or action_ack(action),
+        source="llm",
+        note=note if not valid else "动作已通过服务端基础校验；前端执行层仍须再次校验。",
+        protocolVersion=PROTOCOL_VERSION,
+        action=action,
+        validated=valid,
+        requiresConfirmation=bool(definition.get("requiresConfirmation", False)),
+    )
+
+
+def rule_assistant_reply(question: str, context: dict[str, Any], note: str) -> AssistantReply:
+    normalized = "".join(question.lower().split())
+    action: AssistantToolCall | None = None
+    if any(word in normalized for word in ("重置仿真", "重新开始", "清空进度")):
+        action = AssistantToolCall(protocolVersion=PROTOCOL_VERSION, name="reset_simulation", arguments={})
+    else:
+        speed_match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*(?:倍|x)", normalized)
+        if speed_match and any(word in normalized for word in ("倍率", "倍速", "速度", "调到", "设置")):
+            action = AssistantToolCall(
+                protocolVersion=PROTOCOL_VERSION,
+                name="set_simulation_speed",
+                arguments={"speed": float(speed_match.group(1))},
+            )
+        elif any(word in normalized for word in ("暂停仿真", "停止仿真", "暂停生产")):
+            action = AssistantToolCall(protocolVersion=PROTOCOL_VERSION, name="set_simulation_running", arguments={"running": False})
+        elif any(word in normalized for word in ("启动仿真", "开始仿真", "开始生产", "继续仿真")):
+            action = AssistantToolCall(protocolVersion=PROTOCOL_VERSION, name="set_simulation_running", arguments={"running": True})
+        elif any(word in normalized for word in ("工厂状态", "运行情况", "生产情况", "累计产出", "在途物料")):
+            action = AssistantToolCall(protocolVersion=PROTOCOL_VERSION, name="query_factory_status", arguments={})
+
+    if action is None:
+        return AssistantReply(
+            answer="规则助手已就绪。可查询工厂状态、启动或暂停仿真、调整倍率，也可发起仿真重置确认。",
+            source="rule",
+            note=note,
+            protocolVersion=PROTOCOL_VERSION,
+            action=None,
+            validated=False,
+            requiresConfirmation=False,
+        )
+
+    valid, validation_note = validate_action(action, context)
+    definition = TOOL_BY_NAME[action.name]
+    return AssistantReply(
+        answer=action_ack(action),
+        source="rule",
+        note=validation_note if not valid else note,
+        protocolVersion=PROTOCOL_VERSION,
+        action=action,
+        validated=valid,
+        requiresConfirmation=bool(definition.get("requiresConfirmation", False)),
+    )
+
+
+def iter_assistant_events(question: str, context: dict[str, Any]):
+    try:
+        reply = create_assistant_reply(question, context)
+        if reply.answer:
+            yield stream_event("delta", text=reply.answer)
+        yield stream_event("done", reply=reply.model_dump(by_alias=True))
+    except Exception as exc:  # noqa: BLE001
+        yield stream_event("error", message=f"智能助手调用失败：{exc}")
 
 
 def compact_model_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -599,22 +566,11 @@ def compact_model_context(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def post_ollama(payload: dict[str, Any], *, timeout: float):
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(
-        f"{OLLAMA_BASE_URL}/api/chat",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    return urllib.request.urlopen(request, timeout=timeout)
-
-
 def stream_event(event_type: str, **payload: Any) -> bytes:
     return (json.dumps({"type": event_type, **payload}, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def ollama_tools() -> list[dict[str, Any]]:
+def llm_tools() -> list[dict[str, Any]]:
     return [
         {
             "type": "function",

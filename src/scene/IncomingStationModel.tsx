@@ -1,28 +1,35 @@
-import { Suspense, useRef } from 'react'
-import * as THREE from 'three'
-import { useFrame } from '@react-three/fiber'
+import { Suspense } from 'react'
 import { PandaArmModel } from './PandaArmModel'
 import { FormalConveyorSegment } from './FormalConveyorSegment'
 import type { SourceRuntimeSnapshot } from '../game/simulation'
+import {
+  BASE_CONVEYOR_CROSS_SECTION_SCALE,
+  NON_VEHICLE_BUILDING_VISUAL_SCALE,
+  SOURCE_EMBEDDED_CONVEYOR_FRONT_EDGE_LOCAL_X_M,
+  SOURCE_EMBEDDED_CONVEYOR_LOCAL_POSITION,
+} from './industrialVisualScale'
+import { LinearConveyorMotionStripes } from './ConveyorMotionStripes'
 
 interface IncomingStationModelProps {
   color: string
   accent: string
   active?: boolean
+  running?: boolean
   runtime?: SourceRuntimeSnapshot
+  stationMode?: 'pickup' | 'store'
   castShadows?: boolean
   suppressPanda?: boolean
   suppressConveyor?: boolean
 }
 
 /**
- * Incoming material is a compound station rather than a resource node:
- * the vehicle unloads on the left, the arm picks from that stack, and the
- * short roller belt carries the pallet out through the source output port.
+ * A compound cargo access station: three external rack docks share one arm
+ * and one lowered front conveyor, with the runtime selecting the real dock.
  */
-export function IncomingStationModel({ color, accent, active = false, runtime, castShadows = true, suppressPanda = false, suppressConveyor = false }: IncomingStationModelProps) {
+export function IncomingStationModel({ color, accent, active = false, running = false, runtime, stationMode = 'pickup', castShadows = true, suppressPanda = false, suppressConveyor = false }: IncomingStationModelProps) {
   const transferring = runtime?.state === 'picking' || runtime?.state === 'placing'
   const blocked = runtime?.state === 'blocked'
+  const mode = runtime?.mode ?? stationMode
 
   return (
     <group>
@@ -35,20 +42,24 @@ export function IncomingStationModel({ color, accent, active = false, runtime, c
         <meshStandardMaterial color="#b9c4be" roughness={0.52} metalness={0.34} />
       </mesh>
 
-      {/* The station exposes the near central lane of its 3x2 footprint. */}
-      <group position={[0.92, 0.17, -0.5]}>
+      {/* Final edge of the lowered embedded belt meets the 4x4 front dock. */}
+      <group position={SOURCE_EMBEDDED_CONVEYOR_LOCAL_POSITION}>
         {!suppressConveyor && (
-          <Suspense fallback={<FormalConveyorFallback color={color} accent={accent} />}>
-            <FormalConveyorSegment targetFootprint={1.05} targetHeight={0.52} />
+          <Suspense fallback={<FormalConveyorFallback color={color} />}>
+            <FormalConveyorSegment targetFootprint={1.05} targetHeight={0.52} crossSectionScale={BASE_CONVEYOR_CROSS_SECTION_SCALE} />
           </Suspense>
         )}
-        <ConveyorSignal active={active && transferring} accent={accent} />
+        {/* Cancel the station's outer 1.25x scale so the bars use the exact
+            same world-space height, width, density and speed as floor belts. */}
+        <group scale={1 / NON_VEHICLE_BUILDING_VISUAL_SCALE}>
+          <LinearConveyorMotionStripes running={running} length={1.2} direction={mode === 'store' ? -1 : 1} />
+        </group>
       </group>
 
-      <MaterialStack />
+      <RackTransferGuide side={runtime?.rackSide ?? 'back'} active={transferring} accent={accent} />
 
-      <group position={[-0.25, 0.18, -0.05]} scale={1.05}>
-        {!suppressPanda && <PandaArmModel behavior="infeed" active={active} progress={runtime?.progress ?? 0} castShadows={castShadows} />}
+      <group position={[-0.25, 0.18, -0.05]} scale={1.14}>
+        {!suppressPanda && <PandaArmModel behavior="infeed" active={active} running={running} progress={runtime?.progress ?? 0} rackSide={runtime?.rackSide ?? 'back'} reverse={mode === 'store'} castShadows={castShadows} />}
       </group>
 
       <mesh position={[-0.25, 0.205, -0.05]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -56,7 +67,7 @@ export function IncomingStationModel({ color, accent, active = false, runtime, c
         <meshBasicMaterial color={active ? accent : '#80918b'} transparent opacity={active ? 0.72 : 0.24} />
       </mesh>
 
-      <mesh position={[1.48, 0.27, -0.5]} castShadow>
+      <mesh position={[SOURCE_EMBEDDED_CONVEYOR_FRONT_EDGE_LOCAL_X_M, 0.27, SOURCE_EMBEDDED_CONVEYOR_LOCAL_POSITION[2]]} castShadow>
         <boxGeometry args={[0.1, 0.14, 0.58]} />
         <meshStandardMaterial color="#1a2825" roughness={0.66} metalness={0.42} />
       </mesh>
@@ -69,7 +80,7 @@ export function IncomingStationModel({ color, accent, active = false, runtime, c
   )
 }
 
-function FormalConveyorFallback({ color, accent }: { color: string; accent: string }) {
+function FormalConveyorFallback({ color }: { color: string }) {
   return <group>
     <mesh position={[0, 0.08, 0]} castShadow receiveShadow>
       <boxGeometry args={[1.05, 0.16, 0.72]} />
@@ -83,14 +94,6 @@ function FormalConveyorFallback({ color, accent }: { color: string; accent: stri
       <cylinderGeometry args={[0.055, 0.055, 0.58, 12]} />
       <meshStandardMaterial color="#a6b0aa" roughness={0.42} metalness={0.78} />
     </mesh>)}
-    <mesh position={[0.32, 0.25, 0]}>
-      <boxGeometry args={[0.14, 0.018, 0.42]} />
-      <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.28} />
-    </mesh>
-    <mesh position={[0.5, 0.25, 0]} rotation={[0, 0, -Math.PI / 2]}>
-      <coneGeometry args={[0.08, 0.16, 4]} />
-      <meshBasicMaterial color={accent} />
-    </mesh>
     <mesh position={[0, 0.26, 0]}>
       <boxGeometry args={[0.9, 0.012, 0.022]} />
       <meshBasicMaterial color={color} transparent opacity={0.28} />
@@ -98,39 +101,15 @@ function FormalConveyorFallback({ color, accent }: { color: string; accent: stri
   </group>
 }
 
-function ConveyorSignal({ active, accent }: { active: boolean; accent: string }) {
-  const ref = useRef<THREE.Mesh>(null)
-  useFrame(({ clock }) => {
-    if (!ref.current) return
-    const phase = (clock.getElapsedTime() * (active ? 1.8 : 0.3)) % 1
-    ref.current.position.x = -0.42 + phase * 0.84
-    ;(ref.current.material as THREE.MeshBasicMaterial).opacity = active ? 0.82 : 0.16
-  })
-  return <mesh ref={ref} position={[-0.42, 0.56, 0]}>
-    <boxGeometry args={[0.16, 0.018, 0.22]} />
-    <meshBasicMaterial color={accent} transparent opacity={active ? 0.8 : 0.18} />
+function RackTransferGuide({ side, active, accent }: { side: 'back' | 'left' | 'right'; active: boolean; accent: string }) {
+  const placement: Record<typeof side, { position: [number, number, number]; size: [number, number, number] }> = {
+    back: { position: [-1.52, 0.22, 0], size: [1.1, 0.025, 0.09] },
+    left: { position: [-0.18, 0.22, 1.52], size: [0.09, 0.025, 1.1] },
+    right: { position: [-0.18, 0.22, -1.52], size: [0.09, 0.025, 1.1] },
+  }
+  const guide = placement[side]
+  return <mesh position={guide.position}>
+    <boxGeometry args={guide.size} />
+    <meshBasicMaterial color={active ? accent : '#71817b'} transparent opacity={active ? 0.75 : 0.18} />
   </mesh>
-}
-
-function MaterialStack() {
-  return (
-    <group position={[-0.98, 0.21, 0.48]}>
-      <Crate position={[0, 0, 0]} color="#a87845" />
-      <Crate position={[0.27, 0, -0.04]} color="#b7844c" />
-      <Crate position={[0.12, 0.26, -0.02]} color="#c39356" />
-      <mesh position={[0.06, 0.42, 0.02]}>
-        <boxGeometry args={[0.48, 0.025, 0.58]} />
-        <meshStandardMaterial color="#e1b24b" emissive="#e1b24b" emissiveIntensity={0.12} />
-      </mesh>
-    </group>
-  )
-}
-
-function Crate({ position, color }: { position: [number, number, number]; color: string }) {
-  return (
-    <mesh position={position} castShadow receiveShadow>
-      <boxGeometry args={[0.42, 0.24, 0.42]} />
-      <meshStandardMaterial color={color} roughness={0.82} metalness={0.08} />
-    </mesh>
-  )
 }

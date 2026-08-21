@@ -1,3 +1,5 @@
+import type { ModelParameterValue } from '../game/item'
+
 export interface ForgeCoreModelRecord {
   id: string
   nameZh: string
@@ -8,7 +10,20 @@ export interface ForgeCoreModelRecord {
   parameterizationLevel: number
   description: string
   metrics?: { triangleCount?: number; vertexCount?: number }
-  defaultParameters?: Record<string, string | number | boolean | null>
+  defaultParameters?: Record<string, ModelParameterValue | null>
+  parameters?: Record<string, ForgeCoreParameterSchema>
+}
+
+export interface ForgeCoreParameterSchema {
+  type: 'number' | 'integer' | 'enum' | 'color' | 'boolean' | 'string'
+  default: ModelParameterValue
+  min?: number | null
+  max?: number | null
+  step?: number | null
+  unit?: string | null
+  options?: ModelParameterValue[] | null
+  affects?: string[]
+  activeWhen?: Record<string, ModelParameterValue> | null
 }
 
 export interface ForgeCoreModelCatalog {

@@ -1,6 +1,9 @@
 """
 ForgeMind 语音对话助手
-录音 → ASR → LLM(Ollama 本地) → TTS → 播放，全本地闭环。
+录音 → ASR → ForgeMind 可选智能服务 → TTS → 播放。
+
+智能服务默认使用规则模式，也可由服务端显式配置远程 DeepSeek；
+本控制台不安装、不启动也不直接访问本地大语言模型。
 
 用法：  ./venv/Scripts/python voice_chat.py
 交互：  按回车开始说话 → 说完再按回车 → 听它回答 → 循环。说「退出」结束。
@@ -21,28 +24,10 @@ import sherpa_onnx
 ASR_DIR = "models/sherpa-onnx-paraformer-zh-2023-09-14"
 TTS_DIR = "models/sherpa-onnx-vits-zh-ll"
 TTS_SID = int(os.getenv("FORGEMIND_TTS_SID", "1"))
-OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "qwen2.5:7b"
+ASSISTANT_URL = os.getenv("FORGEMIND_AI_URL", "http://127.0.0.1:8000/api/ai/assistant")
 SAMPLE_RATE = 16000
 BT_TTS_URL = "http://127.0.0.1:8001/tts"   # BT-7274 语音服务（Bert-VITS2）
 SILENCE_THRESHOLD = 0.01
-
-SYSTEM_PROMPT = (
-    "你是泰坦陨落2里的机甲AI BT-7274。说话必须像BT：沉稳、冷静、专业、极简，带一点机械式礼貌。"
-    "称呼用户为「驾驶员」。禁止「你好呀」「嗨」「哦」「呢」「啦」等活泼语气词，禁止寒暄客套。"
-    "每次回答不超过一句话（20字以内），直接说结论。\n\n"
-    "风格示例：\n"
-    "用户：你好\n"
-    "你：收到，驾驶员。需要什么帮助？\n"
-    "用户：今天辛苦了\n"
-    "你：收到，驾驶员。已记录你的付出。\n"
-    "用户：传送带好像卡住了\n"
-    "你：系统检测到传送带异常，建议排查。\n"
-    "用户：介绍一下你自己\n"
-    "你：我是BT七二七四，你的机甲AI，随时待命。\n"
-    "用户：把3号产线速度调到80%\n"
-    "你：收到，已调到80%。"
-)
 
 # ---------- 加载模型 ----------
 print("加载 ASR 模型…")
@@ -96,57 +81,16 @@ def transcribe(audio):
     return stream.result.text
 
 
-def ask_llm(messages):
-    body = json.dumps({"model": OLLAMA_MODEL, "messages": messages, "stream": False}, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(OLLAMA_URL, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.loads(resp.read().decode("utf-8"))["message"]["content"]
-
-
-def ask_llm_stream(messages, on_clause):
-    """流式调用 LLM，每攒出一个断句就回调 on_clause(子句)，返回完整回复。
-
-    断句符：。！？；，、和换行。子句一到就交给 TTS 播放，同时 LLM 继续生成，
-    从而把「生成+合成+播放」流水线化，显著缩短开口等待。
-    """
-    body = json.dumps({
-        "model": OLLAMA_MODEL,
-        "messages": messages,
-        "stream": True,
-        "options": {"num_predict": 100},
-    }, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(OLLAMA_URL, data=body, headers={"Content-Type": "application/json"})
-    full, buf = "", ""
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        for line in resp:
-            if not line.strip():
-                continue
-            chunk = json.loads(line.decode("utf-8"))
-            piece = chunk.get("message", {}).get("content", "")
-            full += piece
-            buf += piece
-            while buf:
-                cut = -1
-                for i, ch in enumerate(buf):
-                    if ch in "。！？；，、\n":
-                        cut = i
-                        break
-                if cut == -1:
-                    break
-                clause = buf[: cut + 1]
-                buf = buf[cut + 1:]
-                if clause.strip():
-                    on_clause(clause.strip())
-    if buf.strip():
-        on_clause(buf.strip())
-    return full
-
-
-def trim_history(messages, max_turns=6):
-    """只保留 system + 最近 max_turns 轮对话，防止历史无限膨胀拖慢生成。"""
-    keep = messages[:1]
-    keep.extend(messages[1:][-max_turns * 2:])
-    return keep
+def ask_assistant(question):
+    body = json.dumps({"question": question, "context": {}}, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        ASSISTANT_URL,
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+    return str(result.get("answer") or "规则助手没有返回文本。")
 
 
 def speak(text):
@@ -184,7 +128,6 @@ def _tts_worker(q):
 
 # ---------- 主循环 ----------
 def main():
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     tts_queue = queue.Queue()
     threading.Thread(target=_tts_worker, args=(tts_queue,), daemon=True).start()
     print("\n语音助手就绪！说「退出」结束。")
@@ -205,16 +148,8 @@ def main():
             print("再见！")
             break
 
-        messages = trim_history(messages)
-        messages.append({"role": "user", "content": text})
-
-        clauses = []
-        def on_clause(c):
-            clauses.append(c)
-            tts_queue.put(c)
-
-        reply = ask_llm_stream(messages, on_clause)
-        messages.append({"role": "assistant", "content": reply})
+        reply = ask_assistant(text)
+        tts_queue.put(reply)
         print(f"助手: {reply}")
         tts_queue.join()   # 等所有断句播完
         print()

@@ -2,14 +2,13 @@ import type { FactorySave } from './save'
 import type { AssistantToolCall, AssistantToolCatalog } from './assistantProtocol'
 
 /**
- * 后端 API 客户端（可选演进：接 Spring Boot 极薄后端）。
- *
- * 前端默认仍走本地 JSON 文件（7 天冲刺方案）；后端在线时可切换到
- * Spring Boot 的 /api/factory 读写。所有请求带超时，失败回退不阻塞 UI。
+ * 通用服务客户端。/api/factory 是旧版单工厂兼容接口；当前项目库使用
+ * src/api/factoryProjects.ts 的 /api/factories 多存档接口。
  */
 
 const SPRING_BASE = 'http://localhost:8080'
-const AI_BASE = 'http://localhost:8000'
+const AI_BASE = (import.meta.env.VITE_AI_BASE_URL as string | undefined) ?? 'http://localhost:8000'
+export const AI_SERVICE_ENABLED = import.meta.env.VITE_AI_ENABLED === 'true'
 
 function backendHeaders(): Record<string, string> {
   const token = localStorage.getItem('forgemind.token')
@@ -72,6 +71,7 @@ export async function askAssistant(
   question: string,
   context?: Record<string, unknown>,
 ): Promise<AssistantReply> {
+  if (!AI_SERVICE_ENABLED) throw new Error('可选智能服务未启用。')
   const res = await withTimeout(
     fetch(`${AI_BASE}/api/ai/assistant`, {
       method: 'POST',
@@ -89,14 +89,15 @@ type AssistantStreamEvent =
   | { type: 'done'; reply: AssistantReply }
   | { type: 'error'; message: string }
 
-/** 流式调用本地千问；文本 token 到达即回调，工具动作只从最终 reply 读取。 */
+/** 调用可选智能服务；工具动作只从最终 reply 读取。 */
 export async function streamAssistant(
   question: string,
   context: Record<string, unknown> | undefined,
   onDelta: (text: string) => void,
 ): Promise<AssistantReply> {
+  if (!AI_SERVICE_ENABLED) throw new Error('可选智能服务未启用。')
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 120_000)
+  const timer = setTimeout(() => controller.abort(), 60_000)
   try {
     const res = await fetch(`${AI_BASE}/api/ai/assistant/stream`, {
       method: 'POST',
@@ -141,6 +142,7 @@ export async function streamAssistant(
 
 /** 获取 ai-service 当前公开的版本化工具目录。 */
 export async function fetchAssistantToolCatalog(): Promise<AssistantToolCatalog> {
+  if (!AI_SERVICE_ENABLED) throw new Error('可选智能服务未启用。')
   const res = await withTimeout(fetch(`${AI_BASE}/api/ai/tools`))
   if (!res.ok) throw new Error(`AI 服务返回 ${res.status}`)
   return (await res.json()) as AssistantToolCatalog

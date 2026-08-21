@@ -1,11 +1,14 @@
-import { isTransportType, objectRole, type AgvProgram, type AgvRouteAction, type AgvRouteWaypoint, type FactoryFloorId, type FactoryObject } from './types'
+import { canReceiveVehicle, canSupplyVehicle, isStorageFacilityType, isTransportType, objectRole, type AgvProgram, type AgvRouteAction, type AgvRouteWaypoint, type FactoryFloorId, type FactoryObject } from './types'
 import type { Recipe } from './item'
 import { mulberry32 } from './rng'
 import { rotationToDir, cellKey } from './dir'
-import { objectPortCell, objectPortCells, objectToWorld, occupiedCells } from './grid'
+import { isCargoStorageRack, objectCompatiblePortCells, objectInterfacePortCells, objectPortCell, objectPortCells, objectToWorld, occupiedCells, stationRackConnections, type StationRackSide } from './grid'
 import { AGV_CENTER_CLEARANCE, AGV_NAV_RADIUS, agvDockCandidates, findAgvPath, type AgvDynamicObstacle, type AgvNavigationPoint } from './agvNavigation'
-import { WAREHOUSE_AGV_ROUTE } from './warehouse'
-import { DRONE_DOCK, DRONE_FLOOR_ELEVATIONS, FLOOR_DELIVERY_POINTS, getDroneRoute } from './droneNavigation'
+import { DRONE_HOVER_HEIGHT_M, DRONE_SEPARATION_M, findDronePath, type DroneDynamicObstacle, type DroneNavigationPoint } from './dronePathfinding'
+import { FLOOR_HEIGHT_M, MAX_FACTORY_FLOORS } from './floorConfig'
+import { inclineEndCell, inclineInputCell, inclineStartCell, inclineStartFloor, inclineTargetFloor, inclineTravelLength, isInclineConveyorType } from './inclineConveyor'
+
+export type { DroneNavigationPoint } from './dronePathfinding'
 
 /**
  * 仿真引擎（补充设计 §3 内核）—— 唯一真相源。
@@ -34,6 +37,7 @@ export const CONVEYOR_SPEED = 2
 /** source 产出间隔（秒） */
 export const SOURCE_INTERVAL = 1.0
 export const SOURCE_TRANSFER_TIME = 1.2
+export const DEFAULT_RACK_INITIAL_STOCK = 24
 
 const floorCellKey = (floorId: FactoryFloorId | undefined, x: number, z: number): string => `${floorId ?? 1}:${cellKey(x, z)}`
 
@@ -50,6 +54,8 @@ export interface MachineRuntime {
   inputBuffer: Record<string, number>
   /** 累计加工时间（秒），用于利用率统计 */
   processingTime: number
+  outputCursor: number
+  outputQueue: string[]
 }
 
 /** 在途物品实例（§3.4 ItemLot） */
@@ -72,11 +78,7 @@ export interface SimStats {
 export type FloorSimStats = Record<FactoryFloorId, SimStats>
 
 function createFloorStats(): FloorSimStats {
-  return {
-    1: { consumed: {}, produced: {} },
-    2: { consumed: {}, produced: {} },
-    3: { consumed: {}, produced: {} },
-  }
+  return Object.fromEntries(Array.from({ length: MAX_FACTORY_FLOORS }, (_, index) => [index + 1, { consumed: {}, produced: {} }]))
 }
 
 /** 快照：前端消费的最小接口 */
@@ -84,6 +86,7 @@ export interface SimulationSnapshot {
   timeSec: number
   machines: MachineRuntime[]
   sources: SourceRuntimeSnapshot[]
+  racks: RackRuntimeSnapshot[]
   itemLots: ItemLot[]
   agvs: AgvRuntimeSnapshot[]
   drones: DroneRuntimeSnapshot[]
@@ -98,6 +101,18 @@ export interface SourceRuntimeSnapshot {
   itemId: string | null
   state: SourceState
   progress: number
+  mode?: 'pickup' | 'store'
+  rackSide?: 'back' | 'left' | 'right'
+  rackObjectId?: string | null
+  rackConnections?: Partial<Record<StationRackSide, string>>
+  inventory?: Record<string, number>
+}
+
+export interface RackRuntimeSnapshot {
+  objectId: string
+  inventory: Record<string, number>
+  kind: 'rack' | 'inbound' | 'outbound'
+  capacity: number | null
 }
 
 interface SourceRuntime {
@@ -107,6 +122,11 @@ interface SourceRuntime {
   timer: number
   transferTimer: number
   state: SourceState
+  mode: 'pickup' | 'store'
+  rackSide: 'back' | 'left' | 'right'
+  rackObjectId: string | null
+  rackAssignments: Record<string, 'back' | 'left' | 'right'>
+  pendingItemId: string | null
 }
 
 interface ConveyorRuntime {
@@ -138,14 +158,8 @@ export interface AgvRuntimeSnapshot {
   currentWaypointLabel: string
 }
 
-export type DronePhase = 'parked' | 'taxi-to-lift' | 'ascending' | 'perimeter' | 'to-input' | 'returning'
+export type DronePhase = 'parked' | 'to-source' | 'to-destination' | 'returning'
 export type DroneMotionStatus = 'idle' | 'moving' | 'waiting'
-
-export interface DroneNavigationPoint {
-  x: number
-  y: number
-  z: number
-}
 
 export interface DroneRuntimeSnapshot {
   objectId: string
@@ -155,7 +169,7 @@ export interface DroneRuntimeSnapshot {
   motionStatus: DroneMotionStatus
   path: DroneNavigationPoint[]
   waypointIndex: number
-  targetFloor: 2 | 3
+  targetFloor: FactoryFloorId
   deliveryPointIndex: number
   cargoItemId: string | null
   cargoQuantity: number
@@ -197,16 +211,21 @@ interface DroneRuntime {
   path: DroneNavigationPoint[]
   pathLabels: string[]
   waypointIndex: number
-  targetFloor: 2 | 3
+  targetFloor: FactoryFloorId
   deliveryPointIndex: number
   cargoItemId: string | null
   cargoQuantity: number
   completedTrips: number
   distanceTravelled: number
   holdSeconds: number
+  retryTimer: number
+  targetObjectId: string | null
+  program: AgvProgram | null
+  currentWaypointLabel: string
 }
 
 interface AgvMissionTarget {
+  objectId: string | null
   position: AgvNavigationPoint
   candidates?: AgvNavigationPoint[]
   kind: 'warehouse' | 'line-side' | 'source' | 'destination'
@@ -226,6 +245,8 @@ export class SimulationEngine {
   private agvs = new Map<string, AgvRuntime>()
   private drones = new Map<string, DroneRuntime>()
   private sources = new Map<string, SourceRuntime>()
+  private rackInventories = new Map<string, Record<string, number>>()
+  private rackCapacities = new Map<string, number>()
   private recipes = new Map<string, Recipe>()
   /** cellKey -> FactoryObject（用于查下游） */
   private objectByCell = new Map<string, FactoryObject>()
@@ -253,17 +274,31 @@ export class SimulationEngine {
     this.agvs.clear()
     this.drones.clear()
     this.sources.clear()
+    this.rackInventories.clear()
+    this.rackCapacities.clear()
     this.recipes.clear()
     this.objectByCell.clear()
     this.objectById.clear()
     this.lotCounter = 0
     this.factoryObjects = objects
 
-    for (const r of recipes) this.recipes.set(r.id, r)
+    for (const r of recipes) if (r.enabled !== false) this.recipes.set(r.id, r)
 
     for (const o of objects) {
-      for (const cell of occupiedCells(o)) {
-        this.objectByCell.set(floorCellKey(o.floorId, cell.x, cell.z), o)
+      if (isCargoStorageRack(o)) {
+        const configured = o.storageConfig?.initialInventory
+        this.rackInventories.set(o.id, configured ? { ...configured } : o.itemId ? { [o.itemId]: DEFAULT_RACK_INITIAL_STOCK } : {})
+        this.rackCapacities.set(o.id, Math.max(1, Math.round(o.storageConfig?.capacity ?? 100)))
+      } else if (o.type === 'inboundWarehouse' || o.type === 'outboundWarehouse') {
+        this.rackInventories.set(o.id, {})
+      }
+      if (isInclineConveyorType(o.type) && o.incline) {
+        const start = inclineStartCell(o)
+        this.objectByCell.set(floorCellKey(inclineStartFloor(o), start.x, start.z), o)
+      } else {
+        for (const cell of occupiedCells(o)) {
+          this.objectByCell.set(floorCellKey(o.floorId, cell.x, cell.z), o)
+        }
       }
       this.objectById.set(o.id, o)
       if (objectRole(o.type, o.resourceId) === 'machine') {
@@ -274,6 +309,8 @@ export class SimulationEngine {
           recipeId: o.recipeId ?? null,
           inputBuffer: {},
           processingTime: 0,
+          outputCursor: 0,
+          outputQueue: [],
         })
       } else if (o.type === 'agv') {
         this.agvs.set(o.id, createAgvRuntime(o))
@@ -281,13 +318,18 @@ export class SimulationEngine {
         this.drones.set(o.id, createDroneRuntime(o))
       } else if (isTransportType(o.type, o.resourceId)) {
         this.conveyors.set(o.id, { objectId: o.id, lot: null, branchCursor: 0 })
-      } else if (objectRole(o.type, o.resourceId) === 'source') {
+      } else if (objectRole(o.type, o.resourceId) === 'source' || o.type === 'inboundWarehouse') {
         this.sources.set(o.id, {
           objectId: o.id,
           itemId: o.itemId ?? null,
           timer: 0,
           transferTimer: 0,
           state: 'idle',
+          mode: o.stationProgram?.mode ?? 'pickup',
+          rackSide: 'back',
+          rackObjectId: null,
+          rackAssignments: { ...o.stationProgram?.rackAssignments },
+          pendingItemId: null,
         })
       }
     }
@@ -317,22 +359,57 @@ export class SimulationEngine {
   // —— Source：定时产出到下游 ——
   private stepSources(dt: number): void {
     for (const s of this.sources.values()) {
-      if (!s.itemId) {
-        s.state = 'blocked'
-        s.transferTimer = 0
-        continue
-      }
-
       const srcObj = this.objectById.get(s.objectId)
       if (!srcObj) {
         s.state = 'blocked'
         s.transferTimer = 0
         continue
       }
+      s.mode = srcObj.stationProgram?.mode ?? 'pickup'
+      if (s.mode === 'store') {
+        if (!s.pendingItemId) { s.state = 'idle'; s.transferTimer = 0; continue }
+        const rackInventory = s.rackObjectId ? this.rackInventories.get(s.rackObjectId) : undefined
+        if (!rackInventory) { s.state = 'blocked'; continue }
+        s.transferTimer += dt
+        const progress = Math.min(s.transferTimer / SOURCE_TRANSFER_TIME, 1)
+        s.state = progress < 0.52 ? 'picking' : 'placing'
+        if (progress >= 1) {
+          const rackObject = s.rackObjectId ? this.objectById.get(s.rackObjectId) : undefined
+          if (!rackObject || this.depositIntoStorage(rackObject, s.pendingItemId, 1) !== 1) {
+            s.state = 'blocked'
+            continue
+          }
+          s.pendingItemId = null
+          s.rackObjectId = null
+          s.transferTimer = 0
+          s.state = 'idle'
+        }
+        continue
+      }
+      if (!s.itemId) {
+        s.state = 'blocked'
+        s.transferTimer = 0
+        continue
+      }
+
+      // A cargo access station is only a rack↔conveyor handler. It may output
+      // an item only when one of its real connected racks currently owns it.
+      // The inbound warehouse is the sole infinite conveyor source.
+      const rackConnection = srcObj.type === 'source' ? this.resolveRackConnection(s, srcObj, s.itemId, 'pickup') : null
+      if (srcObj.type === 'source' && !rackConnection) {
+        s.state = 'blocked'
+        s.transferTimer = 0
+        continue
+      }
+      if (rackConnection) {
+        s.rackSide = rackConnection.side
+        s.rackObjectId = rackConnection.rack.id
+      }
 
       if (s.transferTimer <= 0 && s.state !== 'picking' && s.state !== 'placing') {
         s.timer += dt
-        if (s.timer < SOURCE_INTERVAL) {
+        const interval = Math.max(0.25, Math.min(60, srcObj.stationProgram?.transferIntervalSec ?? SOURCE_INTERVAL))
+        if (s.timer < interval) {
           s.state = 'idle'
           continue
         }
@@ -340,7 +417,7 @@ export class SimulationEngine {
           s.state = 'blocked'
           continue
         }
-        s.timer -= SOURCE_INTERVAL
+        s.timer -= interval
         s.transferTimer = 0
       }
 
@@ -350,6 +427,11 @@ export class SimulationEngine {
       if (progress < 1) continue
 
       if (this.trySourceOutput(srcObj, s.itemId)) {
+        if (rackConnection) {
+          this.withdrawFromStorage(rackConnection.rack, s.itemId, 1)
+        } else if (srcObj.type === 'inboundWarehouse') {
+          this.withdrawFromStorage(srcObj, s.itemId, 1)
+        }
         s.transferTimer = 0
         s.state = 'idle'
       } else {
@@ -359,7 +441,7 @@ export class SimulationEngine {
   }
 
   private sourceDownstreams(srcObj: FactoryObject): FactoryObject[] {
-    return objectPortCells(srcObj, 'output')
+    return objectCompatiblePortCells(srcObj, 'output')
       .map((cell) => this.objectByCell.get(floorCellKey(srcObj.floorId, cell.x, cell.z)))
       .filter((obj): obj is FactoryObject => Boolean(obj))
       .filter((obj) => this.isConnected(srcObj, obj))
@@ -392,7 +474,7 @@ export class SimulationEngine {
       const obj = this.objectById.get(id)
       if (!obj) continue
 
-      lot.offset += step
+      lot.offset += isInclineConveyorType(obj.type) && obj.incline ? step / inclineTravelLength(obj) : step
 
       // 到达段末端 → 尝试进入下游
       if (lot.offset >= 1) {
@@ -401,16 +483,20 @@ export class SimulationEngine {
           continue
         }
         const dir = rotationToDir(obj.rotation)
-        const output = objectPortCell(obj, 'output') ?? { x: obj.pos.x + dir.dx, z: obj.pos.z + dir.dz }
+        const output = isInclineConveyorType(obj.type) && obj.incline
+          ? objectPortCell(obj, 'output') ?? inclineEndCell(obj)
+          : objectPortCell(obj, 'output') ?? { x: obj.pos.x + dir.dx, z: obj.pos.z + dir.dz }
         const nx = output.x
         const nz = output.z
-        const downstream = this.objectByCell.get(floorCellKey(obj.floorId, nx, nz))
+        const outputFloorId = isInclineConveyorType(obj.type) && obj.incline ? inclineTargetFloor(obj) : obj.floorId
+        const downstream = this.objectByCell.get(floorCellKey(outputFloorId, nx, nz))
+          ?? this.machineAtConnectedInput(obj, outputFloorId)
 
         let moved = false
         if (downstream && this.isConnected(obj, downstream) && isTransportType(downstream.type, downstream.resourceId)) {
           const dc = this.conveyors.get(downstream.id)
           if (dc && !dc.lot) {
-            dc.lot = this.makeLot(lot.itemId, downstream.id, lot.offset - 1)
+            dc.lot = this.makeLot(lot.itemId, downstream.id, lot.offset - 1, lot.id)
             c.lot = null
             moved = true
           }
@@ -419,14 +505,30 @@ export class SimulationEngine {
             c.lot = null
             moved = true
           }
-        } else if (!downstream) {
-          // 下游是空格 → 物品离开工厂（「出口」语义）
-          c.lot = null
-          moved = true
+        } else if (downstream && this.isConnected(obj, downstream) && objectRole(downstream.type, downstream.resourceId) === 'source') {
+          const station = this.sources.get(downstream.id)
+          if (station?.mode === 'store' && !station.pendingItemId) {
+            const connection = this.resolveRackConnection(station, downstream, lot.itemId, 'store')
+            if (connection) {
+              station.pendingItemId = lot.itemId
+              station.rackSide = connection.side
+              station.rackObjectId = connection.rack.id
+              station.transferTimer = 0
+              station.state = 'picking'
+              c.lot = null
+              moved = true
+            }
+          }
+        } else if (downstream?.type === 'outboundWarehouse' && this.isConnected(obj, downstream)) {
+          if (this.depositIntoStorage(downstream, lot.itemId, 1) === 1) {
+            c.lot = null
+            moved = true
+          }
         }
 
         if (!moved) {
-          // 下游满 → 头堵，停在末端（背压向后传播）
+          // 下游为空、断开或已满都视为头堵。只有明确的接收设备才能
+          // 消耗货物，不能再把未连接末端解释为“离开工厂”。
           lot.offset = 1
         }
       }
@@ -440,11 +542,12 @@ export class SimulationEngine {
     for (let offset = 0; offset < outputs.length; offset++) {
       const output = outputs[(start + offset) % outputs.length]
       const downstream = this.objectByCell.get(floorCellKey(obj.floorId, output.x, output.z))
+        ?? this.machineAtConnectedInput(obj, obj.floorId)
       if (!downstream || !this.isConnected(obj, downstream)) continue
       if (isTransportType(downstream.type, downstream.resourceId)) {
         const dc = this.conveyors.get(downstream.id)
         if (!dc || dc.lot) continue
-        dc.lot = this.makeLot(lot.itemId, downstream.id, lot.offset - 1)
+        dc.lot = this.makeLot(lot.itemId, downstream.id, lot.offset - 1, lot.id)
         c.branchCursor = (start + offset + 1) % outputs.length
         c.lot = null
         return true
@@ -476,15 +579,8 @@ export class SimulationEngine {
       case 'idle': {
         // 检查输入是否齐备
         if (this.inputsSatisfied(m, recipe)) {
-          // 消耗输入
-          const floorId = this.findMachineObject(m.objectId)?.floorId ?? 1
-          const floorStats = this.floorStats[floorId]
-          for (const p of recipe.inputs) {
-            this.stats.consumed[p.itemId] =
-              (this.stats.consumed[p.itemId] ?? 0) + p.qty
-            floorStats.consumed[p.itemId] =
-              (floorStats.consumed[p.itemId] ?? 0) + p.qty
-          }
+          // 机器内部转换不计入工厂边界消耗；只有从入货仓库
+          // 实际取出时才登记全局“消耗”。
           m.inputBuffer = {}
           m.state = 'loading'
           m.progress = 0
@@ -506,6 +602,7 @@ export class SimulationEngine {
         if (m.progress >= 1) {
           m.progress = 0
           m.state = 'output'
+          m.outputQueue = recipe.outputs.flatMap((output) => Array.from({ length: Math.max(1, Math.round(output.qty)) }, () => output.itemId))
         }
         break
 
@@ -553,45 +650,143 @@ export class SimulationEngine {
     return false
   }
 
-  /** 尝试从机器输出产物到下游。返回是否成功（成功则计入产出）。 */
+  /** 尝试从机器输出产物到下游。机器加工本身不登记工厂边界产出。 */
   private tryOutput(m: MachineRuntime, recipe: Recipe): boolean {
     // 若无产物（配方无输出），直接视为完成
     if (recipe.outputs.length === 0) return true
 
     const obj = this.findMachineObject(m.objectId)
     if (!obj) return false
-    const outputs = objectPortCells(obj, 'output')
-    const downstreams = outputs
+    const outputs = [...objectInterfacePortCells(obj, 'output'), ...objectPortCells(obj, 'output')]
+    const downstreams = Array.from(new Map(outputs
       .map((cell) => this.objectByCell.get(floorCellKey(obj.floorId, cell.x, cell.z)))
-      .filter((target): target is FactoryObject => Boolean(target))
-    const downstream = downstreams.find((target) => this.isConnected(obj, target))
-
-    const out = recipe.outputs[0] // MVP 单输出；多输出后续扩展
-
-    if (downstream && isTransportType(downstream.type, downstream.resourceId)) {
-      const dc = this.conveyors.get(downstream.id)
-      if (dc && !dc.lot) {
-        dc.lot = this.makeLot(out.itemId, downstream.id, 0)
-        this.recordProduced(m.objectId, recipe)
+      .filter((target): target is FactoryObject => target !== undefined && this.isConnected(obj, target))
+      .map((target) => [target.id, target])).values())
+    if (m.outputQueue.length === 0) {
+      return true
+    }
+    if (downstreams.length === 0) {
+      m.outputQueue = []
+      return true
+    }
+    const start = m.outputCursor % downstreams.length
+    for (let offset = 0; offset < downstreams.length; offset += 1) {
+      const index = (start + offset) % downstreams.length
+      const downstream = downstreams[index]
+      if (!isTransportType(downstream.type, downstream.resourceId)) continue
+      const conveyor = this.conveyors.get(downstream.id)
+      if (!conveyor || conveyor.lot) continue
+      conveyor.lot = this.makeLot(m.outputQueue.shift()!, downstream.id, 0)
+      m.outputCursor = (index + 1) % downstreams.length
+      if (m.outputQueue.length === 0) {
         return true
       }
-      return false // 下游传送带满 → 背压
+      return false
     }
-
-    // 下游无传送带 → 直接视为出口，计入产出
-    if (downstreams.length > 0 && !downstream) return false
-
-    this.recordProduced(m.objectId, recipe)
-    return true
+    return false
   }
 
-  private recordProduced(machineId: string, recipe: Recipe): void {
-    const floorId = this.findMachineObject(machineId)?.floorId ?? 1
-    const floorStats = this.floorStats[floorId]
-    for (const p of recipe.outputs) {
-      this.stats.produced[p.itemId] = (this.stats.produced[p.itemId] ?? 0) + p.qty
-      floorStats.produced[p.itemId] = (floorStats.produced[p.itemId] ?? 0) + p.qty
+  private rackTotal(objectId: string): number {
+    return Object.values(this.rackInventories.get(objectId) ?? {}).reduce((sum, quantity) => sum + quantity, 0)
+  }
+
+  private availableStorageCapacity(object: FactoryObject): number {
+    if (object.type === 'outboundWarehouse') return Number.POSITIVE_INFINITY
+    if (!isCargoStorageRack(object)) return 0
+    return Math.max(0, (this.rackCapacities.get(object.id) ?? 100) - this.rackTotal(object.id))
+  }
+
+  private recordBoundaryStat(object: FactoryObject, itemId: string, quantity: number, direction: 'consumed' | 'produced') {
+    if (quantity <= 0) return
+    this.stats[direction][itemId] = (this.stats[direction][itemId] ?? 0) + quantity
+    const floorStats = this.floorStats[object.floorId ?? 1]
+    floorStats[direction][itemId] = (floorStats[direction][itemId] ?? 0) + quantity
+  }
+
+  private withdrawFromStorage(object: FactoryObject, itemId: string, requested: number): number {
+    const quantity = Math.max(0, Math.round(requested))
+    if (quantity <= 0) return 0
+    if (object.type === 'inboundWarehouse') {
+      if (!object.itemId || object.itemId !== itemId) return 0
+      this.recordBoundaryStat(object, itemId, quantity, 'consumed')
+      return quantity
     }
+    if (!isCargoStorageRack(object)) return 0
+    const inventory = this.rackInventories.get(object.id)
+    if (!inventory) return 0
+    // “每趟数量”是完整装载契约。普通货架没有对应物品或数量不足
+    // 时整次取货阻塞，不允许凭空补货，也不产生半趟虚拟货物。
+    const available = inventory[itemId] ?? 0
+    if (available < quantity) return 0
+    const accepted = quantity
+    inventory[itemId] = Math.max(0, available - accepted)
+    if (inventory[itemId] <= 0) delete inventory[itemId]
+    return accepted
+  }
+
+  private depositIntoStorage(object: FactoryObject, itemId: string, requested: number): number {
+    const quantity = Math.max(0, Math.round(requested))
+    if (quantity <= 0) return 0
+    if (object.type === 'outboundWarehouse') {
+      const inventory = this.rackInventories.get(object.id)
+      if (!inventory) return 0
+      inventory[itemId] = (inventory[itemId] ?? 0) + quantity
+      this.recordBoundaryStat(object, itemId, quantity, 'produced')
+      return quantity
+    }
+    if (!isCargoStorageRack(object)) return 0
+    const inventory = this.rackInventories.get(object.id)
+    if (!inventory) return 0
+    const accepted = Math.min(quantity, this.availableStorageCapacity(object))
+    if (accepted <= 0) return 0
+    inventory[itemId] = (inventory[itemId] ?? 0) + accepted
+    return accepted
+  }
+
+  private storageItemQuantity(object: FactoryObject, itemId: string): number {
+    if (object.type === 'inboundWarehouse') return object.itemId === itemId ? Number.POSITIVE_INFINITY : 0
+    return this.rackInventories.get(object.id)?.[itemId] ?? 0
+  }
+
+  /** Inventory triggers gate only the departure of a new empty trip. */
+  private vehicleTripConditionsMet(program: AgvProgram): boolean {
+    if ((program.dispatchMode ?? 'continuous') !== 'threshold') return true
+    if (!program.itemId || !program.sourceObjectId || !program.destinationObjectId) return false
+    const source = this.objectById.get(program.sourceObjectId)
+    const destination = this.objectById.get(program.destinationObjectId)
+    if (!source || !destination || !canSupplyVehicle(source.type) || !canReceiveVehicle(destination.type)) return false
+    const sourceMinimum = Math.max(0, Math.round(program.sourceMinQuantity ?? program.loadQuantity))
+    const destinationMaximum = Math.max(0, Math.round(program.destinationMaxQuantity ?? 100))
+    return this.storageItemQuantity(source, program.itemId) >= sourceMinimum
+      && this.storageItemQuantity(destination, program.itemId) <= destinationMaximum
+  }
+
+  private resolveRackConnection(runtime: SourceRuntime, station: FactoryObject, itemId: string, mode: 'pickup' | 'store'): { side: StationRackSide; rack: FactoryObject } | null {
+    const connections = stationRackConnections(station, this.factoryObjects)
+    const configured = station.stationProgram?.rackAssignments[itemId]
+    const usable = (side: StationRackSide | undefined) => {
+      if (!side) return null
+      const rack = connections[side]
+      if (!rack) return null
+      if (mode === 'pickup' && (this.rackInventories.get(rack.id)?.[itemId] ?? 0) <= 0) return null
+      if (mode === 'store' && this.availableStorageCapacity(rack) <= 0) return null
+      return { side, rack }
+    }
+    if (configured) {
+      runtime.rackAssignments[itemId] = configured
+      return usable(configured)
+    }
+    if (mode === 'store') {
+      const existing = usable(runtime.rackAssignments[itemId])
+      if (existing) return existing
+    }
+    const candidates = (['back', 'left', 'right'] as const)
+      .map((side) => usable(side))
+      .filter((entry): entry is { side: StationRackSide; rack: FactoryObject } => Boolean(entry))
+    if (candidates.length === 0) return null
+    const connection = candidates[Math.floor(this.rng() * candidates.length)]
+    if (mode === 'store') runtime.rackAssignments[itemId] = connection.side
+    return connection
   }
 
   private stepAgvs(dt: number): void {
@@ -602,7 +797,8 @@ export class SimulationEngine {
         runtime.waypointIndex = 0
         runtime.motionStatus = 'idle'
         runtime.decision = 'idle'
-        runtime.currentWaypointLabel = '任务已停用'
+        const programReady = Boolean(runtime.program?.enabled && runtime.program.itemId && runtime.program.sourceObjectId && runtime.program.destinationObjectId)
+        runtime.currentWaypointLabel = programReady && !this.vehicleTripConditionsMet(runtime.program!) ? '等待库存条件' : '任务已停用'
         continue
       }
 
@@ -640,7 +836,12 @@ export class SimulationEngine {
           continue
         }
         const arrivedTarget = mission[runtime.routeIndex % mission.length]
-        this.applyAgvArrival(runtime, arrivedTarget)
+        if (!this.applyAgvArrival(runtime, arrivedTarget)) {
+          runtime.motionStatus = 'waiting'
+          runtime.decision = 'idle'
+          runtime.retryTimer = 0.5
+          continue
+        }
         runtime.routeIndex = (runtime.routeIndex + 1) % mission.length
         runtime.path = []
         runtime.waypointIndex = 0
@@ -745,7 +946,8 @@ export class SimulationEngine {
 
   private agvMission(runtime: AgvRuntime): AgvMissionTarget[] {
     const program = runtime.program
-    if (program && !program.enabled) return []
+    if (!program?.enabled || !program.itemId || !program.sourceObjectId || !program.destinationObjectId) return []
+    if (runtime.cargoQuantity <= 0 && runtime.path.length === 0 && runtime.routeIndex === 0 && !this.vehicleTripConditionsMet(program)) return []
     const source = program?.sourceObjectId ? this.objectById.get(program.sourceObjectId) : undefined
     const destination = program?.destinationObjectId ? this.objectById.get(program.destinationObjectId) : undefined
     if (program?.enabled && source && destination) {
@@ -756,19 +958,14 @@ export class SimulationEngine {
         this.missionTargetFromWaypoint({ id: 'destination', label: '终点卸货', objectId: destination.id, position: agvDockCandidates(destination)[0], action: 'unload' }),
       ]
     }
-    return WAREHOUSE_AGV_ROUTE.map((point, index) => ({
-      position: point.position,
-      kind: point.kind,
-      action: point.kind === 'warehouse' ? 'load' : 'unload',
-      label: point.label,
-      ...(index === 0 ? { candidates: [point.position] } : {}),
-    }))
+    return []
   }
 
   private missionTargetFromWaypoint(waypoint: AgvRouteWaypoint): AgvMissionTarget {
     const object = waypoint.objectId ? this.objectById.get(waypoint.objectId) : undefined
     const candidates = object ? agvDockCandidates(object) : undefined
     return {
+      objectId: waypoint.objectId,
       position: candidates?.[0] ?? waypoint.position,
       candidates,
       kind: waypoint.action === 'load' ? 'source' : waypoint.action === 'unload' ? 'destination' : 'line-side',
@@ -777,15 +974,32 @@ export class SimulationEngine {
     }
   }
 
-  private applyAgvArrival(runtime: AgvRuntime, target: AgvMissionTarget) {
+  private applyAgvArrival(runtime: AgvRuntime, target: AgvMissionTarget): boolean {
+    if (target.action === 'pass') return true
+    const storage = target.objectId ? this.objectById.get(target.objectId) : undefined
+    const itemId = runtime.program?.itemId
+    if (!storage || !itemId || !isStorageFacilityType(storage.type)) return false
     if (target.action === 'load') {
-      runtime.cargoItemId = runtime.program?.itemId ?? 'item_steel_blank'
-      runtime.cargoQuantity = runtime.program?.loadQuantity ?? 100
+      if (runtime.cargoQuantity > 0) return true
+      const loaded = this.withdrawFromStorage(storage, itemId, runtime.program?.loadQuantity ?? 1)
+      if (loaded <= 0) {
+        runtime.currentWaypointLabel = `${target.label} · 等待库存`
+        return false
+      }
+      runtime.cargoItemId = itemId
+      runtime.cargoQuantity = loaded
     } else if (target.action === 'unload') {
-      if (runtime.cargoQuantity > 0) runtime.completedTrips += 1
+      if (runtime.cargoQuantity <= 0 || !runtime.cargoItemId) return true
+      const unloaded = this.depositIntoStorage(storage, runtime.cargoItemId, runtime.cargoQuantity)
+      runtime.cargoQuantity -= unloaded
+      if (runtime.cargoQuantity > 0) {
+        runtime.currentWaypointLabel = `${target.label} · 等待容量`
+        return false
+      }
+      runtime.completedTrips += 1
       runtime.cargoItemId = null
-      runtime.cargoQuantity = 0
     }
+    return true
   }
 
   private dynamicObstaclesFor(runtime: AgvRuntime, includeLookahead = false): AgvDynamicObstacle[] {
@@ -881,16 +1095,63 @@ export class SimulationEngine {
 
   /** A transfer is valid only when the upstream output faces the downstream input. */
   private isConnected(upstream: FactoryObject, downstream: FactoryObject): boolean {
+    if (isInclineConveyorType(upstream.type) && upstream.incline) {
+      if (inclineTargetFloor(upstream) !== (downstream.floorId ?? 1)) return false
+      const end = inclineEndCell(upstream)
+      return objectCompatiblePortCells(downstream, 'input').some((input) => input.x === end.x && input.z === end.z)
+    }
+    if (isInclineConveyorType(downstream.type) && downstream.incline) {
+      if ((upstream.floorId ?? 1) !== inclineStartFloor(downstream)) return false
+      const input = inclineInputCell(downstream)
+      return occupiedCells(upstream).some((cell) => cell.x === input.x && cell.z === input.z)
+    }
     if ((upstream.floorId ?? 1) !== (downstream.floorId ?? 1)) return false
-    const inputCells = objectPortCells(downstream, 'input')
+    const upstreamRole = objectRole(upstream.type, upstream.resourceId)
+    const downstreamRole = objectRole(downstream.type, downstream.resourceId)
+    if (upstreamRole === 'machine') {
+      const downstreamCells = occupiedCells(downstream)
+      const connectedOutput = objectCompatiblePortCells(upstream, 'output')
+        .find((output) => downstreamCells.some((cell) => cell.x === output.x && cell.z === output.z))
+      if (!connectedOutput) return false
+      if (!isTransportType(downstream.type, downstream.resourceId)) return true
+      const centre = objectToWorld(upstream)
+      const beltDirection = rotationToDir(downstream.rotation)
+      return beltDirection.dx * (connectedOutput.x + 0.5 - centre.x)
+        + beltDirection.dz * (connectedOutput.z + 0.5 - centre.z) > 0
+    }
+    const inputCells = objectCompatiblePortCells(downstream, 'input')
+    if (downstreamRole === 'machine') {
+      const connectedInput = inputCells.find((input) => occupiedCells(upstream)
+        .some((cell) => cell.x === input.x && cell.z === input.z))
+      if (!connectedInput) return false
+      if (!isTransportType(upstream.type, upstream.resourceId)) return true
+      const machineCentre = objectToWorld(downstream)
+      const upstreamCentre = objectToWorld(upstream)
+      const direction = rotationToDir(upstream.rotation)
+      return direction.dx * (machineCentre.x - upstreamCentre.x)
+        + direction.dz * (machineCentre.z - upstreamCentre.z) > 0
+    }
     if (inputCells.length === 0) return true
     return occupiedCells(upstream).some((cell) => inputCells.some((input) => cell.x === input.x && cell.z === input.z))
   }
 
-  private makeLot(itemId: string, conveyorId: string, offset: number): ItemLot {
+  /** Resolve a machine whose visible/legacy inlet is occupied by this belt. */
+  private machineAtConnectedInput(upstream: FactoryObject, floorId: FactoryFloorId | undefined): FactoryObject | undefined {
+    const upstreamCells = occupiedCells(upstream)
+    return this.factoryObjects.find((candidate) => (
+      candidate.id !== upstream.id
+      && (candidate.floorId ?? 1) === (floorId ?? 1)
+      && objectRole(candidate.type, candidate.resourceId) === 'machine'
+      && objectCompatiblePortCells(candidate, 'input').some((input) => upstreamCells
+        .some((cell) => cell.x === input.x && cell.z === input.z))
+      && this.isConnected(upstream, candidate)
+    ))
+  }
+
+  private makeLot(itemId: string, conveyorId: string, offset: number, id?: string): ItemLot {
     const conveyor = this.objectById.get(conveyorId)
     return {
-      id: `lot_${this.lotCounter++}`,
+      id: id ?? `lot_${this.lotCounter++}`,
       itemId,
       conveyorId,
       floorId: conveyor?.floorId ?? 1,
@@ -903,25 +1164,143 @@ export class SimulationEngine {
   }
 
   private stepDrones(dt: number): void {
-    for (const runtime of this.drones.values()) {
-      if (runtime.phase === 'parked') {
+    const ordered = [...this.drones.values()].sort((left, right) => left.objectId.localeCompare(right.objectId))
+    for (const runtime of ordered) {
+      const endpoints = this.droneMissionEndpoints(runtime)
+      if (!endpoints) {
+        runtime.path = []
+        runtime.waypointIndex = 0
+        runtime.targetObjectId = null
+        runtime.phase = 'parked'
+        runtime.motionStatus = 'idle'
+        continue
+      }
+
+      runtime.holdSeconds = Math.max(0, runtime.holdSeconds - dt)
+      runtime.retryTimer = Math.max(0, runtime.retryTimer - dt)
+      if (runtime.holdSeconds > 0) {
         runtime.motionStatus = 'waiting'
-        runtime.holdSeconds -= dt
-        if (runtime.holdSeconds <= 0) {
-          const mission = buildDroneMission(runtime.targetFloor)
-          runtime.path = mission.points
-          runtime.pathLabels = mission.labels
-          runtime.waypointIndex = 1
-          runtime.deliveryPointIndex = 0
-          runtime.motionStatus = 'moving'
-          runtime.phase = 'taxi-to-lift'
+        continue
+      }
+
+      if (runtime.phase === 'to-source' && runtime.cargoQuantity <= 0 && runtime.path.length === 0 && !runtime.targetObjectId && !this.vehicleTripConditionsMet(runtime.program!)) {
+        runtime.motionStatus = 'waiting'
+        runtime.currentWaypointLabel = '等待库存条件'
+        continue
+      }
+
+      if (runtime.path.length === 0 || runtime.waypointIndex >= runtime.path.length) {
+        if (runtime.targetObjectId && !this.applyDroneArrival(runtime)) continue
+        if (runtime.holdSeconds > 0) continue
+        const destination = runtime.phase === 'to-destination' ? endpoints.destination : endpoints.source
+        const role = runtime.phase === 'to-destination' ? 'dropoff' as const : 'pickup' as const
+        if (runtime.retryTimer <= 0 && this.planDronePath(runtime, destination, role)) {
+          if (runtime.path.length <= 1 && runtime.targetObjectId) {
+            this.applyDroneArrival(runtime)
+          } else {
+            runtime.motionStatus = 'moving'
+          }
+        } else {
+          runtime.motionStatus = 'waiting'
+          runtime.retryTimer = 0.55
         }
         continue
       }
 
-      runtime.motionStatus = 'moving'
+      const target = runtime.path[runtime.waypointIndex]
+      const distance = Math.hypot(target.x - runtime.position.x, target.y - runtime.position.y, target.z - runtime.position.z)
+      const travel = Math.min(distance, DRONE_SPEED * dt)
+      const next = distance <= 0.0001 || travel >= distance
+        ? target
+        : {
+            x: runtime.position.x + (target.x - runtime.position.x) / distance * travel,
+            y: runtime.position.y + (target.y - runtime.position.y) / distance * travel,
+            z: runtime.position.z + (target.z - runtime.position.z) / distance * travel,
+          }
+      const blocker = ordered.find((other) => other.objectId !== runtime.objectId
+        && Math.hypot(other.position.x - next.x, other.position.y - next.y, other.position.z - next.z) < DRONE_SEPARATION_M)
+      if (blocker) {
+        runtime.motionStatus = 'waiting'
+        if (runtime.retryTimer <= 0) {
+          const destination = runtime.targetObjectId ? this.objectById.get(runtime.targetObjectId) : undefined
+          if (destination) this.planDronePath(runtime, destination, runtime.phase === 'to-destination' ? 'dropoff' : 'pickup')
+          runtime.retryTimer = 0.45
+        }
+        continue
+      }
+
       advanceDrone(runtime, dt)
     }
+  }
+
+  private droneMissionEndpoints(runtime: DroneRuntime): { source: FactoryObject; destination: FactoryObject } | null {
+    const program = runtime.program
+    if (!program?.enabled || !program.itemId || !program.sourceObjectId || !program.destinationObjectId) return null
+    const source = this.objectById.get(program.sourceObjectId)
+    const destination = this.objectById.get(program.destinationObjectId)
+    return source && destination ? { source, destination } : null
+  }
+
+  private planDronePath(runtime: DroneRuntime, destination: FactoryObject, role: 'pickup' | 'dropoff'): boolean {
+    const dynamicObstacles: DroneDynamicObstacle[] = [...this.drones.values()]
+      .filter((other) => other.objectId !== runtime.objectId && other.motionStatus !== 'idle')
+      .map((other) => ({ position: other.position, radius: DRONE_SEPARATION_M }))
+    const path = findDronePath(this.factoryObjects, runtime.position, destination, runtime.objectId, role, dynamicObstacles)
+      ?? findDronePath(this.factoryObjects, runtime.position, destination, runtime.objectId, role)
+    if (!path) return false
+    runtime.path = path
+    runtime.waypointIndex = Math.min(1, path.length)
+    runtime.targetObjectId = destination.id
+    runtime.targetFloor = destination.floorId ?? 1
+    runtime.pathLabels = path.map((_, index) => index === path.length - 1
+      ? `L${runtime.targetFloor} ${role === 'pickup' ? '取货点' : '卸货点'} / 对接`
+      : `三维自由航路 / 节点 ${String(index + 1).padStart(2, '0')}`)
+    runtime.motionStatus = path.length <= 1 ? 'waiting' : 'moving'
+    runtime.currentWaypointLabel = path.length <= 1
+      ? role === 'pickup' ? '已到取货点 · 执行装货' : '已到卸货点 · 执行卸货'
+      : role === 'pickup' ? '前往跨层起点' : '前往跨层终点'
+    return true
+  }
+
+  private applyDroneArrival(runtime: DroneRuntime): boolean {
+    const storage = runtime.targetObjectId ? this.objectById.get(runtime.targetObjectId) : undefined
+    const itemId = runtime.program?.itemId
+    if (!storage || !itemId || !isStorageFacilityType(storage.type)) return false
+    if (runtime.phase === 'to-destination') {
+      if (runtime.cargoQuantity > 0 && runtime.cargoItemId) {
+        const unloaded = this.depositIntoStorage(storage, runtime.cargoItemId, runtime.cargoQuantity)
+        runtime.cargoQuantity -= unloaded
+        if (runtime.cargoQuantity > 0) {
+          runtime.currentWaypointLabel = '卸货点 · 等待容量'
+          runtime.holdSeconds = 0.45
+          runtime.motionStatus = 'waiting'
+          return false
+        }
+        runtime.completedTrips += 1
+      }
+      runtime.cargoItemId = null
+      runtime.phase = 'to-source'
+      runtime.currentWaypointLabel = '卸货完成 · 返回取货'
+    } else {
+      const loaded = this.withdrawFromStorage(storage, itemId, runtime.program?.loadQuantity ?? 1)
+      if (loaded <= 0) {
+        runtime.currentWaypointLabel = '取货点 · 等待库存'
+        runtime.holdSeconds = 0.45
+        runtime.motionStatus = 'waiting'
+        return false
+      }
+      runtime.cargoItemId = itemId
+      runtime.cargoQuantity = loaded
+      runtime.phase = 'to-destination'
+      runtime.currentWaypointLabel = '装货完成 · 前往卸货'
+    }
+    runtime.path = []
+    runtime.pathLabels = []
+    runtime.waypointIndex = 0
+    runtime.targetObjectId = null
+    runtime.holdSeconds = 0.45
+    runtime.motionStatus = 'waiting'
+    return true
   }
 
   getSnapshot(): SimulationSnapshot {
@@ -932,12 +1311,33 @@ export class SimulationEngine {
     return {
       timeSec: this.timeSec,
       machines: Array.from(this.machines.values()).map((m) => ({ ...m })),
-      sources: Array.from(this.sources.values()).map((s) => ({
-        objectId: s.objectId,
-        itemId: s.itemId,
-        state: s.state,
-        progress: s.transferTimer > 0 ? Math.min(s.transferTimer / SOURCE_TRANSFER_TIME, 1) : 0,
-      })),
+      sources: Array.from(this.sources.values()).map((s) => {
+        const station = this.objectById.get(s.objectId)
+        const connections = station ? stationRackConnections(station, this.factoryObjects) : {}
+        const inventory: Record<string, number> = {}
+        Object.values(connections).forEach((rack) => {
+          if (!rack) return
+          Object.entries(this.rackInventories.get(rack.id) ?? {}).forEach(([itemId, quantity]) => {
+            inventory[itemId] = (inventory[itemId] ?? 0) + quantity
+          })
+        })
+        return {
+          objectId: s.objectId,
+          itemId: s.itemId,
+          state: s.state,
+          progress: s.transferTimer > 0 ? Math.min(s.transferTimer / SOURCE_TRANSFER_TIME, 1) : 0,
+          mode: s.mode,
+          rackSide: s.rackSide,
+          rackObjectId: s.rackObjectId,
+          rackConnections: Object.fromEntries(Object.entries(connections).map(([side, rack]) => [side, rack?.id])),
+          inventory,
+        }
+      }),
+      racks: Array.from(this.rackInventories.entries()).map(([objectId, inventory]) => {
+        const object = this.objectById.get(objectId)
+        const kind = object?.type === 'inboundWarehouse' ? 'inbound' as const : object?.type === 'outboundWarehouse' ? 'outbound' as const : 'rack' as const
+        return { objectId, inventory: { ...inventory }, kind, capacity: kind === 'rack' ? this.rackCapacities.get(objectId) ?? 100 : null }
+      }),
       itemLots: lots,
       agvs: Array.from(this.agvs.values()).map((runtime) => ({
         objectId: runtime.objectId,
@@ -970,24 +1370,22 @@ export class SimulationEngine {
         cargoQuantity: runtime.cargoQuantity,
         completedTrips: runtime.completedTrips,
         distanceTravelled: runtime.distanceTravelled,
-        currentWaypointLabel: runtime.pathLabels[runtime.waypointIndex] ?? 'L1 停机位 / 待命',
+        currentWaypointLabel: runtime.pathLabels[runtime.waypointIndex] ?? runtime.currentWaypointLabel,
       })),
       stats: {
         consumed: { ...this.stats.consumed },
         produced: { ...this.stats.produced },
       },
-      floorStats: {
-        1: { consumed: { ...this.floorStats[1].consumed }, produced: { ...this.floorStats[1].produced } },
-        2: { consumed: { ...this.floorStats[2].consumed }, produced: { ...this.floorStats[2].produced } },
-        3: { consumed: { ...this.floorStats[3].consumed }, produced: { ...this.floorStats[3].produced } },
-      },
+      floorStats: Object.fromEntries(Object.entries(this.floorStats).map(([floorId, stats]) => [floorId, {
+        consumed: { ...stats.consumed },
+        produced: { ...stats.produced },
+      }])),
     }
   }
 }
 
 const AGV_SPEED = 2.2
-const DRONE_SPEED = 8.5
-const DRONE_DOCK_HEIGHT = 1.45
+const DRONE_SPEED = 4.5
 
 function createAgvRuntime(object: FactoryObject): AgvRuntime {
   const position = objectToWorld(object)
@@ -1016,54 +1414,29 @@ function createAgvRuntime(object: FactoryObject): AgvRuntime {
 }
 
 function createDroneRuntime(object: FactoryObject): DroneRuntime {
+  const world = objectToWorld(object)
+  const floorId = object.floorId ?? 1
   return {
     objectId: object.id,
-    position: { x: DRONE_DOCK[0], y: DRONE_DOCK_HEIGHT, z: DRONE_DOCK[1] },
+    position: { x: world.x, y: (floorId - 1) * FLOOR_HEIGHT_M + DRONE_HOVER_HEIGHT_M, z: world.z },
     headingY: 0,
-    phase: 'parked',
+    phase: object.agvProgram?.enabled ? 'to-source' : 'parked',
     motionStatus: 'waiting',
-    path: [{ x: DRONE_DOCK[0], y: DRONE_DOCK_HEIGHT, z: DRONE_DOCK[1] }],
-    pathLabels: ['L1 停机位 / 待命'],
+    path: [],
+    pathLabels: [],
     waypointIndex: 0,
-    targetFloor: 2,
+    targetFloor: floorId,
     deliveryPointIndex: 0,
     cargoItemId: null,
     cargoQuantity: 0,
     completedTrips: 0,
     distanceTravelled: 0,
-    holdSeconds: 1.2,
+    holdSeconds: 0.35,
+    retryTimer: 0,
+    targetObjectId: null,
+    program: object.agvProgram ? { ...object.agvProgram } : null,
+    currentWaypointLabel: '等待运输任务',
   }
-}
-
-function buildDroneMission(targetFloor: 2 | 3): { points: DroneNavigationPoint[]; labels: string[] } {
-  const route = getDroneRoute(targetFloor, DRONE_FLOOR_ELEVATIONS[targetFloor]).map(([x, y, z], index) => ({
-    x,
-    y: index === 0 ? DRONE_DOCK_HEIGHT : y,
-    z,
-  }))
-  const hub = route[route.length - 1]
-  const points: DroneNavigationPoint[] = [route[0]]
-  const labels = ['L1 停机位 / 起飞']
-
-  route.slice(1).forEach((point, index) => {
-    points.push(point)
-    labels.push(index === 0 ? '东侧升降井 / 进站' : index === 1 ? `垂直上升 / L${targetFloor}` : `外围高位环线 / ${index < 5 ? '东侧—北侧' : '西侧—南侧'}`)
-  })
-
-  FLOOR_DELIVERY_POINTS[targetFloor].forEach(([x, z], index) => {
-    points.push({ x: hub.x, y: hub.y, z })
-    labels.push(`L${targetFloor} 输入点 0${index + 1} / 横向分流`)
-    points.push({ x, y: hub.y, z })
-    labels.push(`L${targetFloor} 输入点 0${index + 1} / 配送`)
-    points.push({ ...hub })
-    labels.push(`L${targetFloor} 物料枢纽 / 返回`)
-  })
-
-  route.slice(0, -1).reverse().forEach((point, index) => {
-    points.push(index === route.length - 2 ? { ...point, y: DRONE_DOCK_HEIGHT } : point)
-    labels.push(index === route.length - 2 ? 'L1 停机位 / 返航' : '返航 / 外围环线')
-  })
-  return { points, labels }
 }
 
 function advanceDrone(runtime: DroneRuntime, dt: number): void {
@@ -1097,30 +1470,7 @@ function advanceDrone(runtime: DroneRuntime, dt: number): void {
     }
   }
 
-  const label = runtime.pathLabels[runtime.waypointIndex] ?? 'L1 停机位 / 返航'
-  runtime.phase = dronePhaseFor(label)
-  const deliveryMatch = label.match(/输入点 0(\d)/)
-  if (deliveryMatch) runtime.deliveryPointIndex = Number(deliveryMatch[1]) - 1
-
   if (runtime.waypointIndex >= runtime.path.length) {
-    runtime.completedTrips += 1
-    runtime.targetFloor = runtime.targetFloor === 2 ? 3 : 2
-    runtime.phase = 'parked'
     runtime.motionStatus = 'waiting'
-    runtime.holdSeconds = 1.2
-    runtime.path = [{ x: DRONE_DOCK[0], y: DRONE_DOCK_HEIGHT, z: DRONE_DOCK[1] }]
-    runtime.pathLabels = ['L1 停机位 / 待命']
-    runtime.waypointIndex = 0
-    runtime.deliveryPointIndex = 0
-    runtime.position = { x: DRONE_DOCK[0], y: DRONE_DOCK_HEIGHT, z: DRONE_DOCK[1] }
   }
-}
-
-function dronePhaseFor(label: string): DronePhase {
-  if (label.includes('停机位')) return 'parked'
-  if (label.includes('升降井')) return 'taxi-to-lift'
-  if (label.includes('垂直上升')) return 'ascending'
-  if (label.includes('外围') || label.includes('返航')) return label.includes('返航') ? 'returning' : 'perimeter'
-  if (label.includes('输入点')) return 'to-input'
-  return 'perimeter'
 }

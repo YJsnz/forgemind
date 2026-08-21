@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Grid, PerformanceMonitor } from '@react-three/drei'
+import { OrbitControls, PerformanceMonitor } from '@react-three/drei'
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -14,10 +14,18 @@ import { preloadPandaArm } from './PandaArmModel'
 import { useForgeMindStore } from '../store/forgeMind'
 import { useAuthStore } from '../store/auth'
 import { DaiyuConveyorBatch, DaiyuEmbeddedModelBatch, DaiyuPandaBatch, DaiyuRuntime, DaiyuScenePrewarmer, DaiyuStaticModelBatch } from '../engine/daiyu'
-import type { BuildType, FactoryFloorId, FactoryObject } from '../game/types'
+import { canBatchAsGenericMachine, type BuildType, type FactoryFloorId, type FactoryObject } from '../game/types'
 import { AgvRouteVisual } from './AgvRouteVisual'
+import { BASE_CONVEYOR_CROSS_SECTION_SCALE, NON_VEHICLE_BUILDING_VISUAL_SCALE, SOURCE_EMBEDDED_CONVEYOR_LOCAL_POSITION } from './industrialVisualScale'
 import { WarehouseZone } from './WarehouseZone'
 import { FactoryFloorSystem, getFloorElevation, getObjectFloor } from './FactoryFloorSystem'
+import { inclineTouchesFloor, isInclineConveyorType, objectsTouchingFloor } from '../game/inclineConveyor'
+import { InclineConveyorMesh } from './InclineConveyorMesh'
+import { DroneRouteVisual } from './DroneRouteVisual'
+import { floorIsInteractive, floorObjectsVisible, gridVisibleOnFloor, inclineVisible } from '../game/floorVisibility'
+import { getFactoryFloors } from '../game/floorConfig'
+import { SelectionController } from './SelectionController'
+import { RackInventoryLabels } from './RackInventoryLabels'
 
 /**
  * 3D 工厂视口 —— 主画布。
@@ -27,6 +35,7 @@ import { FactoryFloorSystem, getFloorElevation, getObjectFloor } from './Factory
  * 相机控制（CameraRig/OrbitControls）仅在 factory 阶段挂载，避免与推镜抢相机。
  */
 export type FactoryView = 'overview' | 'build' | 'flow' | 'diagnostics'
+const DEFAULT_FACTORY_FLOORS: FactoryFloorId[] = [1]
 
 const CABIN_CAM: [number, number, number] = [-15.75, 1.88, 0]
 
@@ -38,21 +47,35 @@ export const CAMERA_PRESETS: Record<FactoryView, { position: [number, number, nu
 }
 
 /** 工厂场景内容（无 Canvas 包装，供 FactoryCanvas 复用）。 */
-export function FactoryScene({ view, visible = true, activeFloor = 1 }: { view: FactoryView; visible?: boolean; activeFloor?: FactoryFloorId }) {
+export function FactoryScene({
+  view,
+  visible = true,
+  activeFloor = 1,
+  visibleFloors = DEFAULT_FACTORY_FLOORS,
+  floorCount = 1,
+}: {
+  view: FactoryView
+  visible?: boolean
+  activeFloor?: FactoryFloorId
+  visibleFloors?: readonly FactoryFloorId[]
+  floorCount?: number
+}) {
   const storedObjects = useForgeMindStore((s) => s.objects)
   const allObjects = useMemo(() => getDaiyuStressObjects(storedObjects), [storedObjects])
+  const visibleFloorSet = useMemo(() => new Set(visibleFloors), [visibleFloors])
+  const factoryFloorIds = useMemo(() => getFactoryFloors(floorCount).map((floor) => floor.id), [floorCount])
   const objects = useMemo(
-    () => allObjects.filter((object) => getObjectFloor(object) === activeFloor && object.type !== 'drone'),
-    [activeFloor, allObjects],
-  )
-  const parkedDroneObjects = useMemo(
-    () => allObjects.filter((object) => object.type === 'drone' && getObjectFloor(object) === 1),
-    [allObjects],
+    () => selectableObjectsForFloor(allObjects, activeFloor, visibleFloorSet),
+    [activeFloor, allObjects, visibleFloorSet],
   )
   const ghost = useForgeMindStore((s) => s.ghost)
   const selectedId = useForgeMindStore((s) => s.selectedId)
+  const selectedIds = useForgeMindStore((s) => s.selectedIds)
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds])
   const select = useForgeMindStore((s) => s.select)
   const simSnapshot = useForgeMindStore((s) => s.simSnapshot)
+  const items = useForgeMindStore((s) => s.items)
+  const simPlaying = useForgeMindStore((s) => s.simPlaying)
   const contentRef = useRef<THREE.Group>(null)
 
   // 机器运行时态索引：objectId -> runtime
@@ -65,13 +88,19 @@ export function FactoryScene({ view, visible = true, activeFloor = 1 }: { view: 
     [simSnapshot.sources],
   )
   const conveyorActiveIds = useMemo(
-    () => new Set(simSnapshot.itemLots.filter((lot) => lot.floorId === activeFloor).map((lot) => lot.conveyorId)),
-    [activeFloor, simSnapshot.itemLots],
+    () => new Set(simSnapshot.itemLots.map((lot) => lot.conveyorId)),
+    [simSnapshot.itemLots],
   )
-  const visibleItemLots = useMemo(
-    () => simSnapshot.itemLots.filter((lot) => lot.floorId === activeFloor),
-    [activeFloor, simSnapshot.itemLots],
-  )
+  const visibleItemLots = useMemo(() => {
+    const objectsById = new Map(allObjects.map((object) => [object.id, object]))
+    return simSnapshot.itemLots.filter((lot) => {
+      const conveyor = objectsById.get(lot.conveyorId)
+      return conveyor && isInclineConveyorType(conveyor.type)
+        ? inclineTouchesFloor(conveyor, activeFloor)
+          && Boolean(conveyor.incline && inclineVisible(conveyor.incline, activeFloor, visibleFloorSet))
+        : lot.floorId === activeFloor
+    })
+  }, [activeFloor, allObjects, simSnapshot.itemLots, visibleFloorSet])
   const agvRuntimeMap = useMemo(
     () => new Map(simSnapshot.agvs.map((agv) => [agv.objectId, agv])),
     [simSnapshot.agvs],
@@ -80,15 +109,35 @@ export function FactoryScene({ view, visible = true, activeFloor = 1 }: { view: 
     () => new Map(simSnapshot.drones.map((drone) => [drone.objectId, drone])),
     [simSnapshot.drones],
   )
+  const visibleDroneObjects = useMemo(
+    () => allObjects.filter((object) => {
+      if (object.type !== 'drone') return false
+      const runtime = droneRuntimeMap.get(object.id)
+      return floorObjectsVisible(runtime ? nearestFloorForDrone(runtime.position.y, factoryFloorIds) : getObjectFloor(object), activeFloor, visibleFloorSet)
+    }),
+    [activeFloor, allObjects, droneRuntimeMap, factoryFloorIds, visibleFloorSet],
+  )
+  const contextFloorIds = useMemo(
+    () => factoryFloorIds.filter((floorId) => floorId !== activeFloor && visibleFloorSet.has(floorId)),
+    [activeFloor, factoryFloorIds, visibleFloorSet],
+  )
+  const contextInclines = useMemo(
+    () => allObjects.filter((object) => isInclineConveyorType(object.type)
+      && Boolean(object.incline)
+      && !inclineTouchesFloor(object, activeFloor)
+      && inclineVisible(object.incline!, activeFloor, visibleFloorSet)),
+    [activeFloor, allObjects, visibleFloorSet],
+  )
   const batchedConveyors = useMemo(
     () => objects.filter((object) => object.type === 'conveyor' && !getConveyorLinks(object, objects).corner),
     [objects],
   )
+  const inclineObjects = useMemo(() => objects.filter((object) => isInclineConveyorType(object.type)), [objects])
   const individuallyRenderedObjects = useMemo(() => {
-    const batchedIds = new Set(batchedConveyors.map((object) => object.id))
+    const batchedIds = new Set([...batchedConveyors, ...inclineObjects].map((object) => object.id))
     return objects.filter((object) => !batchedIds.has(object.id))
-  }, [batchedConveyors, objects])
-  const staticMachineObjects = useMemo(() => objects.filter((object) => object.type === 'machine'), [objects])
+  }, [batchedConveyors, inclineObjects, objects])
+  const staticMachineObjects = useMemo(() => objects.filter(canBatchAsGenericMachine), [objects])
   const staticAgvObjects = useMemo(() => objects.filter((object) => object.type === 'agv'), [objects])
   const staticPressObjects = useMemo(() => objects.filter((object) => object.type === 'press'), [objects])
   const staticWashingObjects = useMemo(() => objects.filter((object) => object.type === 'washing'), [objects])
@@ -137,34 +186,56 @@ export function FactoryScene({ view, visible = true, activeFloor = 1 }: { view: 
         />
 
         {/* 场景内容 */}
-        <FactoryFloorSystem activeFloor={activeFloor} />
-        <GridFloor />
+        <FactoryFloorSystem floorCount={floorCount} />
+        {factoryFloorIds.filter((floorId) => gridVisibleOnFloor(floorId, activeFloor)).map((floorId) => (
+          <group key={floorId} name={`active-floor-grid:L${floorId}`} position={[0, getFloorElevation(floorId), 0]}>
+            <GridFloor showZones={floorId === 1} />
+            {floorId === 1 && <WarehouseZone />}
+          </group>
+        ))}
 
-        {/* 细网格叠加 —— CAD 参考线质感 */}
-        <Grid
-          infiniteGrid
-          cellSize={1}
-          cellThickness={0.8}
-          cellColor="#879790"
-          sectionSize={5}
-          sectionThickness={1}
-          sectionColor="#657873"
-          fadeDistance={120}
-          fadeStrength={1}
-          position={[0, 0.005, 0]}
-        />
-
-        {activeFloor === 1 && <WarehouseZone />}
-        <group name="l1-drone-dock-vehicle">
-          <DaiyuStaticModelBatch type="drone" objects={parkedDroneObjects} motion={droneRuntimeMap} castShadows={castDetailedShadows} onSelect={select} />
+        <group name="cargo-drone-vehicles">
+          <DaiyuStaticModelBatch
+            type="drone"
+            objects={visibleDroneObjects.filter((object) => {
+              const runtime = droneRuntimeMap.get(object.id)
+              return floorIsInteractive(runtime ? nearestFloorForDrone(runtime.position.y, factoryFloorIds) : getObjectFloor(object), activeFloor)
+            })}
+            motion={droneRuntimeMap}
+            castShadows={castDetailedShadows}
+            onSelect={select}
+          />
+          <DaiyuStaticModelBatch
+            type="drone"
+            objects={visibleDroneObjects.filter((object) => {
+              const runtime = droneRuntimeMap.get(object.id)
+              return !floorIsInteractive(runtime ? nearestFloorForDrone(runtime.position.y, factoryFloorIds) : getObjectFloor(object), activeFloor)
+            })}
+            motion={droneRuntimeMap}
+            castShadows={false}
+          />
         </group>
+        <DroneRouteVisual drones={simSnapshot.drones.filter((drone) => visibleDroneObjects.some((object) => object.id === drone.objectId))} />
+
+        {contextFloorIds.map((floorId) => <ContextFloorLayer key={floorId} floorId={floorId} allObjects={allObjects} running={simPlaying} />)}
+        {contextInclines.map((object) => (
+          <group key={object.id} position={[0, getFloorElevation(object.incline!.lowerFloorId), 0]}>
+            <InclineConveyorMesh
+              object={object}
+              renderFloorId={object.incline!.lowerFloorId}
+              selected={selectedIdSet.has(object.id)}
+              running={simPlaying}
+            />
+            {simSnapshot.itemLots.filter((lot) => lot.conveyorId === object.id).map((lot) => <ItemLotMesh key={lot.id} lot={lot} renderFloorId={object.incline!.lowerFloorId} />)}
+          </group>
+        ))}
 
         {/* 已放置对象 */}
         <group position={[0, floorElevation, 0]}>
           <DaiyuConveyorBatch
             objects={batchedConveyors}
-            activeIds={conveyorActiveIds}
-            selectedId={selectedId}
+            running={simPlaying}
+            selectedIds={selectedIds}
             castShadows={castDetailedShadows}
             onSelect={select}
           />
@@ -174,14 +245,25 @@ export function FactoryScene({ view, visible = true, activeFloor = 1 }: { view: 
           <DaiyuStaticModelBatch type="washing" objects={staticWashingObjects} castShadows={castDetailedShadows} onSelect={select} />
           <DaiyuStaticModelBatch type="storage" objects={staticStorageObjects} castShadows={castDetailedShadows} onSelect={select} />
           <DaiyuPandaBatch objects={batchedPandaObjects} castShadows={castDetailedShadows} onSelect={select} />
-          <DaiyuEmbeddedModelBatch batchName="source-conveyor" path="/models/industrial/roller_conveyor_segment.glb" targetFootprint={1.05} targetHeight={0.52} localPosition={[0.92, 0.17, -0.5]} rotationOffsetY={Math.PI / 2} stripDirectionTexture objects={sourceObjects} castShadows={castDetailedShadows} onSelect={select} />
+          <DaiyuEmbeddedModelBatch batchName="source-conveyor" path="/models/industrial/roller_conveyor_segment.glb" targetFootprint={1.05} targetHeight={0.52} localPosition={SOURCE_EMBEDDED_CONVEYOR_LOCAL_POSITION} rotationOffsetY={Math.PI / 2} stripDirectionTexture crossSectionScale={BASE_CONVEYOR_CROSS_SECTION_SCALE} visualScale={NON_VEHICLE_BUILDING_VISUAL_SCALE} objects={sourceObjects} castShadows={castDetailedShadows} onSelect={select} />
+          {inclineObjects.map((object) => (
+            <InclineConveyorMesh
+              key={object.id}
+              object={object}
+              renderFloorId={activeFloor}
+              selected={selectedIdSet.has(object.id)}
+              running={simPlaying}
+              onSelect={select}
+            />
+          ))}
           {individuallyRenderedObjects.map((o) => (
             <FactoryObjectMesh
               key={o.id}
               obj={o}
               objects={objects}
-              selected={o.id === selectedId}
+              selected={selectedIdSet.has(o.id)}
               active={conveyorActiveIds.has(o.id) || sourceRuntimeMap.get(o.id)?.state === 'picking' || sourceRuntimeMap.get(o.id)?.state === 'placing'}
+              running={simPlaying}
               runtime={runtimeMap.get(o.id)}
               sourceRuntime={sourceRuntimeMap.get(o.id)}
               suppressEquipmentModel={staticBatchedIds.has(o.id)}
@@ -195,8 +277,10 @@ export function FactoryScene({ view, visible = true, activeFloor = 1 }: { view: 
 
           {/* 在途物品（ItemLot） */}
           {visibleItemLots.map((lot) => (
-            <ItemLotMesh key={lot.id} lot={lot} />
+            <ItemLotMesh key={lot.id} lot={lot} renderFloorId={activeFloor} />
           ))}
+
+          <RackInventoryLabels objects={objects} racks={simSnapshot.racks} items={items} />
 
           {/* ghost 预览 */}
           <GhostPreview ghost={ghost} />
@@ -204,10 +288,79 @@ export function FactoryScene({ view, visible = true, activeFloor = 1 }: { view: 
           {/* 建造指针交互（挂 window 键盘） */}
           <BuildPlacer enabled={visible && view === 'build'} floorId={activeFloor} />
         </group>
-        {activeFloor === 1 && <AgvRouteVisual agvs={simSnapshot.agvs} />}
+        {floorObjectsVisible(1, activeFloor, visibleFloorSet) && <AgvRouteVisual agvs={simSnapshot.agvs} />}
       </group>
     </>
   )
+}
+
+function CanvasSelectionController({
+  enabled,
+  activeFloor,
+  visibleFloors,
+}: {
+  enabled: boolean
+  activeFloor: FactoryFloorId
+  visibleFloors: readonly FactoryFloorId[]
+}) {
+  const storedObjects = useForgeMindStore((state) => state.objects)
+  const allObjects = useMemo(() => getDaiyuStressObjects(storedObjects), [storedObjects])
+  const visibleFloorSet = useMemo(() => new Set(visibleFloors), [visibleFloors])
+  const selectableObjects = useMemo(
+    () => selectableObjectsForFloor(allObjects, activeFloor, visibleFloorSet),
+    [activeFloor, allObjects, visibleFloorSet],
+  )
+  return <SelectionController enabled={enabled} selectableObjects={selectableObjects} />
+}
+
+function selectableObjectsForFloor(allObjects: FactoryObject[], activeFloor: FactoryFloorId, visibleFloorSet: ReadonlySet<FactoryFloorId>) {
+  return allObjects.filter((object) => {
+    if (object.type === 'drone') return false
+    if (isInclineConveyorType(object.type) && object.incline) {
+      return inclineTouchesFloor(object, activeFloor) && inclineVisible(object.incline, activeFloor, visibleFloorSet)
+    }
+    return floorObjectsVisible(activeFloor, activeFloor, visibleFloorSet) && getObjectFloor(object) === activeFloor
+  })
+}
+
+function ContextFloorLayer({ floorId, allObjects, running }: { floorId: FactoryFloorId; allObjects: FactoryObject[]; running: boolean }) {
+  const snapshot = useForgeMindStore((state) => state.simSnapshot)
+  const floorObjects = useMemo(
+    () => allObjects.filter((object) => getObjectFloor(object) === floorId && object.type !== 'drone' && !isInclineConveyorType(object.type)),
+    [allObjects, floorId],
+  )
+  const touchingObjects = useMemo(() => objectsTouchingFloor(allObjects, floorId), [allObjects, floorId])
+  const runtimeMap = useMemo(() => new Map(snapshot.machines.map((runtime) => [runtime.objectId, runtime])), [snapshot.machines])
+  const sourceRuntimeMap = useMemo(() => new Map(snapshot.sources.map((runtime) => [runtime.objectId, runtime])), [snapshot.sources])
+  const activeIds = useMemo(() => new Set(snapshot.itemLots.map((lot) => lot.conveyorId)), [snapshot.itemLots])
+  const itemLots = useMemo(() => snapshot.itemLots.filter((lot) => lot.floorId === floorId && !isInclineConveyorType(allObjects.find((object) => object.id === lot.conveyorId)?.type ?? 'conveyor')), [allObjects, floorId, snapshot.itemLots])
+  return (
+    <group name={`context-floor:L${floorId}`} position={[0, getFloorElevation(floorId), 0]}>
+      {floorObjects.map((object) => (
+        <FactoryObjectMesh
+          key={object.id}
+          obj={object}
+          objects={touchingObjects}
+          selected={false}
+          active={activeIds.has(object.id) || sourceRuntimeMap.get(object.id)?.state === 'picking' || sourceRuntimeMap.get(object.id)?.state === 'placing'}
+          running={running}
+          runtime={runtimeMap.get(object.id)}
+          sourceRuntime={sourceRuntimeMap.get(object.id)}
+          castShadows={false}
+          showPortMarkers={false}
+        />
+      ))}
+      {itemLots.map((lot) => <ItemLotMesh key={lot.id} lot={lot} renderFloorId={floorId} />)}
+    </group>
+  )
+}
+
+function nearestFloorForDrone(y: number, floorIds: readonly FactoryFloorId[]): FactoryFloorId {
+  return floorIds.reduce((nearest, floorId) => {
+    const nearestDistance = Math.abs(y - (getFloorElevation(nearest) + 2.2))
+    const distance = Math.abs(y - (getFloorElevation(floorId) + 2.2))
+    return distance < nearestDistance ? floorId : nearest
+  }, 1 as FactoryFloorId)
 }
 
 /** 仅开发环境：?daiyuStress=300，不写入 store，也不参与保存。 */
@@ -239,7 +392,7 @@ function getDaiyuStressObjects(storedObjects: FactoryObject[]) {
   })
 }
 
-export function FactoryCanvas({ view = 'overview', activeFloor = 1 }: { view?: FactoryView; activeFloor?: FactoryFloorId }) {
+export function FactoryCanvas({ view = 'overview', activeFloor = 1, visibleFloors = DEFAULT_FACTORY_FLOORS, floorCount = 1 }: { view?: FactoryView; activeFloor?: FactoryFloorId; visibleFloors?: readonly FactoryFloorId[]; floorCount?: number }) {
   const phase = useAuthStore((s) => s.phase)
   const buildType = useForgeMindStore((s) => s.buildType)
   const inFactory = phase === 'factory'
@@ -270,8 +423,9 @@ export function FactoryCanvas({ view = 'overview', activeFloor = 1 }: { view?: F
       />
       <DaiyuRuntime running={inFactory} />
       <Suspense fallback={null}>
-        <FactoryScene view={view} visible={showFactory} activeFloor={activeFloor} />
+        <FactoryScene view={view} visible={showFactory} activeFloor={activeFloor} visibleFloors={visibleFloors} floorCount={floorCount} />
       </Suspense>
+      <CanvasSelectionController enabled={showFactory && view !== 'flow'} activeFloor={activeFloor} visibleFloors={visibleFloors} />
 
       {/* 未进厂：电梯舱 + 登录相机推镜（独占相机） */}
       {!inFactory && <ElevatorCabin />}
@@ -349,7 +503,7 @@ function FactoryCameraController({ view, isPlacing, activeFloor }: { view: Facto
       makeDefault
       enabled={!isPlacing}
       enablePan
-      screenSpacePanning
+      screenSpacePanning={false}
       enableDamping
       dampingFactor={0.08}
       maxPolarAngle={view === 'build' ? Math.PI / 2.02 : Math.PI / 2.05}

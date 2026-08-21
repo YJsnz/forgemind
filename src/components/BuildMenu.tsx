@@ -1,53 +1,44 @@
 import { useMemo, useState } from 'react'
 import { EQUIPMENT_ORDER, OBJECT_DEFS } from '../game/types'
-import type { BuildType, EquipmentCategory, ImportedResource } from '../game/types'
+import type { BuildType, EquipmentCategory } from '../game/types'
 import { useForgeMindStore } from '../store/forgeMind'
 import { EquipmentThumbnail } from './EquipmentThumbnail'
-import { ResourceImportDialog } from './ResourceImportDialog'
 
 const CATEGORIES: Array<{ key: EquipmentCategory; code: string; label: string; description: string }> = [
-  { key: '采集', code: 'A', label: '原料采集', description: '从矿脉和资源节点开始生产链' },
+  { key: '货物仓储', code: 'A', label: '货物仓储', description: '存取站、有限货架与入货/出货边界仓库' },
   { key: '加工', code: 'B', label: '基础加工', description: '熔炼、冲压与通用工艺设备' },
   { key: '装配', code: 'C', label: '精密装配', description: '把中间件组装为复杂产品' },
-  { key: '物流', code: 'D', label: '物流仓储', description: '输送、分流、汇流和物料缓存' },
+  { key: '传送物流', code: 'D', label: '传送物流', description: '输送、分流、汇流与运输载具' },
 ]
 
 export function BuildMenu({ compact = false }: { compact?: boolean }) {
   const buildType = useForgeMindStore((s) => s.buildType)
   const setBuildType = useForgeMindStore((s) => s.setBuildType)
   const setImportedResourceId = useForgeMindStore((s) => s.setImportedResourceId)
-  const registerImportedResource = useForgeMindStore((s) => s.registerImportedResource)
-  const importedResources = useForgeMindStore((s) => s.importedResources)
-  const selectedImportedResourceId = useForgeMindStore((s) => s.selectedImportedResourceId)
+  const machineDefinitions = useForgeMindStore((s) => s.machineDefinitions)
+  const selectedMachineDefinitionId = useForgeMindStore((s) => s.selectedMachineDefinitionId)
+  const setMachineDefinitionId = useForgeMindStore((s) => s.setMachineDefinitionId)
   const objectCount = useForgeMindStore((s) => s.objects.length)
-  const [category, setCategory] = useState<EquipmentCategory>('采集')
+  const [category, setCategory] = useState<EquipmentCategory>('货物仓储')
   const [selectedType, setSelectedType] = useState<BuildType>('oreMiner')
-  const [importDialogOpen, setImportDialogOpen] = useState(false)
 
   const entries = useMemo(
-    () => EQUIPMENT_ORDER.filter((type) => OBJECT_DEFS[type].category === category),
+    () => EQUIPMENT_ORDER.filter((type) => OBJECT_DEFS[type].category === category && !['machine', 'smelter', 'press', 'washing', 'inspection', 'storage'].includes(type)),
     [category],
   )
-  const importedEntries = useMemo(() => importedResources.filter((resource) => resource.objectDef.category === category), [category, importedResources])
-  const selectedImported = importedResources.find((resource) => resource.id === selectedImportedResourceId)
-  const selected = selectedType === 'imported' ? selectedImported?.objectDef ?? OBJECT_DEFS.imported : OBJECT_DEFS[selectedType]
+  const selectedMachine = machineDefinitions.find((definition) => definition.id === selectedMachineDefinitionId)
+  const selected = selectedType === 'machine' && selectedMachine ? { ...OBJECT_DEFS.machine, label: selectedMachine.name, subtitle: `CUSTOM MACHINE / ${selectedMachine.id}`, function: selectedMachine.description, footprint: selectedMachine.footprint, height: selectedMachine.height, throughput: selectedMachine.throughput, power: selectedMachine.power } : OBJECT_DEFS[selectedType]
 
   const selectEquipment = (type: BuildType, resourceId?: string) => {
     setSelectedType(type)
     setImportedResourceId(type === 'imported' ? resourceId ?? null : null)
-    setBuildType(type)
-  }
-
-  const handleImported = (resource: ImportedResource) => {
-    registerImportedResource(resource)
-    setCategory(resource.objectDef.category)
-    setSelectedType('imported')
-    setImportDialogOpen(false)
+    if (type === 'machine') setMachineDefinitionId(resourceId ?? null)
+    else setBuildType(type)
   }
 
   return (
     <div className={`fm-build-menu ${compact ? 'is-compact' : ''}`}>
-      <div className="fm-build-note fm-build-note-strong">网格 = 1 m · 蓝色端口为入口 · 琥珀端口为出口 · 输送带可按住拖动连续放置</div>
+      <div className="fm-build-note fm-build-note-strong">网格 = 1 m · 蓝色端口为入口 · 琥珀端口为出口 · 平面输送带左键拖绘自动转弯 · 跨层与平面输送带靠近兼容端口时自动吸附</div>
       <div className="fm-build-mode">
         <div>
           <div className="fm-eyebrow"><span>BUILD MODE</span> / TOP-DOWN GRID</div>
@@ -56,9 +47,7 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
         <span className="fm-build-mode-led" />
       </div>
 
-      <div className="fm-build-note">选择设备后，移动鼠标预览占地范围。按 R 旋转，左键确认放置。</div>
-
-      <button type="button" className="fm-build-import-button" onClick={() => setImportDialogOpen(true)}><span>＋</span><strong>导入新设备</strong><small>JSON + GLB · 自动生成封面</small><b>↗</b></button>
+      <div className="fm-build-note">选择设备后，移动鼠标预览占地范围。按 R 旋转，左键确认放置，右键取消建造。</div>
 
       <div className="fm-category-tabs" role="tablist" aria-label="设备类别">
         {CATEGORIES.map((item) => (
@@ -68,8 +57,10 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
             onClick={() => {
               setCategory(item.key)
               setImportedResourceId(null)
-              const firstType = EQUIPMENT_ORDER.find((type) => OBJECT_DEFS[type].category === item.key)
-              if (firstType) setSelectedType(firstType)
+              setMachineDefinitionId(null)
+              const firstType = EQUIPMENT_ORDER.find((type) => OBJECT_DEFS[type].category === item.key && !['machine', 'smelter', 'press', 'washing', 'inspection', 'storage'].includes(type))
+              if (item.key === '加工' && machineDefinitions[0]) { setSelectedType('machine'); setMachineDefinitionId(machineDefinitions[0].id) }
+              else if (firstType) setSelectedType(firstType)
             }}
             role="tab"
             aria-selected={category === item.key}
@@ -82,6 +73,7 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
       <div className="fm-category-caption">{CATEGORIES.find((item) => item.key === category)?.description}</div>
 
       <div className="fm-equipment-list">
+        {category === '加工' && machineDefinitions.length === 0 && <div className="fm-build-note fm-build-note-strong">基础加工目录为空。请先在下栏“机械制造”中新建机器并录入工艺路线。</div>}
         {entries.map((type) => {
           const item = OBJECT_DEFS[type]
           const active = buildType === type
@@ -108,20 +100,20 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
             </button>
           )
         })}
-        {importedEntries.map((resource) => {
-          const item = resource.objectDef
-          const active = buildType === 'imported' && selectedImportedResourceId === resource.id
+        {category === '加工' && machineDefinitions.map((definition) => {
+          const item = { ...OBJECT_DEFS.machine, label: definition.name, subtitle: `CUSTOM MACHINE / ${definition.id}`, footprint: definition.footprint, power: definition.power }
+          const active = buildType === 'machine' && selectedMachineDefinitionId === definition.id
           return (
             <button
-              key={resource.id}
-              className={`fm-equipment-card fm-equipment-card-imported ${active ? 'is-active' : ''} ${active ? 'is-inspected' : ''}`}
+              key={definition.id}
+              className={`fm-equipment-card ${active ? 'is-active is-inspected' : ''}`}
               style={{ '--equipment-accent': item.accent } as React.CSSProperties}
-              onClick={() => selectEquipment('imported', resource.id)}
+              onClick={() => selectEquipment('machine', definition.id)}
             >
-              <EquipmentThumbnail type="imported" previewDataUrl={resource.previewDataUrl} />
+              <EquipmentThumbnail type={definition.modelType === 'imported' ? 'imported' : definition.modelType} />
               <span className="fm-equipment-card-body">
-                <span className="fm-equipment-glyph" style={{ '--equipment-accent': item.accent } as React.CSSProperties}>↗</span>
-                <span className="fm-equipment-copy"><strong>{item.label}</strong><small>{item.subtitle}</small><em className="is-split-asset">用户导入 · {resource.modelFileName}</em></span>
+                <span className="fm-equipment-glyph" style={{ '--equipment-accent': item.accent } as React.CSSProperties}>◫</span>
+                <span className="fm-equipment-copy"><strong>{item.label}</strong><small>{item.subtitle}</small><em className="is-split-asset">机械制造 · {definition.inputPortCount} 入 / {definition.outputPortCount} 出 · {definition.recipeIds.length} 条工艺</em></span>
                 <span className="fm-equipment-meta">{item.footprint.w}×{item.footprint.d}<br />{item.power}</span>
               </span>
             </button>
@@ -138,12 +130,6 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
           <span>{selectedType === 'assembler' ? '7-AXIS PANDA / OPEN CELL' : selected.assetKind === 'runtime-assembly' ? 'DUAL-ARM / RUNTIME ASSEMBLY' : selected.assetKind === 'center-split' ? 'CENTER CELL / SPLIT ASSET' : selected.assetKind === 'detailed-process' ? 'DETAILED PROCESS ASSET' : 'PROCESS MODEL / PROCEDURAL'}</span>
           <code>{selected.assetPath ?? '本设备在中心模型中无对应节点'}</code>
         </div>
-        {selectedType === 'imported' && selectedImported?.warnings.length ? (
-          <div className="fm-resource-import-warnings">
-            <span>校验提示</span>
-            {selectedImported.warnings.map((warning) => <p key={warning}>! {warning}</p>)}
-          </div>
-        ) : null}
         <p>{selected.function}</p>
         <div className="fm-detail-grid">
           <Spec label="占地" value={`${selected.footprint.w} × ${selected.footprint.d} 格`} />
@@ -162,7 +148,6 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
       </div>
 
       <div className="fm-build-footer"><span>已放置 <b>{objectCount.toString().padStart(2, '0')}</b> 台设施</span><span className="fm-build-shortcuts"><kbd>R</kbd> 旋转 <kbd>ESC</kbd> 退出</span></div>
-      <ResourceImportDialog open={importDialogOpen} onClose={() => setImportDialogOpen(false)} onImported={handleImported} />
     </div>
   )
 }
@@ -174,6 +159,8 @@ function Spec({ label, value }: { label: string; value: string }) {
 function modelGlyph(type: BuildType): string {
   switch (type) {
     case 'oreMiner': return '◈'
+    case 'inboundWarehouse': return '⇥'
+    case 'outboundWarehouse': return '⇤'
     case 'smelter': return '▣'
     case 'press': return '▥'
     case 'assembler': return '⌘'
@@ -182,6 +169,8 @@ function modelGlyph(type: BuildType): string {
     case 'agv': return '▰'
     case 'drone': return '◇'
     case 'conveyor': return '⇢'
+    case 'inclineUp': return '↗'
+    case 'inclineDown': return '↘'
     case 'splitter': return '⑂'
     case 'merger': return '⑃'
     case 'storage': return '▤'

@@ -34,6 +34,11 @@ public class FactoryDbStore {
 
     public FactorySave loadForUser(String userId) {
         String factoryId = ensureFactory(userId);
+        return loadByFactoryId(factoryId);
+    }
+
+    /** Read-only adapter used to expose pre-v7 relational archives in the new project picker. */
+    public FactorySave loadByFactoryId(String factoryId) {
         List<Map<String, Object>> items = loadItems(factoryId);
         List<Map<String, Object>> recipes = loadRecipes(factoryId);
         List<Map<String, Object>> objects = loadObjects(factoryId);

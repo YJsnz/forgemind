@@ -4,13 +4,16 @@ import { useRef, useEffect } from 'react'
 import { useForgeMindStore } from '../store/forgeMind'
 import type { FactoryFloorId, GridPos, Rotation } from '../game/types'
 import { dirToRotation } from '../game/dir'
-import { canPlace } from '../game/grid'
+import { canPlace, snapCargoStoragePlacement, snapConveyorCellToObjectPort } from '../game/grid'
+import { appendGridTrace } from '../game/conveyorTrace'
 import { getFloorElevation } from './FactoryFloorSystem'
+import { isInclineConveyorType, objectsTouchingFloor, snapConveyorCellToIncline, snapInclinePlacement } from '../game/inclineConveyor'
 
 /**
  * 网格建造的指针交互层（Day 2）：
  * - 有建造工具时：射线打到地面 → 更新 ghost 位置，左键放置；
- * - 拖拽传送带时：右键锁定当前位置为转弯锚点，继续拖拽可追加下一段；
+ * - 按住左键直接拖绘传送带，轨迹随鼠标自动补格、转弯和回退；
+ * - 建造模式下右键取消当前放置工具。
  * - 无工具时：左键点地面清除选中。
  *
  * 键盘（挂在 window）：R 旋转 ghost，Escape 退出建造工具。
@@ -31,7 +34,7 @@ export function BuildPlacer({ enabled = true, floorId = 1 }: { enabled?: boolean
   const setBuildType = useForgeMindStore((s) => s.setBuildType)
 
   const isPlacing = enabled && buildType !== null
-  const drag = useRef<{ anchors: GridPos[]; current: GridPos } | null>(null)
+  const drag = useRef<{ trace: GridPos[]; current: GridPos; pointerId: number } | null>(null)
 
   useEffect(() => {
     plane.current.constant = -getFloorElevation(floorId)
@@ -51,34 +54,16 @@ export function BuildPlacer({ enabled = true, floorId = 1 }: { enabled?: boolean
     return { x: Math.floor(hit.x), z: Math.floor(hit.z) }
   }
 
-  const buildSegment = (start: GridPos, end: GridPos): GridPos[] => {
-    const path: GridPos[] = []
-    let x = start.x
-    let z = start.z
-    path.push({ x, z })
-    while (x !== end.x) {
-      x += end.x > x ? 1 : -1
-      path.push({ x, z })
+  const snapBuildPosition = (pos: GridPos): GridPos => {
+    if (buildType === 'conveyor') return snapConveyorCellToObjectPort(snapConveyorCellToIncline(pos, floorId, objects), floorId, objects)
+    if (buildType && isInclineConveyorType(buildType)) {
+      const rotation = useForgeMindStore.getState().ghost.rotation
+      return snapInclinePlacement(pos, buildType, rotation, floorId, objects).lowPos
     }
-    while (z !== end.z) {
-      z += end.z > z ? 1 : -1
-      path.push({ x, z })
+    if (buildType === 'source' || buildType === 'oreMiner' || buildType === 'storage') {
+      return snapCargoStoragePlacement(pos, buildType, useForgeMindStore.getState().ghost.rotation, floorId, objects)
     }
-    return path
-  }
-
-  /** Build the full polyline from saved turn anchors to the current pointer. */
-  const buildPath = (anchors: GridPos[], current: GridPos): GridPos[] => {
-    const path = anchors.length > 0 ? [{ ...anchors[0] }] : []
-    let from = anchors[0]
-    if (!from) return [current]
-
-    for (const anchor of anchors.slice(1)) {
-      path.push(...buildSegment(from, anchor).slice(1))
-      from = anchor
-    }
-    path.push(...buildSegment(from, current).slice(1))
-    return path
+    return pos
   }
 
   const pathRotations = (path: GridPos[]): Rotation[] => path.map((cell, index) => {
@@ -93,7 +78,7 @@ export function BuildPlacer({ enabled = true, floorId = 1 }: { enabled?: boolean
   })
 
   const validatePath = (path: GridPos[]): boolean[] => {
-    const staged = objects.filter((object) => (object.floorId ?? 1) === floorId)
+    const staged = objectsTouchingFloor(objects, floorId)
     return pathRotations(path).map((rotation, index) => {
       const pos = path[index]
       const valid = canPlace(pos, 'conveyor', rotation, staged)
@@ -112,20 +97,26 @@ export function BuildPlacer({ enabled = true, floorId = 1 }: { enabled?: boolean
 
     const onMove = (e: PointerEvent) => {
       if (!isPlacing) return
-      const pos = pointerToGrid(e)
+      const rawPos = pointerToGrid(e)
+      const pos = rawPos ? snapBuildPosition(rawPos) : null
       updateGhost(pos, floorId)
       if (pos && drag.current) {
         drag.current.current = pos
-        updatePathPreview(buildPath(drag.current.anchors, pos))
+        drag.current.trace = appendGridTrace(drag.current.trace, pos)
+        updatePathPreview(drag.current.trace)
       }
     }
     const onDown = (e: PointerEvent) => {
       if (e.button !== 0) return
+      if (!isPlacing && e.shiftKey) return
       if (isPlacing) {
-        const pos = pointerToGrid(e)
+        const rawPos = pointerToGrid(e)
+        const pos = rawPos ? snapBuildPosition(rawPos) : null
         if (!pos) return
         if (buildType === 'conveyor') {
-          drag.current = { anchors: [pos], current: pos }
+          e.preventDefault()
+          e.stopPropagation()
+          drag.current = { trace: [pos], current: pos, pointerId: e.pointerId }
           el.setPointerCapture?.(e.pointerId)
           updateGhost(pos, floorId)
           updatePathPreview([pos])
@@ -139,40 +130,48 @@ export function BuildPlacer({ enabled = true, floorId = 1 }: { enabled?: boolean
       }
     }
     const onContextMenu = (e: MouseEvent) => {
-      if (!isPlacing || buildType !== 'conveyor' || !drag.current) return
+      if (!isPlacing) return
       e.preventDefault()
-      const pos = pointerToGrid(e)
-      if (!pos) return
-
-      const path = buildPath(drag.current.anchors, pos)
-      const valid = validatePath(path)
-      if (!valid.every(Boolean)) return
-
-      const last = drag.current.anchors[drag.current.anchors.length - 1]
-      if (!last || last.x !== pos.x || last.z !== pos.z) {
-        drag.current.anchors.push(pos)
+      e.stopPropagation()
+      const activeDrag = drag.current
+      if (activeDrag && el.hasPointerCapture?.(activeDrag.pointerId)) {
+        el.releasePointerCapture(activeDrag.pointerId)
       }
-      drag.current.current = pos
-      updatePathPreview(path)
+      drag.current = null
+      setGhostPath([])
+      setGhostPathValid([])
+      setBuildType(null)
     }
     const onUp = (e: PointerEvent) => {
       if (e.button !== 0 || !drag.current || buildType !== 'conveyor') return
-      const { anchors, current } = drag.current
-      const path = buildPath(anchors, current)
-      path.forEach((cell, index) => {
-        const rotation = pathRotations(path)[index]
-        placeAt(cell, rotation, floorId)
-      })
+      const path = appendGridTrace(drag.current.trace, drag.current.current)
+      const rotations = pathRotations(path)
+      const valid = validatePath(path)
+      if (valid.every(Boolean)) {
+        path.forEach((cell, index) => placeAt(cell, rotations[index], floorId))
+      }
       drag.current = null
       setGhostPath([])
       setGhostPathValid([])
       if (el.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId)
     }
 
+    const cancelStroke = (e: PointerEvent) => {
+      if (!drag.current || e.pointerId !== drag.current.pointerId) return
+      drag.current = null
+      setGhostPath([])
+      setGhostPathValid([])
+    }
+
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'r' || e.key === 'R') {
         if (isPlacing) rotateGhost()
       } else if (e.key === 'Escape') {
+        const activeDrag = drag.current
+        if (activeDrag && el.hasPointerCapture?.(activeDrag.pointerId)) {
+          el.releasePointerCapture(activeDrag.pointerId)
+        }
+        drag.current = null
         setBuildType(null)
       }
     }
@@ -181,12 +180,16 @@ export function BuildPlacer({ enabled = true, floorId = 1 }: { enabled?: boolean
     el.addEventListener('pointerdown', onDown)
     el.addEventListener('contextmenu', onContextMenu)
     el.addEventListener('pointerup', onUp)
+    el.addEventListener('pointercancel', cancelStroke)
+    el.addEventListener('lostpointercapture', cancelStroke)
     window.addEventListener('keydown', onKey)
     return () => {
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerdown', onDown)
       el.removeEventListener('contextmenu', onContextMenu)
       el.removeEventListener('pointerup', onUp)
+      el.removeEventListener('pointercancel', cancelStroke)
+      el.removeEventListener('lostpointercapture', cancelStroke)
       window.removeEventListener('keydown', onKey)
     }
   }, [floorId, isPlacing, buildType, updateGhost, setGhostPath, setGhostPathValid, placeAt, select, rotateGhost, setBuildType, camera, gl, objects])

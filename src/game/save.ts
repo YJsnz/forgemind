@@ -1,21 +1,27 @@
-import { isBuildType, type AgvProgram, type AgvRouteWaypoint, type FactoryObject, type Rotation } from './types'
+import { canCustomizeStorageName, isBuildType, type AgvProgram, type AgvRouteWaypoint, type FactoryFloorId, type FactoryObject, type InclineConveyorConfig, type MachineDefinition, type Rotation, type StationProgram, type StorageConfig } from './types'
+import { isInclineConveyorType } from './inclineConveyor'
 import type { Item, Recipe, RecipePort } from './item'
+import { MAX_FACTORY_FLOORS, MIN_FACTORY_FLOORS, clampFloorCount } from './floorConfig'
 
 /**
- * 工厂存档格式（JSON 导入/导出，Day 3）。
- * 补充设计 §4.4：7 天冲刺不接数据库，静态结构用 JSON 文件持久化。
+ * 工厂项目的版本化载荷。主存档由账号下的后端项目库持久化；
+ * 这里的序列化与文件 API 只负责 schema 校验和显式 JSON 导入/导出。
  */
 
 export interface FactorySave {
   version: number
   savedAt?: string
+  name: string
+  floorCount: number
+  floorNames: string[]
   objects: FactoryObject[]
   items: Item[]
   recipes: Recipe[]
+  machineDefinitions: MachineDefinition[]
 }
 
-/** Version 2 includes the complete equipment catalogue in `objects`. */
-export const SAVE_VERSION = 2
+/** Version 6 adds finite rack inventory plus inbound/outbound warehouses. */
+export const SAVE_VERSION = 6
 const FIRST_SUPPORTED_VERSION = 1
 
 /** 导出存档（序列化到 JSON 字符串） */
@@ -30,8 +36,10 @@ export function downloadSave(save: FactorySave, filename = 'forgemind-factory.js
   const a = document.createElement('a')
   a.href = url
   a.download = filename
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  a.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 /** 从文件读取 JSON 文本 */
@@ -60,13 +68,25 @@ export function parseSave(json: string): FactorySave {
   const objects = parseObjects(data.objects)
   const items = parseItems(data.items)
   const recipes = parseRecipes(data.recipes, items)
+  const machineDefinitions = parseMachineDefinitions(data.machineDefinitions, recipes)
+  const inferredFloorCount = inferFloorCount(objects, version <= 3 ? 3 : 1)
+  const floorCount = data.floorCount === undefined
+    ? inferredFloorCount
+    : parseFloorCount(data.floorCount)
+  if (objects.some((object) => maxObjectFloor(object) > floorCount)) {
+    throw new Error('存档楼层数量小于设备所在楼层')
+  }
 
   return {
     version: SAVE_VERSION,
     savedAt: typeof data.savedAt === 'string' ? data.savedAt : undefined,
+    name: typeof data.name === 'string' && data.name.trim() ? data.name.trim().slice(0, 80) : '未命名工厂',
+    floorCount,
+    floorNames: parseFloorNames(data.floorNames, floorCount),
     objects,
     items,
     recipes,
+    machineDefinitions,
   }
 }
 
@@ -81,9 +101,8 @@ function parseVersion(value: unknown): number {
 }
 
 /**
- * Upgrade older payloads before validation. Version 1 and 2 share the same
- * fields; v2 widens the accepted object catalogue, so the migration is a
- * deliberate normalization rather than a shape rewrite.
+ * Upgrade older payloads before validation. V6 adds warehouse boundaries and
+ * finite rack configuration while preserving V3 incline geometry.
  */
 function migrateSave(data: Record<string, unknown>, version: number): Record<string, unknown> {
   if (version === SAVE_VERSION) return data
@@ -108,17 +127,133 @@ function parseObjects(v: unknown): FactoryObject[] {
     const id = typeof x.id === 'string' ? x.id : genIdFor('obj')
     if (ids.has(id)) throw new Error(`对象 id 重复：${id}`)
     ids.add(id)
+    const incline = parseInclineConfig(x.incline)
+    if (isInclineConveyorType(type) && !incline) throw new Error('跨层传送带配置非法')
+    const parsedFloorId = parseFloorId(x.floorId)
+    const floorId = incline
+      ? incline.direction === 'up' ? incline.lowerFloorId : incline.upperFloorId
+      : parsedFloorId
+    const itemId = typeof x.itemId === 'string' ? x.itemId : undefined
+    const legacyDisplayName = typeof x.displayName === 'string'
+      ? x.displayName
+      : typeof x.customName === 'string'
+        ? x.customName
+        : typeof x.name === 'string'
+          ? x.name
+          : ''
+    const displayName = canCustomizeStorageName(type) && legacyDisplayName.trim()
+      ? legacyDisplayName.trim().slice(0, 40)
+      : undefined
     return {
       id,
       type,
+      displayName,
       resourceId: typeof x.resourceId === 'string' ? x.resourceId : undefined,
       pos: { x: pos.x as number, z: pos.z as number },
       rotation: rotation as Rotation,
+      floorId,
       recipeId: typeof x.recipeId === 'string' ? x.recipeId : undefined,
-      itemId: typeof x.itemId === 'string' ? x.itemId : undefined,
+      itemId,
       agvProgram: parseAgvProgram(x.agvProgram),
+      incline,
+      portConfig: parsePortConfig(x.portConfig),
+      stationProgram: parseStationProgram(x.stationProgram),
+      storageConfig: type === 'oreMiner' || type === 'storage' ? parseStorageConfig(x.storageConfig, itemId) : undefined,
     }
   })
+}
+
+function parseStorageConfig(value: unknown, legacyItemId?: string): StorageConfig {
+  if (!isRecord(value)) {
+    return { capacity: 100, initialInventory: legacyItemId ? { [legacyItemId]: 24 } : {} }
+  }
+  const capacity = isFiniteNumber(value.capacity) ? Math.max(1, Math.min(1000000, Math.round(value.capacity))) : 100
+  const initialInventory: Record<string, number> = {}
+  let remaining = capacity
+  if (isRecord(value.initialInventory)) {
+    for (const [itemId, quantity] of Object.entries(value.initialInventory)) {
+      if (!isFiniteNumber(quantity) || quantity <= 0 || remaining <= 0) continue
+      const accepted = Math.min(remaining, Math.round(quantity))
+      if (accepted > 0) initialInventory[itemId] = accepted
+      remaining -= accepted
+    }
+  }
+  return { capacity, initialInventory }
+}
+
+function parseFloorId(value: unknown): FactoryFloorId {
+  return typeof value === 'number' && Number.isInteger(value) && value >= MIN_FACTORY_FLOORS && value <= MAX_FACTORY_FLOORS ? value : 1
+}
+
+function parseInclineConfig(value: unknown): InclineConveyorConfig | undefined {
+  if (!isRecord(value) || (value.direction !== 'up' && value.direction !== 'down')) return undefined
+  const lowerFloorId = value.lowerFloorId
+  const upperFloorId = value.upperFloorId
+  if (!isFloorId(lowerFloorId) || lowerFloorId >= MAX_FACTORY_FLOORS || !isFloorId(upperFloorId) || upperFloorId !== lowerFloorId + 1) return undefined
+  if (!isGridPos(value.lowPos) || !isGridPos(value.highPos)) return undefined
+  if (!isFiniteNumber(value.riseM) || value.riseM <= 0 || !isFiniteNumber(value.runM) || value.runM <= 0) return undefined
+  return {
+    direction: value.direction,
+    lowerFloorId,
+    upperFloorId,
+    lowPos: value.lowPos,
+    highPos: value.highPos,
+    riseM: value.riseM,
+    runM: value.runM,
+  }
+}
+
+function isFloorId(value: unknown): value is FactoryFloorId {
+  return typeof value === 'number' && Number.isInteger(value) && value >= MIN_FACTORY_FLOORS && value <= MAX_FACTORY_FLOORS
+}
+
+function parseFloorCount(value: unknown): number {
+  if (!isFloorId(value)) throw new Error(`楼层数量必须为 ${MIN_FACTORY_FLOORS}–${MAX_FACTORY_FLOORS} 的整数`)
+  return value
+}
+
+function parseFloorNames(value: unknown, floorCount: number): string[] {
+  const source = Array.isArray(value) ? value : []
+  return Array.from({ length: floorCount }, (_, index) => {
+    const name = source[index]
+    return typeof name === 'string' && name.trim() ? name.trim().slice(0, 30) : `${index + 1}F 生产层`
+  })
+}
+
+function parsePortConfig(value: unknown): FactoryObject['portConfig'] {
+  if (!isRecord(value)) return undefined
+  if (!isFiniteNumber(value.inputCount) || !isFiniteNumber(value.outputCount)) return undefined
+  return {
+    inputCount: Math.max(1, Math.round(value.inputCount)),
+    outputCount: Math.max(1, Math.round(value.outputCount)),
+  }
+}
+
+function parseStationProgram(value: unknown): StationProgram | undefined {
+  if (!isRecord(value) || (value.mode !== 'pickup' && value.mode !== 'store')) return undefined
+  const assignments: StationProgram['rackAssignments'] = {}
+  if (isRecord(value.rackAssignments)) {
+    Object.entries(value.rackAssignments).forEach(([itemId, side]) => {
+      if (side === 'back' || side === 'left' || side === 'right') assignments[itemId] = side
+    })
+  }
+  return {
+    mode: value.mode,
+    transferIntervalSec: isFiniteNumber(value.transferIntervalSec) ? Math.max(0.25, Math.min(60, value.transferIntervalSec)) : 2,
+    rackAssignments: assignments,
+  }
+}
+
+function maxObjectFloor(object: FactoryObject): number {
+  return Math.max(object.floorId ?? 1, object.incline?.lowerFloorId ?? 1, object.incline?.upperFloorId ?? 1)
+}
+
+function inferFloorCount(objects: FactoryObject[], minimum: number): number {
+  return clampFloorCount(Math.max(minimum, ...objects.map(maxObjectFloor)))
+}
+
+function isGridPos(value: unknown): value is { x: number; z: number } {
+  return isRecord(value) && isFiniteNumber(value.x) && isFiniteNumber(value.z)
 }
 
 function parseAgvProgram(value: unknown): AgvProgram | undefined {
@@ -130,6 +265,7 @@ function parseAgvProgram(value: unknown): AgvProgram | undefined {
     return [{ id: entry.id, label: entry.label, objectId: typeof entry.objectId === 'string' ? entry.objectId : null, position: { x: entry.position.x, z: entry.position.z }, action }]
   }) : undefined
   const policy = value.policy === 'shortest' || value.policy === 'priority' || value.policy === 'balanced' ? value.policy : 'balanced'
+  const dispatchMode = value.dispatchMode === 'threshold' ? 'threshold' : 'continuous'
   return {
     enabled: value.enabled === true,
     sourceObjectId: typeof value.sourceObjectId === 'string' ? value.sourceObjectId : null,
@@ -139,6 +275,9 @@ function parseAgvProgram(value: unknown): AgvProgram | undefined {
     route,
     priority: isFiniteNumber(value.priority) ? Math.max(0, Math.min(9, Math.round(value.priority))) : 0,
     policy,
+    dispatchMode,
+    sourceMinQuantity: isFiniteNumber(value.sourceMinQuantity) ? Math.max(0, Math.round(value.sourceMinQuantity)) : 1,
+    destinationMaxQuantity: isFiniteNumber(value.destinationMaxQuantity) ? Math.max(0, Math.round(value.destinationMaxQuantity)) : 100,
   }
 }
 
@@ -165,6 +304,11 @@ function parseItems(v: unknown): Item[] {
       note: typeof x.note === 'string' ? x.note : undefined,
       modelPath: typeof x.modelPath === 'string' ? x.modelPath : undefined,
       modelId: typeof x.modelId === 'string' ? x.modelId : undefined,
+      code: typeof x.code === 'string' ? x.code : id,
+      description: typeof x.description === 'string' ? x.description : typeof x.note === 'string' ? x.note : undefined,
+      massKg: isFiniteNumber(x.massKg) ? Math.max(0, x.massKg) : 1,
+      maxStackSize: isFiniteNumber(x.maxStackSize) ? Math.max(1, Math.round(x.maxStackSize)) : 100,
+      modelParameters: parseModelParameters(x.modelParameters),
     }
   })
 }
@@ -189,6 +333,52 @@ function parseRecipes(v: unknown, items: Item[]): Recipe[] {
       inputs,
       outputs,
       durationSec: typeof x.durationSec === 'number' ? x.durationSec : 1,
+      code: typeof x.code === 'string' ? x.code : id,
+      description: typeof x.description === 'string' ? x.description : undefined,
+      enabled: x.enabled !== false,
+    }
+  })
+}
+
+function parseModelParameters(value: unknown): Item['modelParameters'] {
+  if (!isRecord(value)) return undefined
+  const result: NonNullable<Item['modelParameters']> = {}
+  Object.entries(value).forEach(([key, entry]) => {
+    if (typeof entry === 'string' || typeof entry === 'boolean' || isFiniteNumber(entry)) result[key] = entry
+  })
+  return result
+}
+
+function parseMachineDefinitions(value: unknown, recipes: Recipe[]): MachineDefinition[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw new Error('机器定义不是数组')
+  const recipeIds = new Set(recipes.map((recipe) => recipe.id))
+  const ids = new Set<string>()
+  return value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id.trim() || typeof entry.name !== 'string') throw new Error('机器定义非法')
+    const id = entry.id.trim()
+    if (ids.has(id)) throw new Error(`机器 id 重复：${id}`)
+    ids.add(id)
+    const footprint = isRecord(entry.footprint) && isFiniteNumber(entry.footprint.w) && isFiniteNumber(entry.footprint.d)
+      ? { w: Math.max(1, Math.min(12, Math.round(entry.footprint.w))), d: Math.max(1, Math.min(12, Math.round(entry.footprint.d))) }
+      : { w: 2, d: 2 }
+    const modelType = entry.modelType === 'smelter' || entry.modelType === 'press' || entry.modelType === 'washing' || entry.modelType === 'imported' ? entry.modelType : 'machine'
+    const inputPortCount = isFiniteNumber(entry.inputPortCount) ? Math.max(1, Math.min(footprint.w, Math.round(entry.inputPortCount))) : 1
+    const outputPortCount = isFiniteNumber(entry.outputPortCount) ? Math.max(1, Math.min(footprint.w, Math.round(entry.outputPortCount))) : 1
+    const allowed = Array.isArray(entry.recipeIds) ? entry.recipeIds.filter((recipeId): recipeId is string => typeof recipeId === 'string' && recipeIds.has(recipeId)) : []
+    return {
+      id,
+      name: entry.name.trim().slice(0, 60),
+      description: typeof entry.description === 'string' ? entry.description.slice(0, 240) : '',
+      modelType,
+      importedResourceId: typeof entry.importedResourceId === 'string' ? entry.importedResourceId : undefined,
+      footprint,
+      height: isFiniteNumber(entry.height) ? Math.max(0.3, Math.min(8, entry.height)) : 1.5,
+      throughput: typeof entry.throughput === 'string' ? entry.throughput.slice(0, 40) : '—',
+      power: typeof entry.power === 'string' ? entry.power.slice(0, 40) : '—',
+      inputPortCount,
+      outputPortCount,
+      recipeIds: allowed,
     }
   })
 }

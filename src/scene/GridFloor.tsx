@@ -8,7 +8,7 @@ import { Text } from '@react-three/drei'
  *
  * 结构：一块接收阴影的地面 + 主网格线 + 十字坐标轴（X 红 / Z 蓝 / Y 绿）。
  */
-export function GridFloor() {
+export function GridFloor({ showZones = true }: { showZones?: boolean }) {
   const groundRef = useRef<THREE.Mesh>(null)
 
   return (
@@ -20,13 +20,13 @@ export function GridFloor() {
         position={[0, -0.01, 0]}
         receiveShadow
       >
-        <planeGeometry args={[200, 200]} />
-        <meshStandardMaterial color="#b9c4bf" roughness={1} metalness={0} />
+        <planeGeometry args={[50, 34]} />
+        <meshPhysicalMaterial color="#b9c9c4" roughness={0.82} metalness={0.06} transparent opacity={0.48} transmission={0.08} thickness={0.18} depthWrite />
       </mesh>
 
       {/* 主网格 —— 每格 1m，中心十字线用强调色 */}
       <gridHelper
-        args={[200, 200, '#7e918a', '#aebbb5']}
+        args={[50, 50, '#71877f', '#aab9b3']}
         position={[0, 0, 0]}
       />
 
@@ -37,7 +37,7 @@ export function GridFloor() {
 
       {/* Real factory zoning: process islands, clearance outlines and a
           dedicated vehicle aisle make the plant read as an operating site. */}
-      <ZonePad label="RECEIVING / RAW" position={[-19, 3.7]} size={[10, 7]} color="#70827c" />
+      {showZones && <><ZonePad label="RECEIVING / RAW" position={[-19, 3.7]} size={[10, 7]} color="#70827c" />
       <ZonePad label="MACHINING" position={[-8.5, 3.7]} size={[11, 7]} color="#5d7778" />
       <ZonePad label="LINE-SIDE KITTING" position={[-1.5, -5]} size={[15, 4]} color="#7d8175" />
       <ZonePad label="FORMING CELL" position={[5.7, 8]} size={[4.5, 9]} color="#777b78" />
@@ -46,7 +46,7 @@ export function GridFloor() {
       <ZonePad label="QA / PACK" position={[11, 1]} size={[7, 8]} color="#71817c" />
       <ZonePad label="FINISHED GOODS" position={[17, 1]} size={[6, 8]} color="#788077" />
 
-      <AgvAisle />
+      <AgvAisle /></>}
     </group>
   )
 }

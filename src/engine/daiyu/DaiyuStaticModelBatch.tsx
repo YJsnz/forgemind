@@ -7,6 +7,7 @@ import { objectToWorld } from '../../game/grid'
 import type { BuildType, FactoryObject } from '../../game/types'
 import type { DroneRuntimeSnapshot } from '../../game/simulation'
 import type { AgvRuntimeSnapshot } from '../../game/simulation'
+import { NON_VEHICLE_BUILDING_VISUAL_SCALE, PRODUCTION_MACHINE_VISUAL_SCALE } from '../../scene/industrialVisualScale'
 
 const UP = new THREE.Vector3(0, 1, 0)
 const SCALE_ONE = new THREE.Vector3(1, 1, 1)
@@ -21,8 +22,8 @@ const STATIC_MODEL_SPECS: Partial<Record<BuildType, {
 }>> = {
   machine: {
     path: '/models/industrial/realvirtual_high_detail.glb',
-    targetFootprint: 1.3,
-    targetHeight: 1.2,
+    targetFootprint: 1.3 * PRODUCTION_MACHINE_VISUAL_SCALE,
+    targetHeight: 1.2 * PRODUCTION_MACHINE_VISUAL_SCALE,
   },
   agv: {
     path: '/models/forgecore/forgecore_agv.glb',
@@ -38,18 +39,18 @@ const STATIC_MODEL_SPECS: Partial<Record<BuildType, {
   },
   press: {
     path: '/models/industrial/hydraulic_press_detail.glb',
-    targetFootprint: 1.72,
-    targetHeight: 1.6,
+    targetFootprint: 1.72 * PRODUCTION_MACHINE_VISUAL_SCALE,
+    targetHeight: 1.6 * PRODUCTION_MACHINE_VISUAL_SCALE,
   },
   washing: {
     path: '/models/industrial/wash_deburr_detail.glb',
-    targetFootprint: 1.7,
-    targetHeight: 1.45,
+    targetFootprint: 1.7 * PRODUCTION_MACHINE_VISUAL_SCALE,
+    targetHeight: 1.45 * PRODUCTION_MACHINE_VISUAL_SCALE,
   },
   storage: {
     path: '/models/industrial/pallet_buffer_detail.glb',
-    targetFootprint: 1.7,
-    targetHeight: 1.35,
+    targetFootprint: 1.7 * NON_VEHICLE_BUILDING_VISUAL_SCALE,
+    targetHeight: 1.35 * NON_VEHICLE_BUILDING_VISUAL_SCALE,
   },
 }
 
@@ -81,7 +82,7 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
   objects: FactoryObject[]
   motion?: ReadonlyMap<string, DynamicRenderSnapshot & { position: { x: number; y?: number; z: number } }>
   castShadows?: boolean
-  onSelect: (id: string) => void
+  onSelect?: (id: string) => void
 }) {
   const spec = STATIC_MODEL_SPECS[type]!
   const gltf = useGLTF(spec.path)
@@ -111,9 +112,9 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
       mesh.count = instance
       mesh.instanceMatrix.needsUpdate = true
       mesh.computeBoundingSphere()
-      if (type === 'agv') mesh.frustumCulled = false
+      if (type === 'agv' || type === 'drone') mesh.frustumCulled = false
     })
-  }, [batches, objects])
+  }, [batches, objects, type])
 
   useLayoutEffect(() => {
     if ((type !== 'agv' && type !== 'drone') || !motion) return
@@ -176,9 +177,11 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
       })
       mesh.instanceMatrix.needsUpdate = true
     })
+
   })
 
   const selectFromBatch = (localCount: number) => (event: ThreeEvent<MouseEvent>) => {
+    if (!onSelect) return
     event.stopPropagation()
     if (event.instanceId === undefined) return
     const object = objects[Math.floor(event.instanceId / localCount)]
@@ -198,9 +201,29 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
           visible={objects.length > 0}
           castShadow={castShadows}
           receiveShadow
-          onClick={selectFromBatch(batch.matrices.length)}
+          onClick={onSelect && type !== 'drone' ? selectFromBatch(batch.matrices.length) : undefined}
         />
       ))}
+      {type === 'drone' && onSelect && objects.map((object) => {
+        const runtime = motion?.get(object.id)
+        const world = runtime?.position ?? objectToWorld(object)
+        return (
+          <mesh
+            key={`selection:${object.id}`}
+            name={`daiyu-drone-selection-hitbox:${object.id}`}
+            position={[world.x, (runtime?.position.y ?? (spec.baseY ?? 0)) + spec.targetHeight / 2, world.z]}
+            rotation={[0, runtime?.headingY ?? rotationAngle(object.rotation), 0]}
+            frustumCulled={false}
+            onClick={(event) => {
+              event.stopPropagation()
+              onSelect(object.id)
+            }}
+          >
+            <boxGeometry args={[spec.targetFootprint * 1.2, spec.targetHeight * 1.25, spec.targetFootprint * 1.2]} />
+            <meshBasicMaterial transparent opacity={0.001} depthWrite={false} colorWrite={false} />
+          </mesh>
+        )
+      })}
     </group>
   )
 })
