@@ -17,6 +17,7 @@ import { SimulationEngine } from './simulation'
 // interpolation to stay responsive without forcing a React update every frame.
 const SNAPSHOT_HZ = 20
 const SNAPSHOT_INTERVAL = 1000 / SNAPSHOT_HZ
+const LARGE_FACTORY_SNAPSHOT_INTERVAL = 1000 / 10
 
 /** 种子：MVP 固定种子，保证可复现（§3.3） */
 const SEED = 20260813
@@ -51,7 +52,8 @@ export function SimulationRunner() {
       const st = useForgeMindStore.getState()
       if (st.simPlaying) {
         engine!.advance(dtReal * st.simSpeed)
-        if (now - lastPush >= SNAPSHOT_INTERVAL) {
+        const snapshotInterval = st.objects.length > 120 ? LARGE_FACTORY_SNAPSHOT_INTERVAL : SNAPSHOT_INTERVAL
+        if (now - lastPush >= snapshotInterval) {
           lastPush = now
           st.setSimSnapshot(engine!.getSnapshot())
         }
