@@ -19,7 +19,7 @@ try {
   })
 
   const exitCode = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [outfile], { stdio: 'inherit' })
+    const child = spawn(process.execPath, [outfile, ...process.argv.slice(3)], { stdio: 'inherit' })
     child.once('error', reject)
     child.once('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)))
   })

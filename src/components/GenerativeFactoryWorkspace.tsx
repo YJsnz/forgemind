@@ -1,8 +1,11 @@
 import { stagger } from 'animejs'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { diagnoseFactory, type FactoryFloorDiagnostic } from '../game/factoryDiagnostics'
+import { analyzeFactory, applyFactoryPatchToSave, buildFactoryPatchProposal, createFactoryVersion, simulateFactoryBranch, validateFactoryPatch } from '../game/factoryAgent'
+import type { AgentAnalysisResult, AgentMode, BranchSimulationResult, FactoryPatch } from '../game/agentTypes'
 import { requestFactorySpec } from '../game/factoryAI'
-import { DEFAULT_COST_ASSUMPTIONS, evaluateWhatIf, generateFactoryAdjustments, generateFactoryCandidates, parseGenerationBrief, type GeneratedCandidate, type GenerationSpec, type WhatIfMutation, type WhatIfResult } from '../game/generativeFactory'
+import { DEFAULT_COST_ASSUMPTIONS, parseGenerationBrief, type GeneratedCandidate, type GenerationSpec, type WhatIfMutation, type WhatIfResult } from '../game/generativeFactory'
+import { startGenerativePlanner, startGenerativeWhatIf } from '../game/generativePlanner'
 import { occupiedCells } from '../game/grid'
 import type { FactoryFloorId } from '../game/types'
 import { useForgeMindStore } from '../store/forgeMind'
@@ -21,14 +24,18 @@ const GENERATION_STEPS = [
 
 const DEFAULT_BRIEF = '我要生产齿轮箱。每小时目标 120 件。场地 30m × 20m。CNC 最多 4 台。AGV 最多 3 台。尽量降低能耗。'
 
-export function GenerativeFactoryWorkspace() {
+export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChange?: (surface: 'diagnose' | 'generate') => void }) {
   const frameRef = useRef<HTMLDivElement>(null)
   const generationRequest = useRef(0)
+  const plannerCancel = useRef<(() => void) | null>(null)
+  const whatIfRequest = useRef(0)
+  const whatIfCancel = useRef<(() => void) | null>(null)
   const factoryId = useForgeMindStore((s) => s.factoryId)
   const applyLayout = useForgeMindStore((s) => s.applyLayout)
   const undo = useForgeMindStore((s) => s.undo)
   const canUndo = useForgeMindStore((s) => s.canUndo)
   const objects = useForgeMindStore((s) => s.objects)
+  const items = useForgeMindStore((s) => s.items)
   const snapshot = useForgeMindStore((s) => s.simSnapshot)
   const recipes = useForgeMindStore((s) => s.recipes)
   const floorCount = useForgeMindStore((s) => s.floorCount)
@@ -53,6 +60,13 @@ export function GenerativeFactoryWorkspace() {
   const [whatIf, setWhatIf] = useState<WhatIfResult | null>(null)
   const [isWhatIfRunning, setIsWhatIfRunning] = useState(false)
   const [selectedDiagnosticFloor, setSelectedDiagnosticFloor] = useState<FactoryFloorId | 0>(0)
+  const [agentObjective, setAgentObjective] = useState('诊断当前工厂，找出阻塞、库存、物流和利用率问题，并给出可验证的最小调整方案')
+  const [agentMode, setAgentMode] = useState<AgentMode>('diagnose')
+  const [agentAnalysis, setAgentAnalysis] = useState<AgentAnalysisResult | null>(null)
+  const [agentPatch, setAgentPatch] = useState<FactoryPatch | null>(null)
+  const [agentBranch, setAgentBranch] = useState<BranchSimulationResult | null>(null)
+  const [agentBusy, setAgentBusy] = useState(false)
+  const [agentHistory, setAgentHistory] = useState<AgentAnalysisResult[]>([])
 
   const selectedCandidate = useMemo(
     () => candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0] ?? null,
@@ -63,6 +77,11 @@ export function GenerativeFactoryWorkspace() {
 
   useEffect(() => {
     generationRequest.current += 1
+    plannerCancel.current?.()
+    plannerCancel.current = null
+    whatIfRequest.current += 1
+    whatIfCancel.current?.()
+    whatIfCancel.current = null
     setCandidates([])
     setSelectedId(null)
     setGenerationStep(-1)
@@ -70,18 +89,31 @@ export function GenerativeFactoryWorkspace() {
     setWhatIf(null)
     setIsWhatIfRunning(false)
     setSelectedDiagnosticFloor(0)
+    setAgentAnalysis(null)
+    setAgentPatch(null)
+    setAgentBranch(null)
+    try {
+      const savedRuns = JSON.parse(window.localStorage.getItem(`forgemind.agent-runs.${factoryId}`) ?? '[]')
+      const history = Array.isArray(savedRuns) ? savedRuns.filter((run): run is AgentAnalysisResult => Boolean(run && typeof run.runId === 'string' && Array.isArray(run.findings))).slice(0, 8) : []
+      setAgentHistory(history)
+    } catch {
+      setAgentHistory([])
+    }
     setNotice(`${factoryId.toUpperCase()} 等待诊断任务`)
   }, [factoryId])
 
+  useEffect(() => () => {
+    generationRequest.current += 1
+    plannerCancel.current?.()
+    plannerCancel.current = null
+    whatIfRequest.current += 1
+    whatIfCancel.current?.()
+    whatIfCancel.current = null
+  }, [])
+
   useEffect(() => {
     if (!isGenerating) return
-    if (generationStep >= GENERATION_STEPS.length - 1) {
-      const finishTimer = window.setTimeout(() => {
-        setIsGenerating(false)
-        setNotice('候选方案已完成，等待选择')
-      }, 650)
-      return () => window.clearTimeout(finishTimer)
-    }
+    if (generationStep >= GENERATION_STEPS.length - 1) return
     const timer = window.setTimeout(() => setGenerationStep((step) => step + 1), 430)
     return () => window.clearTimeout(timer)
   }, [generationStep, isGenerating])
@@ -112,6 +144,8 @@ export function GenerativeFactoryWorkspace() {
   }
 
   const generate = () => {
+    plannerCancel.current?.()
+    plannerCancel.current = null
     const request = ++generationRequest.current
     const parsed = parseGenerationBrief(brief, spec)
     setSpec(parsed.spec)
@@ -125,16 +159,46 @@ export function GenerativeFactoryWorkspace() {
       if (request !== generationRequest.current) return
       setSpec(resolvedSpec)
       setSpecSource(source)
-      const nextCandidates = hasCurrentLine
-        ? generateFactoryAdjustments(objects, resolvedSpec, factoryId)
-        : generateFactoryCandidates(resolvedSpec, factoryId)
-      setCandidates(nextCandidates)
-      setSelectedId(nextCandidates[0]?.id ?? null)
-      setNotice(`${source === 'rule' || source === 'fallback' ? '规则解析已接管' : `${source.toUpperCase()} 已返回约束`}，${hasCurrentLine ? '完成当前工厂调整评估' : '完成结构校验与副本仿真'}`)
+      const task = startGenerativePlanner({
+        mode: hasCurrentLine ? 'adjust' : 'generate',
+        spec: resolvedSpec,
+        factoryKey: factoryId,
+        currentObjects: hasCurrentLine ? objects : undefined,
+      })
+      plannerCancel.current = task.cancel
+      setNotice(`${source === 'rule' || source === 'fallback' ? '规则解析已接管' : `${source.toUpperCase()} 已返回约束`}，黛玉规划线程正在搜索候选并运行副本仿真`)
+      task.promise
+        .then((nextCandidates) => {
+          if (request !== generationRequest.current) return
+          setCandidates(nextCandidates)
+          setSelectedId(nextCandidates[0]?.id ?? null)
+          setGenerationStep(GENERATION_STEPS.length - 1)
+          setIsGenerating(false)
+          setNotice(`${source === 'rule' || source === 'fallback' ? '规则解析已接管' : `${source.toUpperCase()} 已返回约束`}，${hasCurrentLine ? '完成当前工厂调整评估' : '完成结构校验与副本仿真'}`)
+        })
+        .catch((error: unknown) => {
+          if (request !== generationRequest.current || (error instanceof Error && error.name === 'AbortError')) return
+          setIsGenerating(false)
+          setGenerationStep(-1)
+          setNotice(`黛玉规划失败：${error instanceof Error ? error.message : '未知错误'}`)
+        })
+        .finally(() => {
+          if (request === generationRequest.current) plannerCancel.current = null
+        })
     }
     requestFactorySpec(brief, parsed.spec)
       .then((reply) => commitGeneration(mergeGenerationSpec(parsed.spec, reply.spec), reply.source))
       .catch(() => commitGeneration(parsed.spec, 'fallback'))
+  }
+
+  const cancelGeneration = () => {
+    if (!isGenerating) return
+    generationRequest.current += 1
+    plannerCancel.current?.()
+    plannerCancel.current = null
+    setIsGenerating(false)
+    setGenerationStep(-1)
+    setNotice('已取消当前黛玉规划，工厂布局未改变')
   }
 
   const applyCandidate = () => {
@@ -157,17 +221,117 @@ export function GenerativeFactoryWorkspace() {
 
   const runWhatIf = (mutation: WhatIfMutation) => {
     if (isWhatIfRunning) return
+    whatIfCancel.current?.()
+    const request = ++whatIfRequest.current
     setIsWhatIfRunning(true)
     const baseObjects = selectedCandidate?.objects ?? objects
-    window.setTimeout(() => {
-      try {
-        const result = evaluateWhatIf(baseObjects, spec, mutation, factoryId)
+    const task = startGenerativeWhatIf({ baseObjects, spec, mutation, factoryKey: factoryId })
+    whatIfCancel.current = task.cancel
+    setNotice('What-if 已提交到黛玉规划线程，页面仍可继续操作')
+    task.promise
+      .then((result) => {
+        if (request !== whatIfRequest.current) return
         setWhatIf(result)
         setNotice(`What-if 已完成：${result.label}`)
-      } finally {
+      })
+      .catch((error: unknown) => {
+        if (request !== whatIfRequest.current || (error instanceof Error && error.name === 'AbortError')) return
+        setNotice(`What-if 失败：${error instanceof Error ? error.message : '未知错误'}`)
+      })
+      .finally(() => {
+        if (request !== whatIfRequest.current) return
+        whatIfCancel.current = null
         setIsWhatIfRunning(false)
-      }
+      })
+  }
+
+  const currentAgentContext = () => ({ objects, recipes, items, snapshot, floorCount })
+
+  const runAgent = () => {
+    if (agentBusy) return
+    setAgentBusy(true)
+    setAgentPatch(null)
+    setAgentBranch(null)
+    window.setTimeout(() => {
+      const result = analyzeFactory(agentObjective, currentAgentContext(), agentMode)
+      setAgentAnalysis(result)
+      setAgentHistory((current) => {
+        const next = [result, ...current.filter((run) => run.runId !== result.runId)].slice(0, 8)
+        window.localStorage.setItem(`forgemind.agent-runs.${factoryId}`, JSON.stringify(next))
+        return next
+      })
+      setAgentBusy(false)
+      setNotice(`Agent ${agentMode === 'diagnose' ? '诊断' : '计划设计'}完成：${result.findings.length} 条结构化结论`)
     }, 0)
+  }
+
+  const proposeAgentPatch = () => {
+    if (!agentAnalysis) return
+    const patch = buildFactoryPatchProposal(agentAnalysis, currentAgentContext())
+    setAgentPatch(patch)
+    setAgentBranch(null)
+    setNotice(patch ? `已生成 ${patch.operations.length} 项待审批 Patch` : '当前 Finding 没有安全的自动补丁，需要人工定位')
+  }
+
+  const approveAgentPatch = () => {
+    if (!agentPatch) return
+    setAgentPatch({ ...agentPatch, status: 'approved' })
+    setNotice('Patch 已审批，等待分支仿真或应用')
+  }
+
+  const rejectAgentPatch = () => {
+    if (!agentPatch) return
+    setAgentPatch({ ...agentPatch, status: 'rejected' })
+    setAgentBranch(null)
+    setNotice('Patch 已拒绝，当前工厂没有被修改')
+  }
+
+  const runAgentBranch = () => {
+    if (!agentPatch) return
+    const errors = validateFactoryPatch(agentPatch, currentAgentContext())
+    if (errors.length > 0) {
+      setNotice(errors[0])
+      return
+    }
+    setAgentBranch(simulateFactoryBranch(agentPatch, currentAgentContext(), 60))
+    setNotice('Patch 分支仿真已完成，可比较基线与提案指标')
+  }
+
+  const applyAgentPatch = () => {
+    if (!agentPatch) return
+    const context = currentAgentContext()
+    const errors = validateFactoryPatch(agentPatch, context)
+    if (errors.length > 0) {
+      setNotice(errors[0])
+      return
+    }
+    const nextSave = applyFactoryPatchToSave(useForgeMindStore.getState().exportSave(), agentPatch)
+    applyLayout(nextSave.objects, nextSave.recipes, nextSave.items)
+    setAgentPatch({ ...agentPatch, status: 'applied' })
+    setNotice('Patch 已应用到当前工厂，仿真已重置')
+  }
+
+  const rollbackAgentPatch = () => {
+    if (!agentPatch || agentPatch.status !== 'applied') return
+    const context = currentAgentContext()
+    const rollbackPatch: FactoryPatch = {
+      ...agentPatch,
+      id: `${agentPatch.id}-rollback`,
+      status: 'approved',
+      baseVersion: createFactoryVersion(context),
+      operations: agentPatch.inverseOperations,
+      inverseOperations: agentPatch.operations,
+      diffSummary: agentPatch.inverseOperations.map((operation) => operation.reason),
+    }
+    const errors = validateFactoryPatch(rollbackPatch, context)
+    if (errors.length > 0) {
+      setNotice(errors[0])
+      return
+    }
+    const nextSave = applyFactoryPatchToSave(useForgeMindStore.getState().exportSave(), rollbackPatch)
+    applyLayout(nextSave.objects, nextSave.recipes, nextSave.items)
+    setAgentPatch({ ...agentPatch, status: 'rolled_back' })
+    setNotice('Patch 已回滚，仿真已重置')
   }
 
   return (
@@ -175,14 +339,20 @@ export function GenerativeFactoryWorkspace() {
       <div ref={frameRef} className="fm-generative-frame glass3d">
         <header className="fm-generative-header">
           <div>
-            <div className="fm-generative-kicker"><span>04</span> / AI FACTORY DIAGNOSTICS</div>
-            <h1>从诊断到调整 <em>{hasCurrentLine ? 'ADJUSTMENT ENGINE' : 'GENERATIVE FACTORY'}</em></h1>
-            <p>读取当前工厂状态，优先保留可用设备并修复物流；只有原位不可行时才重建整线。最终指标以副本仿真为准。</p>
+            <div className="fm-generative-kicker"><span>04</span> / FORGECORE AGENT DIAGNOSTICS</div>
+            <h1>工厂诊断与调整 <em>{hasCurrentLine ? 'AGENT + ADJUSTMENT ENGINE' : 'AGENT CONTROL ROOM'}</em></h1>
+            <p>诊断主流程采用 ForgeCore 的目标、工厂图、证据链和 Patch 语义；生成式布局继续作为受控的方案执行器。</p>
           </div>
-          <div className={`fm-generative-status ${isGenerating ? 'is-running' : ''}`}>
-            <i />
-            <b>{isGenerating ? 'GENERATING' : 'DESIGN READY'}</b>
-            <small>{notice}</small>
+          <div className="fm-generative-header-tools">
+            <div className="fm-generative-surface-switch" role="group" aria-label="诊断工作区模式">
+              <button type="button" onClick={() => onSurfaceChange?.('diagnose')}><span>诊断</span><small>Agent</small></button>
+              <button type="button" className="is-active" aria-current="page"><span>生成式工厂</span><small>黛玉规划</small></button>
+            </div>
+            <div className={`fm-generative-status ${isGenerating ? 'is-running' : ''}`}>
+              <i />
+              <b>{isGenerating ? 'GENERATING' : 'DESIGN READY'}</b>
+              <small>{notice}</small>
+            </div>
           </div>
         </header>
 
@@ -193,6 +363,26 @@ export function GenerativeFactoryWorkspace() {
           <div><span>利用率</span><b>{liveDiagnostic.utilization.toFixed(1)}%</b></div>
           <div className="fm-generative-live-note"><i />{liveDiagnostic.recommendation}</div>
         </div>
+
+        <AgentControlRoom
+          objective={agentObjective}
+          mode={agentMode}
+          analysis={agentAnalysis}
+          patch={agentPatch}
+          branch={agentBranch}
+          history={agentHistory}
+          busy={agentBusy}
+          baselineVersion={createFactoryVersion(currentAgentContext())}
+          onObjectiveChange={setAgentObjective}
+          onModeChange={setAgentMode}
+          onRun={runAgent}
+          onPropose={proposeAgentPatch}
+          onApprove={approveAgentPatch}
+          onReject={rejectAgentPatch}
+          onBranch={runAgentBranch}
+          onApply={applyAgentPatch}
+          onRollback={rollbackAgentPatch}
+        />
 
         <FloorDiagnosticsPanel
           floors={liveDiagnostic.floors}
@@ -222,9 +412,12 @@ export function GenerativeFactoryWorkspace() {
               <label className="fm-generative-field"><span>单位贡献 / 件</span><input type="number" min={0} value={spec.economics?.contributionPerUnit ?? DEFAULT_COST_ASSUMPTIONS.contributionPerUnit} onChange={(event) => updateEconomics('contributionPerUnit', Number(event.target.value) || 0)} /></label>
               <label className="fm-generative-field"><span>月运行 / H</span><input type="number" min={1} value={spec.economics?.operatingHoursPerMonth ?? DEFAULT_COST_ASSUMPTIONS.operatingHoursPerMonth} onChange={(event) => updateEconomics('operatingHoursPerMonth', Number(event.target.value) || 1)} /></label>
             </div>
-            <button className="fm-generative-primary" type="button" onClick={generate} disabled={isGenerating}>
-              <span>{isGenerating ? '分析中…' : hasCurrentLine ? 'AI ADJUST CURRENT FACTORY' : 'AI GENERATE FACTORY'}</span><b>↗</b>
-            </button>
+            <div className="fm-generative-primary-actions">
+              <button className="fm-generative-primary" type="button" onClick={generate} disabled={isGenerating}>
+                <span>{isGenerating ? '分析中…' : hasCurrentLine ? 'AI ADJUST CURRENT FACTORY' : 'AI GENERATE FACTORY'}</span><b>↗</b>
+              </button>
+              {isGenerating && <button className="fm-generative-cancel" type="button" onClick={cancelGeneration}>取消规划</button>}
+            </div>
             <div className="fm-generative-input-note"><i /> {specSource.toUpperCase()} → {hasCurrentLine ? 'DIAGNOSE → ADJUSTMENT ENGINE' : 'RECIPE GRAPH → PORT ROUTER'} → SIMULATION</div>
           </section>
 
@@ -263,6 +456,94 @@ export function GenerativeFactoryWorkspace() {
 
         <footer className="fm-generative-footer"><span><i /> {factoryId.toUpperCase()} / AI FACTORY DIAGNOSTICS</span><span>{objects.length.toString().padStart(2, '0')} ASSETS · {liveDiagnostic.openIssues.length} OPEN ISSUES</span><strong>{selectedCandidate ? 'SIMULATION VERIFIED / APPLY AFTER REVIEW' : 'READY FOR DIAGNOSIS'}</strong></footer>
       </div>
+    </section>
+  )
+}
+
+export function AgentControlRoom({
+  objective,
+  mode,
+  analysis,
+  patch,
+  branch,
+  history,
+  busy,
+  baselineVersion,
+  onObjectiveChange,
+  onModeChange,
+  onRun,
+  onPropose,
+  onApprove,
+  onReject,
+  onBranch,
+  onApply,
+  onRollback,
+}: {
+  objective: string
+  mode: AgentMode
+  analysis: AgentAnalysisResult | null
+  patch: FactoryPatch | null
+  branch: BranchSimulationResult | null
+  history: AgentAnalysisResult[]
+  busy: boolean
+  baselineVersion: string
+  onObjectiveChange: (value: string) => void
+  onModeChange: (value: AgentMode) => void
+  onRun: () => void
+  onPropose: () => void
+  onApprove: () => void
+  onReject: () => void
+  onBranch: () => void
+  onApply: () => void
+  onRollback: () => void
+}) {
+  return (
+    <section className="fm-agent-control-room" aria-label="ForgeCore Agent 控制室">
+      <div className="fm-agent-control-head">
+        <div>
+          <span>05 / AGENT CONTROL ROOM</span>
+          <h2>结构化诊断与受控优化</h2>
+          <p>沿用 ForgeCore 的目标编译、工厂图、证据链和 Patch 审批语义；本地规则负责事实、碰撞、库存与仿真。</p>
+        </div>
+        <div className="fm-agent-control-version"><small>RUN HISTORY {history.length}</small><b>{baselineVersion.slice(-8)}</b></div>
+      </div>
+      <div className="fm-agent-control-input">
+        <textarea value={objective} onChange={(event) => onObjectiveChange(event.target.value)} rows={2} aria-label="Agent 目标" />
+        <div className="fm-agent-control-actions">
+          <select value={mode} onChange={(event) => onModeChange(event.target.value as AgentMode)} aria-label="Agent 模式">
+            <option value="diagnose">只读诊断</option>
+            <option value="plan_design">计划设计 / Patch</option>
+          </select>
+          <button type="button" className="is-primary" onClick={onRun} disabled={busy}>{busy ? '运行中…' : '运行 Agent'}</button>
+          <button type="button" onClick={onPropose} disabled={!analysis || busy}>生成 Patch</button>
+        </div>
+      </div>
+      {!analysis ? <div className="fm-agent-empty"><b>等待一次 Agent Run</b><span>会依次读取 Snapshot、Factory Graph、Metrics、Inventory、Logistics、Bottleneck，并保留可追溯证据。</span></div> : (
+        <>
+          <div className="fm-agent-summary">
+            <div><span>RUN</span><b>{analysis.headline}</b><small>置信度 {analysis.confidence}% · {analysis.metrics.timeSec.toFixed(1)}s evidence window</small></div>
+            <div><span>GRAPH</span><b>{analysis.graph.nodes.length} 节点 / {analysis.graph.edges.length} 边</b><small>{analysis.graph.invalidReferences.length} invalid reference</small></div>
+            <div><span>METRICS</span><b>{analysis.metrics.throughputPerHour.toFixed(1)} / H</b><small>{analysis.metrics.utilization.toFixed(1)}% utilization · WIP {analysis.metrics.wip}</small></div>
+          </div>
+          <div className="fm-agent-findings">
+            <div className="fm-agent-section-title"><span>FINDINGS / EVIDENCE</span><b>{analysis.findings.length} 条</b></div>
+            {analysis.findings.slice(0, 8).map((finding) => (
+              <article key={finding.id} className={`fm-agent-finding is-${finding.severity}`}>
+                <i>{finding.severity === 'critical' ? '!' : finding.severity === 'warning' ? '△' : finding.severity === 'success' ? '✓' : '·'}</i>
+                <div><strong>{finding.title}</strong><p>{finding.detail}</p><small>{finding.recommendation}</small><em>{finding.evidence.map((evidence) => `${evidence.label}: ${evidence.value}`).join(' · ')}</em></div>
+              </article>
+            ))}
+          </div>
+          <div className="fm-agent-tool-strip"><span>READ-ONLY TOOLS</span>{analysis.toolCalls.map((tool) => <b key={tool.name} title={tool.summary}>{tool.name.replace('inspect_', '').replace('get_', '')}</b>)}</div>
+          {history.length > 1 && <div className="fm-agent-history"><span>RECENT RUNS</span>{history.slice(0, 4).map((run) => <b key={run.runId} title={run.summary}>{new Date(run.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {run.findings.length} findings · {run.confidence}%</b>)}</div>}
+        </>
+      )}
+      {patch && <div className="fm-agent-patch">
+        <div className="fm-agent-section-title"><span>PATCH PACKAGE / {patch.status.toUpperCase()}</span><b>{patch.operations.length} ops · {patch.risk} risk</b></div>
+        <div className="fm-agent-patch-list">{patch.operations.map((operation) => <span key={operation.id}><i />{operation.reason}</span>)}</div>
+        <div className="fm-agent-patch-actions"><button type="button" onClick={onApprove} disabled={patch.status !== 'draft'}>审批 Patch</button><button type="button" onClick={onReject} disabled={patch.status !== 'draft'}>拒绝</button><button type="button" onClick={onBranch} disabled={patch.status === 'draft' || patch.status === 'applied' || patch.status === 'rejected' || patch.status === 'rolled_back'}>分支仿真</button><button type="button" className="is-primary" onClick={onApply} disabled={patch.status !== 'approved'}>应用到当前工厂</button><button type="button" onClick={onRollback} disabled={patch.status !== 'applied'}>回滚</button></div>
+        {branch && <div className={`fm-agent-branch is-${branch.recommendation}`}><b>BRANCH / {branch.recommendation.toUpperCase()}</b><span>吞吐 {branch.baseline.throughputPerHour.toFixed(1)} → {branch.proposal.throughputPerHour.toFixed(1)} / H</span><span>阻塞 {branch.baseline.blockedObjects} → {branch.proposal.blockedObjects}</span><small>{branch.explanation}</small></div>}
+      </div>}
     </section>
   )
 }

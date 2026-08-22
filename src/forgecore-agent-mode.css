@@ -1,0 +1,12 @@
+.fc-agent-window .agent-mode-switch{display:inline-flex;min-height:40px;align-items:center;gap:8px;padding:6px 13px;color:#111;background:#fff;border:1px solid #111;border-radius:999px;cursor:pointer;text-align:left}
+.fc-agent-window .agent-mode-switch:hover{color:#fff;background:#111}
+.fc-agent-window .agent-mode-switch:disabled{cursor:not-allowed;opacity:.55}
+.fc-agent-window .agent-mode-switch svg{width:16px}
+.fc-agent-window .agent-mode-switch span,.fc-agent-window .agent-mode-switch small{display:block}
+.fc-agent-window .agent-mode-switch span{font-size:13px;font-weight:600;line-height:1.1}
+.fc-agent-window .agent-mode-switch small{margin-top:2px;color:#777;font-size:10px;line-height:1}
+.fc-agent-window .agent-mode-switch:hover small{color:#ccc}
+
+@media(max-width:820px){
+  .fc-agent-window .page-heading__actions{flex-wrap:wrap;justify-content:flex-end}
+}

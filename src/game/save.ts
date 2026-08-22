@@ -80,7 +80,7 @@ export function parseSave(json: string): FactorySave {
   return {
     version: SAVE_VERSION,
     savedAt: typeof data.savedAt === 'string' ? data.savedAt : undefined,
-    name: typeof data.name === 'string' && data.name.trim() ? data.name.trim().slice(0, 80) : '未命名工厂',
+    name: normalizeStoredLabel(data.name, '未命名工厂').slice(0, 80),
     floorCount,
     floorNames: parseFloorNames(data.floorNames, floorCount),
     objects,
@@ -216,8 +216,51 @@ function parseFloorNames(value: unknown, floorCount: number): string[] {
   const source = Array.isArray(value) ? value : []
   return Array.from({ length: floorCount }, (_, index) => {
     const name = source[index]
-    return typeof name === 'string' && name.trim() ? name.trim().slice(0, 30) : `${index + 1}F 生产层`
+    return normalizeStoredLabel(name, `${index + 1}F 生产层`).slice(0, 30)
   })
+}
+
+// Some old Windows/browser paths decoded UTF-8 Chinese as Windows-1252 before
+// persisting the save (for example: "åŽŸæ–™" instead of "原料"). Repair only
+// strongly suspicious labels so normal user-entered names remain untouched.
+const WINDOWS_1252_EXTENDED_BYTES: Record<number, number> = {
+  0x20ac: 0x80, 0x201a: 0x82, 0x192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86,
+  0x2021: 0x87, 0x2c6: 0x88, 0x2030: 0x89, 0x160: 0x8a, 0x2039: 0x8b, 0x152: 0x8c,
+  0x17d: 0x8e, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95,
+  0x2013: 0x96, 0x2014: 0x97, 0x2dc: 0x98, 0x2122: 0x99, 0x161: 0x9a, 0x203a: 0x9b,
+  0x153: 0x9c, 0x17e: 0x9e, 0x178: 0x9f,
+}
+
+function repairMojibake(value: string): string {
+  if (!/[ÃÂâåæçèéïð]|[\u0080-\u009f]|[ŽŸ]/.test(value)) return value
+  const decodeCandidate = (candidate: string): string | null => {
+    try {
+      const bytes = Uint8Array.from(Array.from(candidate), (character) => {
+        const code = character.charCodeAt(0)
+        return code <= 0xff ? code : WINDOWS_1252_EXTENDED_BYTES[code] ?? 0x3f
+      })
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    } catch {
+      return null
+    }
+  }
+  const suspicious = (text: string) => (text.match(/[ÃÂâåæçèéïð]|[ŽŸ]|�/g) ?? []).length
+  const candidates = [value, value.replace(/([\u0080-\u009fŽŸŠšŒœŽžŸ–—…™]) (?=[ÃÂåæçèéïð])/g, '$1\u00a0')]
+  try {
+    for (const candidate of candidates) {
+      const repaired = decodeCandidate(candidate)
+      if (repaired && /[\u3400-\u9fff]/.test(repaired) && suspicious(repaired) < suspicious(value)) return repaired
+    }
+    return value
+  } catch {
+    return value
+  }
+}
+
+export function normalizeStoredLabel(value: unknown, fallback: string): string {
+  if (typeof value !== 'string' || !value.trim()) return fallback
+  const label = repairMojibake(value.trim())
+  return (label.match(/\?/g)?.length ?? 0) >= 3 || label.includes('�') ? fallback : label
 }
 
 function parsePortConfig(value: unknown): FactoryObject['portConfig'] {

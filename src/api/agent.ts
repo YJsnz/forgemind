@@ -1,0 +1,35 @@
+import type { AgentAnalysisResult as LocalAnalysis, FactoryPatch as LocalPatch, FactoryPatchOperation } from '../game/agentTypes'
+import type { FactorySave } from '../game/save'
+
+const BASE=(import.meta.env.VITE_BACKEND_BASE_URL as string|undefined)??'http://localhost:8080'
+export type AgentRunMode='read_only'|'plan_design'
+export interface RemoteToolCall{id:string;tool_name:string;status:string;duration_ms:number|null;attempt:number;output_data:Record<string,unknown>}
+export interface RemoteStep{id:string;position:number;key:string;title:string;status:string;detail:string}
+export interface RemotePatch{id:string;run_id:string;factory_id:string;base_version:string;status:'awaiting_approval'|'approved'|'rejected'|'applied'|'rolled_back'|'failed';risk_level:'low'|'medium'|'high';operations:RemoteOperation[];inverse_operations:RemoteOperation[];validation:{ok?:boolean;errors?:string[]};diff_summary:Record<string,unknown>;applied_save?:FactorySave|null;approvals:Array<{id:string;status:string;decision_note:string|null}>}
+export interface RemoteOperation{op_id:string;kind:'move_object'|'update_config'|'adjust_inventory'|'add_object'|'remove_object';object_id?:string|null;params:Record<string,unknown>;risk:string;summary:string;preconditions:Array<Record<string,unknown>>}
+export interface RemoteRun{id:string;factory_id:string;objective:string;mode:AgentRunMode;status:string;provider:string;llm_configured:boolean;summary:string;result:RemoteAnalysis|null;compiled_goal:Record<string,unknown>|null;steps:RemoteStep[];tool_calls:RemoteToolCall[];events:Array<{id:string;sequence:number;event_name:string;data:Record<string,unknown>}>;patches:RemotePatch[];created_at:string;updated_at:string;completed_at:string|null}
+export interface RemoteAnalysis{headline:string;assessment:string;confidence:number;snapshot:Record<string,unknown>;graph_summary:Record<string,unknown>;metrics:Record<string,unknown>;findings:Array<{id:string;category:string;severity:string;title:string;detail:string;evidence:Array<{label:string;value:string;object_id?:string|null}>;object_ids:string[];recommendation:string}>;local_result?:LocalAnalysis}
+
+function headers(json=false){const token=localStorage.getItem('forgemind.token');return{...(json?{'Content-Type':'application/json'}:{}),...(token?{Authorization:`Bearer ${token}`}:{})}}
+async function request<T>(path:string,init:RequestInit={}){const response=await fetch(`${BASE}${path}`,{...init,headers:{...headers(init.body!==undefined),...(init.headers??{})}});if(!response.ok){let message=`后端返回 ${response.status}`;try{message=(await response.json() as {error?:string}).error??message}catch{}throw new Error(message)}return await response.json() as T}
+
+export const agentApi={
+ createRun:(factoryId:string,objective:string,mode:AgentRunMode,save:FactorySave)=>request<RemoteRun>('/api/agent/runs',{method:'POST',body:JSON.stringify({factory_id:factoryId,objective,mode,context_snapshot:save})}),
+ analyzeRun:(runId:string,result:LocalAnalysis,patch:LocalPatch|null)=>request<RemoteRun>(`/api/agent/runs/${encodeURIComponent(runId)}/analyze`,{method:'POST',body:JSON.stringify({result:toRemoteAnalysis(result),patch:patch?toRemotePatch(patch):null})}),
+ getRun:(id:string)=>request<RemoteRun>(`/api/agent/runs/${encodeURIComponent(id)}`),
+ listRuns:(factoryId:string)=>request<RemoteRun[]>(`/api/agent/runs?factory_id=${encodeURIComponent(factoryId)}`),
+ cancelRun:(id:string)=>request<RemoteRun>(`/api/agent/runs/${encodeURIComponent(id)}/cancel`,{method:'POST'}),
+ approvePatch:(id:string,note?:string)=>request<RemotePatch>(`/api/agent/patches/${encodeURIComponent(id)}/approve`,{method:'POST',body:JSON.stringify({note:note??null})}),
+ rejectPatch:(id:string,note?:string)=>request<RemotePatch>(`/api/agent/patches/${encodeURIComponent(id)}/reject`,{method:'POST',body:JSON.stringify({note:note??null})}),
+ replanPatch:(id:string,reason:string)=>request<RemoteRun>(`/api/agent/patches/${encodeURIComponent(id)}/replan`,{method:'POST',body:JSON.stringify({rejection_reason:reason})}),
+ applyPatch:(id:string)=>request<RemotePatch>(`/api/agent/patches/${encodeURIComponent(id)}/apply`,{method:'POST'}),
+ rollbackPatch:(id:string)=>request<RemotePatch>(`/api/agent/patches/${encodeURIComponent(id)}/rollback`,{method:'POST'}),
+}
+
+export function subscribeAgent(runId:string,onEvent:()=>void){const controller=new AbortController();void(async()=>{try{const response=await fetch(`${BASE}/api/realtime/agent/${encodeURIComponent(runId)}/stream`,{headers:{Accept:'text/event-stream',...headers()},signal:controller.signal});if(!response.body)return;const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';while(!controller.signal.aborted){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const blocks=buffer.split(/\r?\n\r?\n/);buffer=blocks.pop()??'';for(const block of blocks)if(/^event:\s*(?!ready)/m.test(block))onEvent()}}catch{}})();return()=>controller.abort()}
+
+function toRemoteAnalysis(a:LocalAnalysis):RemoteAnalysis{return{headline:a.headline,assessment:a.summary,confidence:a.confidence/100,snapshot:{factory_version:a.goal.baselineVersion,floor_count:0,object_count:a.graph.nodes.filter(n=>n.kind==='object').length,item_count:a.graph.nodes.filter(n=>n.kind==='item').length,recipe_count:a.graph.nodes.filter(n=>n.kind==='recipe').length,elapsed_sim_sec:a.metrics.timeSec},graph_summary:{node_count:a.graph.nodes.length,edge_count:a.graph.edges.length,invalid_reference_count:a.graph.invalidReferences.length},metrics:{throughput_per_min:a.metrics.throughputPerHour/60,work_in_progress:a.metrics.wip,finished_goods:a.metrics.produced,elapsed_sim_sec:a.metrics.timeSec,sample_count:1,utilization:a.metrics.utilization,blocked_objects:a.metrics.blockedObjects,waiting_vehicles:a.metrics.waitingVehicles},findings:a.findings.map(f=>({id:f.id,category:f.code,severity:f.severity,title:f.title,detail:f.detail,evidence:f.evidence.map(e=>({label:e.label,value:e.value,object_id:e.objectIds?.[0]})),object_ids:f.objectIds,recommendation:f.recommendation})),local_result:a}}
+function toRemotePatch(p:LocalPatch){return{risk_level:p.risk,operations:p.operations.map(toRemoteOperation),inverse_operations:p.inverseOperations.map(toRemoteOperation)}}
+function toRemoteOperation(op:FactoryPatchOperation):RemoteOperation{const base={op_id:op.id,kind:op.kind,object_id:'objectId'in op?op.objectId:null,risk:'low',summary:op.reason,preconditions:[] as Array<Record<string,unknown>>};if(op.kind==='update_config')return{...base,params:{path:op.path,value:op.value}};if(op.kind==='move_object')return{...base,params:{x:op.target.x,z:op.target.z}};if(op.kind==='add_object')return{...base,object_id:op.object.id,params:{object:op.object}};return{...base,params:{}}}
+
+export function remotePatchToLocal(remote:RemotePatch,source:LocalPatch):LocalPatch{const status=remote.status==='awaiting_approval'?'draft':remote.status==='failed'?'rejected':remote.status;return{...source,id:remote.id,status,risk:remote.risk_level}}

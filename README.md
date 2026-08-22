@@ -261,7 +261,7 @@ flowchart TB
 | 生产控制台 | 产线俯视图、设备登记、流向、仿真启动/暂停/倍率/重置 | `src/components/ProductionWorkspace.tsx` |
 | 生产路线 | 生产节点、端口连线、路线关系和产能提示 | `src/components/ProductionRouteWorkspace.tsx` |
 | 仓储 | 库位、物料台账、AGV 任务和无人机跨层运输 | `src/components/WarehouseWorkspace.tsx` |
-| AI 工厂 | A-01/A-02、需求生成、诊断、What-if、Top 3、ROI | `src/components/GenerativeFactoryWorkspace.tsx` |
+| AI 工厂 | A-01/A-02、需求生成、诊断、What-if、Top 3、ROI；布局搜索与副本仿真由 Worker 承担 | `src/components/GenerativeFactoryWorkspace.tsx`、`src/game/generativePlanner.ts` |
 | 视觉检测 | 虚拟相机、检测结果、合格/异常隔离和语音状态 | `src/demos/InspectionDemo.tsx` |
 | 智能管家 | 查询、定位、仿真控制、配方/来料变更确认、ASR/TTS | `src/game/assistantProtocol.ts` |
 
@@ -350,7 +350,8 @@ py -3.10 -m venv .venv
 │  ├─ engine/daiyu/           # 宝钗渲染层的批处理与运行时目录
 │  ├─ game/                   # 纯 TS 领域逻辑与确定性仿真
 │  │  ├─ simulation.ts        # 仿真唯一真相源
-│  │  ├─ generativeFactory.ts # 生成布局、调整、What-if、ROI
+│  │  ├─ generativeFactory.ts # 生成布局、调整、What-if、ROI 的确定性内核
+│  │  ├─ generativePlanner.ts # 规划任务与 Worker 生命周期
 │  │  ├─ factoryDiagnostics.ts # 工厂诊断
 │  │  ├─ agvNavigation.ts     # AGV 网格导航
 │  │  ├─ droneNavigation.ts   # 无人机跨层导航
@@ -426,7 +427,7 @@ npm run save:regression
 npm run models:validate
 ```
 
-稳定回归项包括 `sim:regression`、`assistant:protocol`、`save:regression` 和 `models:validate`。`generative:regression` 的候选生成主流程已接入，但 A-01 调整分支仍可能出现“没有返回 3 个全部可验证候选”的已知失败，发布前应单独修复。
+稳定回归项包括 `sim:regression`、`assistant:protocol`、`save:regression` 和 `models:validate`。`generative:regression` 的 A-02 候选生成阶段 3/3 通过；A-01 调整分支仍可能出现“没有返回 3 个全部可验证候选”的已知失败。网页端的布局搜索、副本仿真和 What-if 已由 `generativeFactoryWorker` 承担，不应再同步阻塞主线程；完整生成式回归仍需单独修复 A-01 候选边界。
 
 当前边界：
 

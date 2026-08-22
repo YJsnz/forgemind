@@ -814,18 +814,22 @@ function assemblyRows(count: number): number[] {
 }
 
 function createConnectedLayout(prefix: string, parallelPlan: Record<string, number>, agvCount: number, graph: RecipeGraph): FactoryObject[] {
-  const builder: LayoutBuilder = { prefix, objects: [], conveyorIndex: 1 }
+  const builder: LayoutBuilder = { prefix, objects: [], conveyorIndex: 1, respectMachineOutputFacing: true }
   const sourceSteel = unit(`${prefix}_source_steel`, 'inboundWarehouse', -14, -4, 0, { itemId: graph.sourceItems.steel })
-  const sourceSheet = unit(`${prefix}_source_sheet`, 'inboundWarehouse', -14, 8, 0, { itemId: graph.sourceItems.sheet })
+  const sourceSheet = unit(`${prefix}_source_sheet`, 'inboundWarehouse', -14, 7, 0, { itemId: graph.sourceItems.sheet })
   const sourceFastener = unit(`${prefix}_source_fastener`, 'inboundWarehouse', -14, -9, 0, { itemId: graph.sourceItems.fastener })
-  const sourceCopper = unit(`${prefix}_source_copper`, 'inboundWarehouse', -14, 5, 0, { itemId: graph.sourceItems.auxiliary })
+  const sourceCopper = unit(`${prefix}_source_copper`, 'inboundWarehouse', -14, 4, 0, { itemId: graph.sourceItems.auxiliary })
   const cnc = createParallelStage(prefix, 'cnc', 'smelter', graph.recipeIds.machining, -7, -7, parallelPlan.machining ?? 1, 3, { x: -10, z: -4 }, { x: -2, z: -4 }, cncRows(parallelPlan.machining ?? 1))
   const washing = createParallelStage(prefix, 'washing', 'washing', graph.recipeIds.washing, 0, -2, parallelPlan.washing ?? 1, 3, { x: -3, z: -2 }, { x: 2, z: -2 })
   const press = createParallelStage(prefix, 'press', 'press', graph.recipeIds.stamping, -7, 8, parallelPlan.stamping ?? 1, -2, { x: -10, z: 8 }, { x: -4, z: 8 }, [8, 6, 4])
   const fastenerKit = createParallelStage(prefix, 'fastener_kit', 'machine', graph.recipeIds.fastenerKit, -4, -9, parallelPlan['fastener-kit'] ?? 1, 2, { x: -10, z: -9 }, { x: -2, z: -9 })
   const coil = createParallelStage(prefix, 'coil', 'machine', graph.recipeIds.auxiliary, -4, 5, parallelPlan.coil ?? 1, 2, { x: -10, z: 5 }, { x: -2, z: 5 })
   const assembly = createParallelStage(prefix, 'assembly', 'assembler', graph.recipeIds.assembly, 4, -5, parallelPlan.assembly ?? 1, 6, { x: 1, z: -5 }, { x: 8, z: -5 }, assemblyRows(parallelPlan.assembly ?? 1))
-  const inspection = createParallelStage(prefix, 'inspection', 'inspection', graph.recipeIds.inspection, 10, -4, parallelPlan.inspection ?? 1, 3, { x: 8, z: -4 }, { x: 12, z: -4 })
+  const assemblyInputCount = graph.nodes.find((node) => node.id === 'assembly')?.inputs.length ?? 3
+  assembly.machines.forEach((machine) => {
+    machine.portConfig = { inputCount: assemblyInputCount, outputCount: 1 }
+  })
+  const inspection = createParallelStage(prefix, 'inspection', 'inspection', graph.recipeIds.inspection, 9, -4, parallelPlan.inspection ?? 1, 3, { x: 7, z: -4 }, { x: 11, z: -4 })
   const assemblyInputSplitters = (parallelPlan.assembly ?? 1) > 1
     ? [
         unit(`${prefix}_assembly_input_clean_splitter`, 'splitter', 3, -2, 0),
@@ -834,7 +838,7 @@ function createConnectedLayout(prefix: string, parallelPlan: Record<string, numb
         unit(`${prefix}_assembly_input_coil_splitter`, 'splitter', -2, 5, 0),
       ]
     : []
-  const storage = unit(`${prefix}_storage`, 'outboundWarehouse', 13, -4, 0)
+  const storage = unit(`${prefix}_storage`, 'outboundWarehouse', 12, -1, 0)
   const fixedObjects = [
     sourceSteel, sourceSheet, sourceFastener, sourceCopper,
     ...cnc.machines, cnc.inputSplitter, cnc.outputMerger,
@@ -934,6 +938,7 @@ interface LayoutBuilder {
   prefix: string
   objects: FactoryObject[]
   conveyorIndex: number
+  respectMachineOutputFacing?: boolean
 }
 
 function addObject(builder: LayoutBuilder, object: FactoryObject): void {
@@ -950,7 +955,10 @@ function addRoute(builder: LayoutBuilder, from: FactoryObject, to: FactoryObject
   for (const start of starts) {
     for (const target of targets) {
       const targetOccupied = adjacentOccupiedCell(target, to)
-      const path = targetOccupied ? findPath(start, target, blocked) : null
+      const firstDirection = builder.respectMachineOutputFacing && objectRole(from.type, from.resourceId) === 'machine'
+        ? outwardDirection(from, start)
+        : undefined
+      const path = targetOccupied ? findPath(start, target, blocked, firstDirection) : null
       if (path && (!best || path.length < best.path.length)) best = { path, targetOccupied: targetOccupied! }
     }
   }
@@ -964,13 +972,16 @@ function addRoute(builder: LayoutBuilder, from: FactoryObject, to: FactoryObject
   })
 }
 
-function findPath(start: Cell, goal: Cell, blocked: Set<string>): Cell[] | null {
+function findPath(start: Cell, goal: Cell, blocked: Set<string>, firstDirection?: { dx: number; dz: number }): Cell[] | null {
   const startKey = cellKey(start.x, start.z)
   const goalKey = cellKey(goal.x, goal.z)
   if (blocked.has(startKey) || blocked.has(goalKey)) return null
-  const queue: Cell[] = [start]
-  const parent = new Map<string, string | null>([[startKey, null]])
-  const cellByKey = new Map<string, Cell>([[startKey, start]])
+  const firstCell = firstDirection ? { x: start.x + firstDirection.dx, z: start.z + firstDirection.dz } : null
+  if (firstCell && (firstCell.x < -22 || firstCell.x > 22 || firstCell.z < -12 || firstCell.z > 12 || blocked.has(cellKey(firstCell.x, firstCell.z)))) return null
+  const firstKey = firstCell ? cellKey(firstCell.x, firstCell.z) : startKey
+  const queue: Cell[] = firstCell ? [firstCell] : [start]
+  const parent = new Map<string, string | null>(firstCell ? [[startKey, null], [firstKey, startKey]] : [[startKey, null]])
+  const cellByKey = new Map<string, Cell>(firstCell ? [[startKey, start], [firstKey, firstCell]] : [[startKey, start]])
 
   while (queue.length > 0) {
     const current = queue.shift()!
@@ -1000,6 +1011,11 @@ function findPath(start: Cell, goal: Cell, blocked: Set<string>): Cell[] | null 
     }
   }
   return null
+}
+
+function outwardDirection(object: FactoryObject, portCell: Cell): { dx: number; dz: number } | undefined {
+  const adjacent = occupiedCells(object).find((cell) => Math.abs(cell.x - portCell.x) + Math.abs(cell.z - portCell.z) === 1)
+  return adjacent ? { dx: portCell.x - adjacent.x, dz: portCell.z - adjacent.z } : undefined
 }
 
 function adjacentOccupiedCell(target: Cell, object: FactoryObject): Cell | null {

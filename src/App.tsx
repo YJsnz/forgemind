@@ -18,6 +18,7 @@ import { ProductionRouteWorkspace } from './components/ProductionRouteWorkspace'
 import { WarehouseWorkspace } from './components/WarehouseWorkspace'
 import { MachineManufacturingWorkspace } from './components/MachineManufacturingWorkspace'
 import { ItemDetailWorkspace } from './components/ItemDetailWorkspace'
+import { FactoryAgentWorkspace } from './components/FactoryAgentWorkspace'
 import { GenerativeFactoryWorkspace } from './components/GenerativeFactoryWorkspace'
 import { ForgeMindIntro } from './components/ForgeMindIntro'
 import { FloorSwitcher } from './components/FloorSwitcher'
@@ -63,10 +64,12 @@ const VIEW_META: Record<FactoryView, { code: string; label: string; title: strin
 }
 
 const VIEW_ORDER: FactoryView[] = ['overview', 'build', 'flow', 'diagnostics']
+type DiagnosticsSurface = 'diagnose' | 'generate'
 
 function App() {
   const [portalOpen, setPortalOpen] = useState(true)
   const [view, setView] = useState<FactoryView>('overview')
+  const [diagnosticsSurface, setDiagnosticsSurface] = useState<DiagnosticsSurface>('diagnose')
   const [auxPanel, setAuxPanel] = useState<'manufacturing' | 'productionRoute' | 'itemDetails' | 'warehouse' | null>(null)
   const [topMenu, setTopMenu] = useState<'help' | 'settings' | 'user' | null>(null)
   const [showViewportTools, setShowViewportTools] = useState(true)
@@ -111,6 +114,7 @@ function App() {
 
   const changeView = (next: FactoryView) => {
     setView(next)
+    if (next !== 'diagnostics') setDiagnosticsSurface('diagnose')
     setAuxPanel(null)
     if (next !== 'build') setBuildType(null)
   }
@@ -538,7 +542,7 @@ function App() {
               </div>}
             </div>}
 
-            {view === 'flow' ? <ProductionWorkspace /> : view === 'diagnostics' ? <GenerativeFactoryWorkspace /> : view !== 'overview' && (
+            {view === 'flow' ? <ProductionWorkspace /> : view === 'diagnostics' ? diagnosticsSurface === 'generate' ? <GenerativeFactoryWorkspace onSurfaceChange={setDiagnosticsSurface} /> : <FactoryAgentWorkspace currentProject={currentProject} onLocate={() => setView('overview')} onEnterGenerative={() => setDiagnosticsSurface('generate')} /> : view !== 'overview' && (
               <div className={`fm-mode-panel fm-mode-panel-${view} is-open`}>
                 {view === 'build' ? <BuildMenu compact /> : <ViewSummary view={view} counts={counts} />}
                 <div className="fm-mode-shortcuts" aria-label="快捷键">

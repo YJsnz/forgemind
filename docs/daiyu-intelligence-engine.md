@@ -1,12 +1,12 @@
 # 黛玉（Daiyu）智能工厂思考引擎技术文档
 
-> 当前实现（2026-08-19）：规则解析、产品 Profile、候选布局生成、端口/碰撞校验、副本仿真、诊断和 What-if/ROI 已由 `src/game/factoryAI.ts`、`factoryDiagnostics.ts`、`generativeFactory.ts` 及 `GenerativeFactoryWorkspace.tsx` 提供。AI 服务只负责离线约束提取和解释，不能直接修改实时场景；用户导入资源、楼层和物流状态会作为生成与诊断输入的一部分，但资源持久化由 Spring Boot/MySQL 负责。跨模块事实以 [当前实现总览](D:/Code/factory/docs/ForgeMind-当前实现总览.md) 为准。
+> 当前实现（2026-08-21）：规则解析、产品 Profile、候选布局生成、端口/碰撞校验、副本仿真、诊断和 What-if/ROI 已由 `src/game/factoryAI.ts`、`factoryDiagnostics.ts`、`generativeFactory.ts`、`generativePlanner.ts`、`generativeFactoryWorker.ts` 及 `GenerativeFactoryWorkspace.tsx` 提供。布局搜索、调整搜索、副本仿真和 What-if 在浏览器中通过 Web Worker 执行，页面提供运行、取消、超时和失败状态。AI 服务只负责离线约束提取和解释，不能直接修改实时场景；用户导入资源、楼层和物流状态会作为生成与诊断输入的一部分，但资源持久化由 Spring Boot/MySQL 负责。跨模块事实以 [当前实现总览](D:/Code/factory/docs/ForgeMind-当前实现总览.md) 为准。
 
 **项目：** ForgeMind 智能工厂数字孪生平台  
 **引擎名称：** 黛玉（Daiyu）  
 **引擎定位：** 工厂领域的需求理解、产线生成、布局调整、仿真评估与方案解释引擎  
 **当前版本：** 0.1.0  
-**实现位置：** `src/game/generativeFactory.ts`  
+**实现位置：** `src/game/generativeFactory.ts`（确定性内核）、`src/game/generativePlanner.ts`（任务调度）、`src/workers/generativeFactoryWorker.ts`（浏览器后台线程）
 **协作引擎：** [宝钗（Baochai）自研工厂渲染引擎](D:/Code/factory/docs/daiyu-render-engine.md)
 
 > 命名说明：宝钗负责“把工厂画出来”，黛玉负责“想清楚工厂应该怎样运行”。当前两套能力保持现有代码结构，不拆分为独立进程；引擎名称用于表达清晰的产品职责边界。
@@ -112,6 +112,10 @@ flowchart LR
 ### 4.5 What-if 与经济性评估
 
 What-if 用于回答“增加一台 CNC”“增加装配机”“增加一台 AGV”是否真的有效。系统同时展示吞吐变化、利用率变化、能源变化、CAPEX、月度收益、回本期和 12 个月 ROI。当上游 Source 或其他工序成为瓶颈时，增加 CNC 可能吞吐不变；黛玉会把这个结果解释为边际收益不足，而不是强行给出正向结论。
+
+### 4.6 浏览器执行与取消
+
+`generativeFactory.ts` 保持纯 TypeScript 和确定性，不直接承担页面调度。`generativePlanner.ts` 将布局生成、既有工厂调整和 What-if 统一封装为可取消任务，并通过 `generativeFactoryWorker.ts` 执行高计算量部分。这样 600 秒副本仿真和多轮 Beam Search 不会锁住 React 页面；Worker 超时、加载失败或用户切换工厂时，任务会结束并回传明确状态，当前正式存档不会被中间结果污染。
 
 ## 5. 与宝钗渲染引擎的关系
 

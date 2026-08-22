@@ -1,6 +1,6 @@
 # ForgeMind 文档索引
 
-> 更新时间：2026-08-19。本索引用于区分当前事实、权威方案、专题设计、宣传材料和历史归档。
+> 更新时间：2026-08-21。本索引用于区分当前事实、权威方案、专题设计、宣传材料和历史归档。
 
 ## 首要入口
 
@@ -17,9 +17,10 @@
 | `ForgeMind-后端数据库设计.md` | Spring Boot/MySQL 数据边界和迁移 | 当前专题 |
 | `ForgeMind-智能管家工具协议.md` | 助手动作契约与确认门控 | 当前专题 |
 | `ForgeMind-视觉检测工作台-设计文档.md` | 独立检测页、状态机和接口 | 当前专题，AI/语音部署以权威方案为准 |
-| `ForgeMind-A02与Generative-Factory设计文档.md` | A-02、诊断和候选生成 | 当前专题，模型策略以权威方案为准 |
+| `ForgeMind-A02与Generative-Factory设计文档.md` | A-02、诊断和候选生成 | 当前专题；候选搜索、副本仿真和 What-if 通过 Web Worker 执行，模型策略以权威方案为准 |
 | `daiyu-render-engine.md` | 宝钗渲染层 | 当前专题 |
-| `daiyu-intelligence-engine.md` | 黛玉确定性规划与诊断 | 当前专题 |
+| `daiyu-intelligence-engine.md` | 黛玉确定性规划与诊断 | 当前专题；确定性内核与 Worker 调度分层 |
+| `ForgeCore-Agent-上游基线.md` | ForgeCore Agent 固定提交、原文件与当前适配位置映射 | 当前专题 |
 | `模型与工艺来源.md` | 工艺路线与模型映射 | 当前专题，许可结论以资产审计为准 |
 | `high-precision-models.md` | 高精度模型导入记录 | 当前专题，部分许可仍待复核 |
 

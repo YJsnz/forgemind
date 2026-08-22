@@ -16,6 +16,8 @@ ForgeMind 是一个 React + Three.js 的数字工厂编辑、生产路线和仿�
 
 当前仿真逻辑仍由 `src/game/simulation.ts` 驱动。Spring Boot 保存的是可恢复的工厂结构，不是每一帧的 `ItemLot`、AGV 或无人机坐标。
 
+wzh 账号现有一份可直接加载的 `WZH 三层轻量完整产线` 正式存档（项目 ID `4565d66f-7144-4c23-9b75-94a521456082`）：共 39 个对象，三层各一条短工艺线，包含 2 台 AGV、2 架跨层无人机、真实有限货架、存取站和入/出货边界。固定种子 600 秒仿真实际消耗 196 件钢制毛坯并交付 58 件已检成品，Agent 审计为 0 个阻塞性问题。该存档是账号数据，不作为新建空白工厂的默认注入模板。
+
 ### 渲染目标帧率
 
 顶部设置提供 `60 FPS` 和 `120 FPS` 两档本机渲染目标。60 FPS 档保留更多阴影和像素预算；120 FPS 档针对大场景更积极地调节 DPR、动态阴影和运行时更新，但不替换、减面或降低原始设施模型几何精度，也不改变仿真逻辑。选项保存在浏览器本机，不写入工厂存档；120 FPS 仍是目标档位，不对所有视角、分辨率和硬件状态作稳定承诺。
@@ -33,8 +35,8 @@ ForgeMind 是一个 React + Three.js 的数字工厂编辑、生产路线和仿�
 | AGV 导航 | `src/game/agvNavigation.ts`、`src/components/AgvNavigationControl.tsx` | 已落地 | 网格寻路、站点、任务、避让、重规划和仓储控制入口 |
 | 无人机跨层运输 | `src/game/droneNavigation.ts`、`DroneNavigationControl.tsx` | 已落地 | L1 停靠，升降到 L2/L3，再走高位环线和输入支线；仿真启动后运行 |
 | 仓储控制 | `src/components/WarehouseWorkspace.tsx` | 已落地 | 库位、运输层、物料台账、AGV 和无人机导航控制 |
-| 诊断 | `src/game/factoryDiagnostics.ts`、`InspectionPanel.tsx` | 已落地 | 按楼层筛选诊断，展示阻塞、路线、设备和物流问题；页面可滚动 |
-| Generative Factory | `src/game/generativeFactory.ts`、`GenerativeFactoryWorkspace.tsx` | 已落地 | 需求解析、候选布局、校验、副本仿真和方案对比 |
+| 诊断 / ForgeCore Agent | `src/components/FactoryAgentWorkspace.tsx`、`src/api/agent.ts`、`src/game/factoryAgent.ts`、`src/game/agentBranch.ts`、`src/workers/factoryAgentBranchWorker.ts`、`backend/.../Agent*`、Flyway V9 | 已完整接入 | 点击诊断呈现 ForgeCore `82aad31` AgentPage 控制室；真实 MySQL 持久化 run/step/12 tool/event/patch/approval，认证 SSE、审批/拒绝/replan、版本冲突、应用/回滚、六指标 Worker 分支、对象定位和历史查询均接通当前项目存档；布局目标会生成无碰撞设备移动、真实入货仓库、避障传送带、开放端方向/旧站重叠修复和等待载具批量调整；不足 60 秒时自动运行只读证据副本；车辆供料以 `vehicle_transport` 图边参与拓扑，正常阈值待命不再误报故障 |
+| Generative Factory | `src/game/generativeFactory.ts`、`src/game/generativePlanner.ts`、`src/workers/generativeFactoryWorker.ts`、`src/components/GenerativeFactoryWorkspace.tsx`、`src/App.tsx` | 已落地/有已知缺口 | 诊断页可切换进入生成式工厂模式；黛玉确定性链路负责需求解析、候选布局、校验、副本仿真和方案对比，重计算由 Web Worker 承担并支持取消/失败状态，What-if 试算同样不阻塞页面；校验通过后可应用到当前存档；A-02 齿轮箱生成回归已 3/3 通过，A-01 既有产线调整仍有候选不足 3 个的已知缺口 |
 | 资源包导入 | `src/game/resourcePack.ts`、`ResourceImportDialog.tsx` | 已落地 | JSON/GLB 拖放或选择、字段校验、模型预览和封面生成 |
 | 导入资源用户持久化 | `src/api/resources.ts`、`ImportedResourceController.java` | 已落地 | 资源与用户绑定；同一用户再次登录可恢复，其他用户不可见 |
 | 模型预览 | `src/components/Model3DViewer.tsx`、`src/scene/ImportedFactoryModel.tsx` | 已落地 | GLB 归一化、底面归零、预览和设备卡片封面 |

@@ -25,6 +25,12 @@ const migrated = parseSave(serializeSave({ ...save, version: 1 }))
 assert.equal(migrated.version, SAVE_VERSION)
 assert.equal(migrated.objects.length, save.objects.length)
 
+const repairedText = parseSave(JSON.stringify({ ...save, name: 'WZH åŽŸæ–™å·¥åŽ‚', floorNames: ['L1 åŽŸæ–™æŽ¥æ”¶', 'L2 ç²¾åŠ å·¥', 'L3 è£…é…äº¤ä»˜'] }))
+assert.equal(repairedText.name, 'WZH 原料工厂')
+assert.deepEqual(repairedText.floorNames, ['L1 原料接收', 'L2 精加工', 'L3 装配交付'])
+const fallbackText = parseSave(JSON.stringify({ ...save, floorNames: ['1F ????????', '2F ????????', '3F ????????'] }))
+assert.deepEqual(fallbackText.floorNames, ['1F 生产层', '2F 生产层', '3F 生产层'])
+
 assert.throws(() => parseSave(JSON.stringify({ ...save, version: 99 })), /不支持的存档版本/)
 assert.throws(() => parseSave(JSON.stringify({ ...save, objects: [{ ...save.objects[0], type: 'unknown' }] })), /对象类型非法/)
 assert.throws(() => parseSave(JSON.stringify({ ...save, objects: [save.objects[0], save.objects[0]] })), /对象 id 重复/)

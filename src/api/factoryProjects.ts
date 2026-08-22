@@ -1,4 +1,5 @@
 import type { FactorySave } from '../game/save'
+import { normalizeStoredLabel } from '../game/save'
 
 const SPRING_BASE = (import.meta.env.VITE_BACKEND_BASE_URL as string | undefined) ?? 'http://localhost:8080'
 
@@ -18,6 +19,10 @@ export interface FactoryProjectSummary {
 export interface FactoryProjectDetail {
   project: FactoryProjectSummary
   save: unknown
+}
+
+function normalizeProject(project: FactoryProjectSummary): FactoryProjectSummary {
+  return { ...project, name: normalizeStoredLabel(project.name, '未命名工厂') }
 }
 
 function authHeaders(json = false): Record<string, string> {
@@ -53,27 +58,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function listFactoryProjects(): Promise<FactoryProjectSummary[]> {
-  return request('/api/factories', { headers: authHeaders() })
+  return request<FactoryProjectSummary[]>('/api/factories', { headers: authHeaders() }).then((projects) => projects.map(normalizeProject))
 }
 
 export function fetchFactoryProject(projectId: string): Promise<FactoryProjectDetail> {
-  return request(`/api/factories/${encodeURIComponent(projectId)}`, { headers: authHeaders() })
+  return request<FactoryProjectDetail>(`/api/factories/${encodeURIComponent(projectId)}`, { headers: authHeaders() }).then((detail) => ({ ...detail, project: normalizeProject(detail.project) }))
 }
 
 export function createFactoryProject(name: string, save: FactorySave): Promise<FactoryProjectDetail> {
-  return request('/api/factories', {
+  return request<FactoryProjectDetail>('/api/factories', {
     method: 'POST',
     headers: authHeaders(true),
     body: JSON.stringify({ name, save }),
-  })
+  }).then((detail) => ({ ...detail, project: normalizeProject(detail.project) }))
 }
 
 export function updateFactoryProject(projectId: string, name: string, save: FactorySave): Promise<FactoryProjectDetail> {
-  return request(`/api/factories/${encodeURIComponent(projectId)}`, {
+  return request<FactoryProjectDetail>(`/api/factories/${encodeURIComponent(projectId)}`, {
     method: 'PUT',
     headers: authHeaders(true),
     body: JSON.stringify({ name, save }),
-  })
+  }).then((detail) => ({ ...detail, project: normalizeProject(detail.project) }))
 }
 
 export function updateFactoryAutosave(name: string, save: FactorySave): Promise<FactoryProjectDetail> {
