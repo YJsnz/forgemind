@@ -1,7 +1,9 @@
 import { canCustomizeStorageName, isBuildType, type AgvProgram, type AgvRouteWaypoint, type FactoryFloorId, type FactoryObject, type InclineConveyorConfig, type MachineDefinition, type Rotation, type StationProgram, type StorageConfig } from './types'
 import { isInclineConveyorType } from './inclineConveyor'
-import type { Item, Recipe, RecipePort } from './item'
+import { DEFAULT_ITEMS, DEFAULT_RECIPES, type Item, type Recipe, type RecipePort } from './item'
 import { MAX_FACTORY_FLOORS, MIN_FACTORY_FLOORS, clampFloorCount } from './floorConfig'
+export { normalizeStoredLabel } from './labelNormalization'
+import { normalizeStoredLabel } from './labelNormalization'
 
 /**
  * 工厂项目的版本化载荷。主存档由账号下的后端项目库持久化；
@@ -142,7 +144,7 @@ function parseObjects(v: unknown): FactoryObject[] {
           ? x.name
           : ''
     const displayName = canCustomizeStorageName(type) && legacyDisplayName.trim()
-      ? legacyDisplayName.trim().slice(0, 40)
+      ? normalizeStoredLabel(legacyDisplayName, '').slice(0, 40) || undefined
       : undefined
     return {
       id,
@@ -220,49 +222,6 @@ function parseFloorNames(value: unknown, floorCount: number): string[] {
   })
 }
 
-// Some old Windows/browser paths decoded UTF-8 Chinese as Windows-1252 before
-// persisting the save (for example: "åŽŸæ–™" instead of "原料"). Repair only
-// strongly suspicious labels so normal user-entered names remain untouched.
-const WINDOWS_1252_EXTENDED_BYTES: Record<number, number> = {
-  0x20ac: 0x80, 0x201a: 0x82, 0x192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86,
-  0x2021: 0x87, 0x2c6: 0x88, 0x2030: 0x89, 0x160: 0x8a, 0x2039: 0x8b, 0x152: 0x8c,
-  0x17d: 0x8e, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95,
-  0x2013: 0x96, 0x2014: 0x97, 0x2dc: 0x98, 0x2122: 0x99, 0x161: 0x9a, 0x203a: 0x9b,
-  0x153: 0x9c, 0x17e: 0x9e, 0x178: 0x9f,
-}
-
-function repairMojibake(value: string): string {
-  if (!/[ÃÂâåæçèéïð]|[\u0080-\u009f]|[ŽŸ]/.test(value)) return value
-  const decodeCandidate = (candidate: string): string | null => {
-    try {
-      const bytes = Uint8Array.from(Array.from(candidate), (character) => {
-        const code = character.charCodeAt(0)
-        return code <= 0xff ? code : WINDOWS_1252_EXTENDED_BYTES[code] ?? 0x3f
-      })
-      return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    } catch {
-      return null
-    }
-  }
-  const suspicious = (text: string) => (text.match(/[ÃÂâåæçèéïð]|[ŽŸ]|�/g) ?? []).length
-  const candidates = [value, value.replace(/([\u0080-\u009fŽŸŠšŒœŽžŸ–—…™]) (?=[ÃÂåæçèéïð])/g, '$1\u00a0')]
-  try {
-    for (const candidate of candidates) {
-      const repaired = decodeCandidate(candidate)
-      if (repaired && /[\u3400-\u9fff]/.test(repaired) && suspicious(repaired) < suspicious(value)) return repaired
-    }
-    return value
-  } catch {
-    return value
-  }
-}
-
-export function normalizeStoredLabel(value: unknown, fallback: string): string {
-  if (typeof value !== 'string' || !value.trim()) return fallback
-  const label = repairMojibake(value.trim())
-  return (label.match(/\?/g)?.length ?? 0) >= 3 || label.includes('�') ? fallback : label
-}
-
 function parsePortConfig(value: unknown): FactoryObject['portConfig'] {
   if (!isRecord(value)) return undefined
   if (!isFiniteNumber(value.inputCount) || !isFiniteNumber(value.outputCount)) return undefined
@@ -338,17 +297,20 @@ function parseItems(v: unknown): Item[] {
     if (ids.has(id)) throw new Error(`物品 id 重复：${id}`)
     ids.add(id)
     if (x.size !== undefined && (!isFiniteNumber(x.size) || x.size <= 0)) throw new Error('物品尺寸非法')
+    const defaultName = DEFAULT_ITEMS.find((item) => item.id === id)?.name ?? id
     return {
       id,
-      name: x.name,
+      name: normalizeStoredLabel(x.name, defaultName),
       category: cat,
       color: typeof x.color === 'string' ? x.color : '#4fc3f7',
       size: typeof x.size === 'number' ? x.size : 1,
-      note: typeof x.note === 'string' ? x.note : undefined,
+      note: typeof x.note === 'string' ? normalizeStoredLabel(x.note, '') || undefined : undefined,
       modelPath: typeof x.modelPath === 'string' ? x.modelPath : undefined,
       modelId: typeof x.modelId === 'string' ? x.modelId : undefined,
       code: typeof x.code === 'string' ? x.code : id,
-      description: typeof x.description === 'string' ? x.description : typeof x.note === 'string' ? x.note : undefined,
+      description: typeof x.description === 'string'
+        ? normalizeStoredLabel(x.description, '') || undefined
+        : typeof x.note === 'string' ? normalizeStoredLabel(x.note, '') || undefined : undefined,
       massKg: isFiniteNumber(x.massKg) ? Math.max(0, x.massKg) : 1,
       maxStackSize: isFiniteNumber(x.maxStackSize) ? Math.max(1, Math.round(x.maxStackSize)) : 100,
       modelParameters: parseModelParameters(x.modelParameters),
@@ -370,14 +332,15 @@ function parseRecipes(v: unknown, items: Item[]): Recipe[] {
     const id = typeof x.id === 'string' ? x.id : genIdFor('recipe')
     if (ids.has(id)) throw new Error(`配方 id 重复：${id}`)
     ids.add(id)
+    const defaultName = DEFAULT_RECIPES.find((recipe) => recipe.id === id)?.name ?? id
     return {
       id,
-      name: x.name,
+      name: normalizeStoredLabel(x.name, defaultName),
       inputs,
       outputs,
       durationSec: typeof x.durationSec === 'number' ? x.durationSec : 1,
       code: typeof x.code === 'string' ? x.code : id,
-      description: typeof x.description === 'string' ? x.description : undefined,
+      description: typeof x.description === 'string' ? normalizeStoredLabel(x.description, '') || undefined : undefined,
       enabled: x.enabled !== false,
     }
   })
@@ -405,9 +368,9 @@ function parseMachineDefinitions(value: unknown, recipes: Recipe[]): MachineDefi
     const footprint = isRecord(entry.footprint) && isFiniteNumber(entry.footprint.w) && isFiniteNumber(entry.footprint.d)
       ? { w: Math.max(1, Math.min(12, Math.round(entry.footprint.w))), d: Math.max(1, Math.min(12, Math.round(entry.footprint.d))) }
       : { w: 2, d: 2 }
-    const modelType = entry.modelType === 'smelter' || entry.modelType === 'press' || entry.modelType === 'washing' || entry.modelType === 'imported' ? entry.modelType : 'machine'
-    const inputPortCount = isFiniteNumber(entry.inputPortCount) ? Math.max(1, Math.min(footprint.w, Math.round(entry.inputPortCount))) : 1
-    const outputPortCount = isFiniteNumber(entry.outputPortCount) ? Math.max(1, Math.min(footprint.w, Math.round(entry.outputPortCount))) : 1
+    const modelType = entry.modelType === 'smelter' || entry.modelType === 'press' || entry.modelType === 'washing' || entry.modelType === 'apiTank' || entry.modelType === 'visionInspection' || entry.modelType === 'workstation' || entry.modelType === 'imported' ? entry.modelType : 'machine'
+    const inputPortCount = isFiniteNumber(entry.inputPortCount) ? Math.max(1, Math.min(footprint.d, Math.round(entry.inputPortCount))) : 1
+    const outputPortCount = isFiniteNumber(entry.outputPortCount) ? Math.max(1, Math.min(footprint.d, Math.round(entry.outputPortCount))) : 1
     const allowed = Array.isArray(entry.recipeIds) ? entry.recipeIds.filter((recipeId): recipeId is string => typeof recipeId === 'string' && recipeIds.has(recipeId)) : []
     return {
       id,

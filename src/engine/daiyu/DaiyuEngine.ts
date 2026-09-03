@@ -14,6 +14,7 @@ export interface DaiyuSnapshot {
   name: string
   version: string
   phase: DaiyuPhase
+  gpuRenderer: string
   fps: number
   frameMs: number
   p95FrameMs: number
@@ -44,6 +45,7 @@ export class DaiyuEngine {
   private lastPublishAt = 0
   private listeners = new Set<Listener>()
   private rendererStats = { drawCalls: 0, triangles: 0, geometries: 0, textures: 0 }
+  private gpuRenderer = 'unknown'
 
   constructor(budget: Readonly<DaiyuBudget> = DAIYU_4060_LAPTOP_BUDGET) {
     this.activeBudget = budget
@@ -71,6 +73,7 @@ export class DaiyuEngine {
     if (this.frameSamples.length > 180) this.frameSamples.shift()
 
     const info = renderer.info
+    if (this.gpuRenderer === 'unknown') this.gpuRenderer = detectGpuRenderer(renderer)
     this.rendererStats = {
       drawCalls: info.render.calls,
       triangles: info.render.triangles,
@@ -102,6 +105,7 @@ export class DaiyuEngine {
       name: this.name,
       version: this.version,
       phase: this.phase,
+      gpuRenderer: this.gpuRenderer,
       fps: frameMs > 0 ? 1000 / frameMs : 0,
       frameMs,
       p95FrameMs,
@@ -121,3 +125,11 @@ export class DaiyuEngine {
 }
 
 export const daiyuEngine = new DaiyuEngine()
+
+function detectGpuRenderer(renderer: THREE.WebGLRenderer) {
+  const context = renderer.getContext()
+  const extension = context.getExtension('WEBGL_debug_renderer_info') as { UNMASKED_RENDERER_WEBGL?: number } | null
+  const parameter = extension?.UNMASKED_RENDERER_WEBGL ?? context.RENDERER
+  const value = context.getParameter(parameter)
+  return typeof value === 'string' && value.length > 0 ? value : 'unknown'
+}

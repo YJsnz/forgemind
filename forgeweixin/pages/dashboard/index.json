@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "工厂总览",
+  "usingComponents": {
+    "metric-card": "../../components/metric-card/index"
+  }
+}

@@ -405,6 +405,7 @@
 .fm-generative-adjustment-note { display: block; margin-top: 7px; color: rgba(126, 212, 209, .78); font: 7px var(--fm-font-mono); letter-spacing: .04em; line-height: 1.45; }
 .fm-generative-diff-note { display: block; margin-top: 5px; color: rgba(211, 237, 227, .46); font: 7px var(--fm-font-mono); letter-spacing: .03em; line-height: 1.45; }
 .fm-generative-scale-note { display: block; margin-top: 5px; color: rgba(233, 188, 53, .78); font: 7px var(--fm-font-mono); letter-spacing: .05em; line-height: 1.45; }
+.fm-generative-structure-note { display: block; margin-top: 5px; color: rgba(112, 212, 208, .82); font: 7px var(--fm-font-mono); letter-spacing: .04em; line-height: 1.45; }
 .fm-generative-empty { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 28px; color: rgba(175, 222, 211, .6); text-align: center; }
 .fm-generative-empty > span { display: grid; width: 38px; height: 38px; place-items: center; border: 1px dashed rgba(175, 222, 211, .35); color: #e6b534; font-size: 20px; }
 .fm-generative-empty b { color: #eaf6f0; font: 400 15px var(--fm-font-title); }
@@ -446,6 +447,7 @@
 .fm-top-popover-head { position: relative; z-index: 1; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 15px 15px 12px; border-bottom: 1px solid var(--fm-edge); background: rgba(250, 252, 250, .98); }
 .fm-top-popover-head h2 { margin: 5px 0 0; font-size: 15px; letter-spacing: -.02em; }
 .fm-top-popover-head > button { width: 22px; height: 22px; padding: 0; border: 1px solid var(--fm-edge); color: var(--fm-text-dim); background: transparent; font-size: 17px; line-height: 1; }
+.fm-top-popover-head > button svg { display: block; margin: auto; }
 .fm-top-popover-head > button:hover { border-color: var(--fm-accent); color: var(--fm-text); }
 .fm-top-popover-kicker { color: var(--fm-text-faint); font: 600 8px var(--fm-font-mono); letter-spacing: .12em; }
 .fm-top-popover-lead { margin: 0; padding: 13px 15px 8px; color: var(--fm-text-dim); font-size: 10px; line-height: 1.55; }

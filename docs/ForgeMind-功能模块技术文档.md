@@ -1,11 +1,11 @@
 # ForgeMind 已实现功能模块技术文档
 
 **项目：** ForgeMind 智能工厂数字孪生平台  
-**文档版本：** 0.2.0
-**整理日期：** 2026-08-19
+**文档版本：** 0.3.0
+**整理日期：** 2026-08-19；2026-08-26 补充修订
 **适用范围：** 当前仓库中已经实现、可运行或已经建立接口契约的功能模块
 
-本文档补充 [宝钗自研工厂渲染引擎技术文档](D:/Code/factory/docs/daiyu-render-engine.md) 和 [黛玉智能工厂思考引擎技术文档](D:/Code/factory/docs/daiyu-intelligence-engine.md)，重点说明 ForgeMind 除双引擎之外的业务、交互、仿真、数据和 AI 模块。文档中的“已实现”表示代码已经存在并可被当前应用调用；“骨架/占位”表示接口和数据契约已建立，但还没有接入完整生产能力。本版本按 2026-08-19 的代码状态整理；跨模块的事实索引见 [当前实现总览](D:/Code/factory/docs/ForgeMind-当前实现总览.md)。
+本文档补充 [宝钗自研工厂渲染引擎技术文档](D:/Code/factory/docs/daiyu-render-engine.md) 和 [黛玉智能工厂思考引擎技术文档](D:/Code/factory/docs/daiyu-intelligence-engine.md)，重点说明 ForgeMind 除双引擎之外的业务、交互、仿真、数据和 AI 模块。文档中的“已实现”表示代码已经存在并可被当前应用调用；“骨架/占位”表示接口和数据契约已建立，但还没有接入完整生产能力。本版本按 2026-08-19 的代码状态整理，第 1–21 章中的个别细节（如存档版本号、面板按钮名）可能落后于后续迭代——凡与代码不符处，以 [当前实现总览](D:/Code/factory/docs/ForgeMind-当前实现总览.md) 和实际运行结果为准；2026-08 下旬新增的自动巡检子系统与真机硬件套件见第 22 章补充。用户操作视角的完整手册见 [ForgeMind-用户使用手册](ForgeMind-用户使用手册.md)。
 
 ## 1. 功能总览
 
@@ -29,7 +29,7 @@
 | 黛玉智能工厂思考引擎 | `src/game/generativeFactory.ts` | 已实现 | 需求解析、产线生成、布局调整、路由校验、仿真评估、What-if 和 ROI |
 | 本地 JSON 存档 | `src/game/save.ts` | 已实现 | 导出、导入、运行时校验和浏览器下载 |
 | Spring Boot 存档/认证后端 | `backend/` | 已实现 | MySQL/Flyway 持久化、BCrypt 密码、数据库会话 token、按用户隔离工厂和资源 |
-| AI 服务 | `ai-service/main.py` | 已实现（本地编排） | FastAPI 健康检查、Ollama 助手、NDJSON 流式回复、工具目录、ASR/TTS 网关 |
+| AI 服务 | `ai-service/main.py` | 已实现（本地编排） | FastAPI 健康检查、Ollama 助手、NDJSON 流式回复、工具目录、ASR/TTS 网关、PCB YOLOv8 实时帧推理 |
 | 网页语音助手 | `src/components/AssistantVoiceButton.tsx`、`src/game/assistantVoice.ts` | 已实现（依赖本地服务） | 麦克风录音、`BT` 关键字唤醒、ASR、流式回答和 TTS 播放 |
 | 独立语音助手 | `voice-chat/voice_chat.py` | 独立可运行 | 不依赖网页的本地 ASR → Ollama → TTS → 播放闭环 |
 | 仿真回归工具链 | `scripts/` | 已实现 | 闭环、转弯、分流、汇流、背压和 A-01 基地验证 |
@@ -442,7 +442,7 @@ interface ItemLot {
 
 ### 11.1 本地存档格式
 
-`FactorySave` 当前版本为 2：
+`FactorySave` 当前版本为 6（2026-08-25 时点；版本随能力演进递增，最新事实以总览为准）：
 
 ```ts
 interface FactorySave {
@@ -454,7 +454,7 @@ interface FactorySave {
 }
 ```
 
-`serializeSave` 生成格式化 JSON；`downloadSave` 使用 Blob 和临时 URL 下载；`readFileAsText` 读取用户选择的 JSON 文件。
+`serializeSave` 生成格式化 JSON；导出文件名为 `{工厂名}.forgemind.json`；导入通过项目弹窗的「导入 JSON」进入当前会话。
 
 ### 11.2 运行时校验
 
@@ -469,11 +469,11 @@ interface FactorySave {
 
 ### 11.3 存档版本与兼容性
 
-当前存档版本为 v2。解析器会接受 v1 并迁移为 v2，同时拒绝缺失、非法或未来版本；对象类型校验直接复用完整 `BuildType` 目录，因此 A-01 的全量设备可以导出后再次导入。对象、物品和配方 ID 也会检查重复，避免导入后出现引用歧义。
+当前存档版本为 v6。解析器接受 v1–v5 并逐级迁移到 v6（含楼层名称、仓储实例命名、车辆任务等历史字段迁入；Windows-1252 误解码的历史中文会自动恢复，无法恢复的连续问号回退内置目录名称或业务 ID），同时拒绝缺失、非法或未来版本；对象类型校验直接复用完整 `BuildType` 目录，因此 A-01 的全量设备可以导出后再次导入。对象、物品和配方 ID 也会检查重复，避免导入后出现引用歧义。
 
 ### 11.4 Spring Boot 同步
 
-`src/game/api.ts` 提供带超时的远端存档客户端：
+登录态下通过顶栏「手动保存存档」写入正式存档、项目弹窗管理存档库（打开/删除/自动恢复），另有每 60 秒静默写一份自动恢复；`src/game/api.ts` 提供带超时的远端客户端：
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
@@ -481,7 +481,7 @@ interface FactorySave {
 | `fetchRemoteSave` | `GET /api/factory` | 拉取整厂存档 |
 | `pushRemoteSave` | `PUT /api/factory` | 覆盖远端存档 |
 
-`LeftPanel` 的“推后端/拉后端”按钮先检查健康状态，再执行同步；后端离线不会阻塞本地编辑和本地 JSON 存档。
+后端离线不会阻塞本地编辑和本地 JSON 存档。
 
 ## 12. Spring Boot 后端模块
 
@@ -532,6 +532,8 @@ interface FactorySave {
 | `POST` | `/api/ai/assistant/stream` | 返回 NDJSON 增量文本和最终动作信封 |
 | `POST` | `/api/ai/asr` | Paraformer WAV 语音识别 |
 | `POST` | `/api/ai/tts` | BT TTS 代理，失败时回退 Sherpa VITS |
+| `GET` | `/api/vision/yolo/health` | PCB YOLOv8 模型文件、加载状态和类别列表 |
+| `POST` | `/api/vision/yolo/detect` | 接收一帧 JPEG/PNG base64，返回真实 PCB 缺陷框、类别、置信度和推理耗时 |
 
 请求模型：
 
@@ -545,11 +547,36 @@ interface FactorySave {
 }
 ```
 
-助手优先调用本地 Ollama `qwen2.5:7b`，可返回普通文本或 `1.0.0` 工具动作；Ollama 不可用时才返回 `fallback`。服务端会对动作名称、协议版本、参数和上下文对象做基础校验，前端 `assistantProtocol.ts` 会再次校验并负责执行，因此 FastAPI 不直接改变工厂对象或仿真状态。前端客户端为 `src/game/api.ts`，支持 NDJSON 流式文本；`assistantRuntime.ts` 会按短句切分回复并并行请求 TTS，按顺序播放。
+助手默认使用服务端规则模式，不要求 Ollama 或本地大语言模型；只有显式配置远程 provider（当前支持 DeepSeek）时才请求远程模型。可返回普通文本或 `1.0.0` 工具动作；服务不可用时返回 `fallback`。服务端会对动作名称、协议版本、参数和上下文对象做基础校验，前端 `assistantProtocol.ts` 会再次校验并负责执行，因此 FastAPI 不直接改变工厂对象或仿真状态。前端客户端为 `src/game/api.ts`，支持 NDJSON 流式文本；`assistantRuntime.ts` 会按短句切分回复并并行请求 TTS，按顺序播放。
 
 当前动作目录位于 `contracts/forgemind-assistant-tools.json`，共 8 个动作：查询工厂状态、读取对象、选择对象、启停仿真、设置仿真倍率、重置仿真、修改机器配方和绑定 source 物品。查询/定位/仿真控制可直接执行；重置、改配方和改 source 绑定被标记为需要确认的高风险或配置变更动作。
 
-### 13.2 设计边界
+### 13.2 PCB 视频实时 YOLO 检测
+
+视觉检测 Demo 位于 `src/demos/InspectionDemo.tsx`，视频资源是 `public/videos/inspection-pcb-demo.mp4`，模型权重是 `ai-service/models/pcb_defect_yolov8s.pt`。视频仅提供未叠加预测标签的 PCB 测试画面，检测结果在运行时生成。
+
+```text
+video.current frame
+  → offscreen canvas.toDataURL("image/jpeg")
+  → POST /api/vision/yolo/detect
+  → Ultralytics YOLO(modelPath).predict(image, conf, imgsz=640)
+  → {className, confidence, x1, y1, x2, y2}
+  → Canvas overlay
+```
+
+前端在播放事件中触发抽帧，并以约 360ms 为最小提交间隔；同一标签页在上一帧未完成时不再发送下一帧。服务端模型采用懒加载，`/api/vision/yolo/health` 不因健康检查而加载权重；推理过程有单帧并发锁，繁忙时返回 `YOLO 正在处理上一帧，请稍后重试`。
+
+响应中的 `width/height` 是原始解码帧尺寸，坐标以该尺寸为基准；前端根据视频元素显示尺寸换算后绘制。模型类别固定为 `missing_hole`、`mouse_bite`、`open_circuit`、`short`、`spur`、`spurious_copper`。
+
+运行时状态必须区分：
+
+- `LOADING MODEL`：Demo 已打开但尚未得到模型响应；
+- `LIVE INFERENCE`：最近一帧由 YOLO 服务成功返回；
+- `MODEL OFFLINE`：服务请求失败、模型依赖缺失或模型文件不可用。
+
+实时 YOLO Demo 不进入 `SimulationRunner`，不修改 `FactorySave`，也不把识别结果写入生产/仓储台账。模型服务是可选依赖；AI 不可用时，工厂建造和确定性仿真不受影响。
+
+### 13.3 设计边界
 
 AI 只能输出动作目录中的结构化请求，不能直接自由修改工厂。当前已完成协议版本、白名单、参数、对象角色、物品/配方引用和确认门控；副本仿真、产能差异报告和“优化建议先验证再写回”仍属于后续能力。
 
@@ -822,3 +849,90 @@ py -3.10 -m venv .venv
 | `voice-chat/voice_chat.py` | 本地 ASR/LLM/TTS 语音闭环 |
 | `scripts/sim-regression.ts` | 仿真回归测试 |
 | `scripts/base-a01-check.ts` | A-01 布局和 300 秒生产闭环检查 |
+
+## 22. 补充（2026-08-25）：自动巡检全链路与真机硬件套件
+
+本章补充第 1–21 章成稿之后落地的能力，均为当前代码事实。
+
+### 22.1 自动巡检子系统（诊断页）
+
+围绕「只读证据 → 趋势预警 → 劣化判定 → 受控修复」的完整链路，全部重计算在 Web Worker 中执行：
+
+| 模块 | 文件 | 职责 |
+| --- | --- | --- |
+| 指标时序 | `src/game/metricsHistory.ts` | 36 容量环形缓冲，存吞吐/利用率/阻塞/在途 |
+| 巡检引擎 | `src/game/factoryAutopilot.ts` | 固定种子 60 秒只读证据副本、劣化判定（吞吐降幅 ≥25%、阻塞增量 ≥1、交付停滞）、结构版本基线对比，产出标准 `autopilot_*` Finding 注入既有分析结果 |
+| 瓶颈归因 | `src/game/bottleneckAnalysis.ts` | 5 秒采样机器状态，按「忙碌×0.7 +（1-相对完成率）×0.3」排序输出「供料者[ID] → 约束设备[ID]」因果链；导出 `runSampledEvidence` 供能耗归因复用采样副本 |
+| 能耗归因 | `src/game/energyAnalysis.ts` | 解析设备定义功率字段（如 "22 kW"），运行态满功率、待机按 15% 计，窗口累加能量并给出待机浪费 Top 设备；仅归因提示，不触发修改 |
+| 库存预测 | `src/game/inventoryForecast.ts` | 基于时序的最小二乘斜率外推货架耗尽 ETA（rising/stable/declining/critical 四态） |
+| 报告叙述 | `src/game/patrolNarrative.ts` | 确定性中文模板逐字节可复现；注入式 narrator 接可选 AI 润色，超时/失败/空回复回退模板且不新增事实 |
+| 语音播报 | `src/game/patrolVoice.ts` | 把报告压缩为一句可朗读警报；优先 AI 服务 `/api/ai/tts`，失败回退浏览器 speechSynthesis，再失败静默跳过；同内容去重由调用方保存上次文本 |
+| Worker 隔离 | `src/game/autopilotWorker.ts`、`src/workers/factoryAutopilotWorker.ts` | 60 秒证据仿真 + 瓶颈/能耗归因移出主线程，串行调度、可取消；关闭开关、切换项目或离开诊断页即清理 |
+
+边界：巡检不写存档；趋势为固定窗口线性外推而非机器学习；证据副本每轮从初始状态重放，纯运行性损耗不在逐轮差异中体现。回归钉住：`autopilot:units`（15 用例）。
+
+### 22.2 生产构建恢复记录
+
+2026-08-25 前完整构建被两个既有 TypeScript 错误阻断：`energyAnalysis.ts` 未使用的导入、`patrolVoice.ts` 引用从未创建的 `./apiFlags` 模块。已分别通过删除未用导入、改从 `./api` 导入并补出 `AI_BASE` 导出修复；此后 `npm.cmd run build`（tsc -b + vite build）与全部核心回归恢复全绿。
+
+### 22.3 DM4310 真机机械臂套件
+
+`hardware/dm4310-arm/` 是面向真机的独立硬件交付物，与前端零耦合：
+
+- `firmware/dm4310_protocol.h`：达妙 MIT 运控模式协议层（16bit 位置 + 12bit 速度/KP/KD/前馈力矩打包解包，FC/FD/FE/FB 特殊命令），纯 C++ 无平台依赖；
+- `firmware/dm4310_twai.h` / `dm4310_motor.h`：ESP32 TWAI 总线层与带装配方向符号的关节封装；
+- `firmware/dm4310_arm_sketch/`：串口命令台主程序（list/en/dis/zero/clr/p/g/demo），100Hz 控制，任一电机故障自动全臂失能；
+- `test/protocol_test.cpp`：g++ 主机端协议回归（ALL PASS）；
+- README 含 BOM、上位机核对项、CAN ID 分配表、接线、七步机械装配、烧录与八步上电调试流程。
+
+关节命名对应场景 `panda_joint1..6`。边界：固件未经 ESP32 编译烧录与真机验收；电机 P_MAX/V_MAX/T_MAX 因批次而异，必须用达妙上位机核对后修改 `range_dm4310()`。
+
+### 22.4 本轮新增回归脚本索引
+
+| 脚本 | npm 别名 | 覆盖 |
+| --- | --- | --- |
+| `scripts/simulation-units.ts` | `sim:units` | dir/grid/types/rng/floorConfig 纯函数契约（18 用例） |
+| `scripts/autopilot-units.ts` | `autopilot:units` | 时序容量、趋势/ETA、劣化注入、报告模板与回退、瓶颈链确定性（15 用例） |
+
+## 23. ForgeLab 社区后端（2026-08-31）
+
+ForgeLab 使用现有 `app_user` 作为唯一身份源，不创建独立社区账号。前端进入 `/forgelab/login` 后复用工作台会话令牌，后端每个社区接口都通过 `AuthService.currentUser` 校验 `Authorization: Bearer <token>`。
+
+### 23.1 数据模型与迁移
+
+Flyway `V10__create_forgelab_community.sql` 建立六张业务表：
+
+| 表 | 职责 |
+| --- | --- |
+| `forgelab_post` | 帖子正文、板块、作者快照、状态与种子点赞数 |
+| `forgelab_attachment` | 图片/存档/资源包元数据和可选 LONGBLOB 文件内容 |
+| `forgelab_reply` | 帖子回复正文和作者快照 |
+| `forgelab_post_like` | 用户对帖子的唯一点赞关系 |
+| `forgelab_reply_like` | 用户对回复的唯一点赞关系 |
+| `forgelab_notification` | 收件人、事件类型、关联帖子/回复和已读时间 |
+
+`V11__seed_forgelab_open_posts.sql` 写入六条官方示例帖子和 19 条示例回复；`V12__add_forgelab_seed_like_counts.sql` 将展示用的历史点赞数作为可追溯种子计数保存，用户新的点赞仍使用关系表记录，取消点赞不会破坏历史展示计数。
+
+### 23.2 REST 接口
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| `GET` | `/api/forgelab/posts` | 读取已发布帖子流、统计、当前用户点赞状态和附件元数据 |
+| `GET` | `/api/forgelab/posts/{postId}` | 读取帖子正文、附件和完整回复列表 |
+| `POST` | `/api/forgelab/posts` | multipart 发布帖子，可带 `image` 与 `archive` 附件 |
+| `POST` | `/api/forgelab/posts/{postId}/like` | 切换当前用户对帖子的点赞 |
+| `POST` | `/api/forgelab/posts/{postId}/replies` | 发布一条回复 |
+| `POST` | `/api/forgelab/replies/{replyId}/like` | 切换当前用户对回复的点赞 |
+| `GET` | `/api/forgelab/notifications` | 读取当前账号通知 |
+| `POST` | `/api/forgelab/notifications/{id}/read` | 标记单条通知已读 |
+| `POST` | `/api/forgelab/notifications/read-all` | 标记当前账号全部通知已读 |
+| `GET` | `/api/forgelab/attachments/{id}/download` | 鉴权下载已上传附件或跳转公共资源 |
+
+写接口均按当前账号隔离；帖子作者删除账号后保留作者名称快照，避免历史社区内容变成不可读记录。附件名会去除路径部分，上传大小遵守 Spring Boot 80 MB 单文件限制。前端 `src/api/forgeLab.ts` 将后端响应映射到 Morphicons 社区页面，后端短时不可用时才使用本地展示降级。
+
+### 23.3 一致性与边界
+
+- 社区后端保存帖子和附件，不逐帧保存工厂仿真状态；工厂存档作为附件上传，工厂正式项目仍由 `/api/factories` 管理。
+- 点赞关系由数据库唯一主键防止同一账号重复点赞；回复、帖子和附件删除关系由外键级联维护。
+- 通知只发送给关联作者，不向执行自己操作的用户制造自通知；官方种子帖作者为空账号，因此不会生成虚假的作者通知。
+- AI 润色仍是前端可选解释层，不进入社区事实、权限、附件校验或工厂仿真真相源。

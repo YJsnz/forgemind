@@ -5,6 +5,8 @@ import {
   ASSISTANT_TOOL_NAMES,
   validateAssistantToolCall,
 } from '../src/game/assistantProtocol'
+import { DEFAULT_ITEMS, DEFAULT_RECIPES, type Item } from '../src/game/item'
+import type { FactoryObject } from '../src/game/types'
 import { useForgeMindStore } from '../src/store/forgeMind'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -15,16 +17,26 @@ function call(name: string, args: Record<string, unknown> = {}) {
   return { protocolVersion: ASSISTANT_PROTOCOL_VERSION, name, arguments: args }
 }
 
+// A blank factory is intentionally empty in the current product contract.
+// Build a small valid fixture here so protocol coverage does not depend on a
+// starter layout or starter catalog being injected into the store.
+const inputItem: Item = { ...DEFAULT_ITEMS[0] }
+const outputItem: Item = { ...DEFAULT_ITEMS.find((item) => item.category === 'intermediate')! }
+const recipe = { ...DEFAULT_RECIPES[0], inputs: [{ ...DEFAULT_RECIPES[0].inputs[0] }], outputs: [{ itemId: outputItem.id, qty: 1 }] }
+const fixtureMachine: FactoryObject = { id: 'assistant-machine', type: 'machine', pos: { x: 0, z: 0 }, rotation: 0, recipeId: recipe.id }
+const fixtureSource: FactoryObject = { id: 'assistant-source', type: 'source', pos: { x: -4, z: 0 }, rotation: 0, itemId: inputItem.id }
+useForgeMindStore.setState({ objects: [fixtureMachine, fixtureSource], items: [inputItem, outputItem], recipes: [recipe] })
+
 const context = getCurrentFactoryAssistantContext()
 const machine = context.objects.find((object) => object.role === 'machine')
 const source = context.objects.find((object) => object.role === 'source')
-const recipe = context.recipes[0]
+const recipeInContext = context.recipes[0]
 const item = context.items[0]
 
-assert(machine, 'A-01 基地应至少包含一台加工设备')
-assert(source, 'A-01 基地应至少包含一个来料站')
-assert(recipe, '默认数据应至少包含一个配方')
-assert(item, '默认数据应至少包含一个物品')
+assert(machine, '协议夹具应至少包含一台加工设备')
+assert(source, '协议夹具应至少包含一个来料站')
+assert(recipeInContext, '协议夹具应至少包含一个配方')
+assert(item, '协议夹具应至少包含一个物品')
 assert(ASSISTANT_TOOL_CATALOG.protocolVersion === ASSISTANT_PROTOCOL_VERSION, '工具目录版本不一致')
 assert(ASSISTANT_TOOL_CATALOG.tools.length === ASSISTANT_TOOL_NAMES.length, '工具目录数量不一致')
 
@@ -35,7 +47,7 @@ const validCases = [
   call('set_simulation_running', { running: true }),
   call('set_simulation_speed', { speed: 2 }),
   call('reset_simulation'),
-  call('change_machine_recipe', { objectId: machine.id, recipeId: recipe.id }),
+  call('change_machine_recipe', { objectId: machine.id, recipeId: recipeInContext.id }),
   call('bind_source_item', { objectId: source.id, itemId: item.id }),
 ]
 

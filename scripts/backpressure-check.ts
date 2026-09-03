@@ -18,9 +18,9 @@ const recipe: Recipe = {
 
 // 没有绑定配方的机器会拒收物料，模拟下游停机造成的头堵。
 const objects: FactoryObject[] = [
-  { id: 'src', type: 'source', pos: { x: -3, z: 0 }, rotation: 0, itemId: ironId },
-  { id: 'belt', type: 'conveyor', pos: { x: 0, z: 0 }, rotation: 0 },
-  { id: 'blocked-machine', type: 'machine', pos: { x: 1, z: 0 }, rotation: 0 },
+  { id: 'supply', type: 'inboundWarehouse', pos: { x: -4, z: -1 }, rotation: 0, itemId: ironId },
+  { id: 'belt', type: 'conveyor', pos: { x: -1, z: 0 }, rotation: 0 },
+  { id: 'blocked-machine', type: 'machine', pos: { x: 0, z: 0 }, rotation: 0 },
 ]
 
 const engine = new SimulationEngine(1)

@@ -1,0 +1,2 @@
+<view class="orb-wrap {{compact ? 'orb-compact' : ''}}"><view class="orb orb-{{state}}"><view class="orb-core"></view></view><text class="orb-label">{{label}}</text></view>
+

@@ -1,0 +1,2 @@
+{ "navigationBarTitleText": "产线监控", "usingComponents": { "status-orb": "/components/status-orb/index" } }
+

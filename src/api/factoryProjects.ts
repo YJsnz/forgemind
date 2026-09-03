@@ -1,7 +1,6 @@
 import type { FactorySave } from '../game/save'
 import { normalizeStoredLabel } from '../game/save'
-
-const SPRING_BASE = (import.meta.env.VITE_BACKEND_BASE_URL as string | undefined) ?? 'http://localhost:8080'
+import { BACKEND_BASE } from './backendBase'
 
 export interface FactoryProjectSummary {
   id: string
@@ -37,7 +36,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), 8_000)
   try {
-    const response = await fetch(`${SPRING_BASE}${path}`, { ...init, signal: controller.signal })
+    const response = await fetch(`${BACKEND_BASE}${path}`, { ...init, signal: controller.signal })
     if (!response.ok) {
       let message = `后端返回 ${response.status}`
       try {

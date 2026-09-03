@@ -1,0 +1,20 @@
+<view class="login-page">
+  <view class="login-grid"></view>
+  <view class="login-orbit orbit-one"></view><view class="login-orbit orbit-two"></view>
+  <view class="login-content fade-in">
+    <view class="brand-line"><image class="brand-logo" src="/assets/brand/forgemove-logo.png" mode="aspectFit" aria-label="ForgeMove" /><view class="brand-code">FORGEMIND / FIELD CONSOLE</view></view>
+    <view class="login-hero"><view class="eyebrow">MOBILE FACTORY ECOLOGY</view><view class="hero-title">让工厂<br/><text>随时在场。</text></view><view class="hero-copy">现场信号、移动任务和设计者社区，收进一个更轻的操作入口。</view></view>
+    <view class="signal-row"><view class="signal-word active">SPACE</view><view class="signal-line"></view><view class="signal-word">FLOW</view><view class="signal-line"></view><view class="signal-word">MOVE</view></view>
+    <view class="login-card fade-in delay-2">
+      <view class="login-card-head"><view><text class="eyebrow">{{mode === 'login' ? 'SESSION / SIGN IN' : 'SESSION / REGISTER'}}</text><view class="login-card-title">{{mode === 'login' ? '进入现场控制台' : '建立现场账号'}}</view></view><view class="session-light"></view></view>
+      <view class="field"><text>账号 ID</text><input value="{{username}}" placeholder="输入 ForgeMind 账号" bindinput="inputUsername" maxlength="40" /></view>
+      <view class="field"><text>访问 KEY</text><input value="{{password}}" password placeholder="输入密码" bindinput="inputPassword" maxlength="64" /></view>
+      <view wx:if="{{error}}" class="login-error"><view class="error-dot"></view>{{error}}</view>
+      <button class="login-button" loading="{{loading}}" disabled="{{loading}}" bindtap="submit"><text>{{loading ? '正在连接…' : (mode === 'login' ? '验证并进入' : '创建账号')}}</text><text class="button-arrow">↗</text></button>
+      <button class="mode-button" bindtap="switchMode">{{mode === 'login' ? '还没有账号？创建一个' : '已有账号？返回登录'}}</button>
+      <view class="login-divider"><view></view><text>或</text><view></view></view>
+      <button class="demo-button" bindtap="demo"><view class="demo-icon">◎</view><view><text class="demo-title">进入离线演示</text><text class="demo-caption">内置 WZH 三层轻量产线 · 不写入真实数据</text></view></button>
+    </view>
+    <view class="login-foot"><text>OFFLINE READY</text><text>V0.1 / FORGEMIND</text></view>
+  </view>
+</view>

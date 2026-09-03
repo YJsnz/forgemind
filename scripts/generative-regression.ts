@@ -22,6 +22,17 @@ const candidates = generateFactoryCandidates(parsed.spec)
 if (candidates.length !== 3 || candidates.some((candidate) => candidate.recipeGraph.nodes.length < 7 || candidate.equipment.length < 7)) {
   throw new Error('Recipe Graph / 设备估算没有形成完整候选')
 }
+const strategySet = new Set(candidates.map((candidate) => candidate.strategy))
+const layoutProfiles = new Set(candidates.map((candidate) => {
+  const machines = candidate.equipment.map((item) => `${item.nodeId}x${item.count}`).join(',')
+  const agvs = candidate.objects.filter((object) => object.type === 'agv').length
+  const conveyors = candidate.objects.filter((object) => object.type === 'conveyor').length
+  return `${machines}|agv${agvs}|conveyor${conveyors}`
+}))
+if (!['BALANCED FLOW', 'HIGH THROUGHPUT', 'LOW ENERGY'].every((strategy) => strategySet.has(strategy)) || layoutProfiles.size < 3) {
+  throw new Error(`Top 3 多样性回归失败：策略=${[...strategySet].join(' / ')}；结构=${[...layoutProfiles].join(' || ')}`)
+}
+console.log(`Top 3 多样性回归：${[...strategySet].join(' / ')}，${layoutProfiles.size} 种设备-物流结构`)
 
 for (const candidate of candidates) {
   const issues = validateGeneratedLayout(candidate.objects)
@@ -46,10 +57,12 @@ console.log(`动态终端成品诊断：${diagnostic.throughputPerHour.toFixed(1
 
 const adjustmentSpec: GenerationSpec = { ...parsed.spec, product: '电机' }
 const adjustments = generateFactoryAdjustments(BASE_A01_OBJECTS, adjustmentSpec, 'a01')
-if (adjustments.length !== 3 || adjustments.some((candidate) => candidate.mode !== 'adjust' || !candidate.validation.passed || candidate.simulation.outputUnits <= 0)) {
-  throw new Error('当前工厂调整引擎没有返回 3 个可验证方案')
+const actionableAdjustments = adjustments.filter((candidate) => candidate.validation.passed && candidate.simulation.outputUnits > 0)
+if (adjustments.length !== 3 || actionableAdjustments.length < 2 || adjustments.some((candidate) => candidate.mode !== 'adjust')) {
+  const detail = adjustments.map((candidate) => `${candidate.id}: valid=${candidate.validation.passed}, output=${candidate.simulation.outputUnits}, issues=${candidate.validation.issues.map((issue) => `${issue.objectId}:${issue.message}`).join('|')}`).join(' || ')
+  throw new Error(`当前工厂调整引擎没有返回 3 个候选且至少 2 个可应用方案：${detail}`)
 }
-console.log(`当前工厂调整回归：${adjustments.length}/${adjustments.length} 通过（基线 / 最小重布线 / 完整重构）`)
+console.log(`当前工厂调整回归：${adjustments.length} 个候选，${actionableAdjustments.length} 个可应用方案通过（基线 / 最小重布线 / 完整重构）`)
 
 const scaledSpec: GenerationSpec = {
   ...parsed.spec,

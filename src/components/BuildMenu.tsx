@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { EQUIPMENT_ORDER, OBJECT_DEFS } from '../game/types'
+import { EQUIPMENT_ORDER, isBuildType, OBJECT_DEFS } from '../game/types'
 import type { BuildType, EquipmentCategory } from '../game/types'
 import { useForgeMindStore } from '../store/forgeMind'
 import { EquipmentThumbnail } from './EquipmentThumbnail'
@@ -49,7 +49,7 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
         <span className="fm-build-mode-led" />
       </div>
 
-      <div className="fm-build-note">选择设备后，移动鼠标预览占地范围。按 R 旋转，左键确认放置，右键取消建造。</div>
+      <div className="fm-build-note">选择设备后，移动鼠标可看到真实建筑模型、占地和接口方向。按 R 旋转，左键确认放置，右键取消建造。</div>
 
       <div className="fm-category-tabs" role="tablist" aria-label="设备类别">
         {CATEGORIES.map((item) => (
@@ -111,7 +111,7 @@ export function BuildMenu({ compact = false }: { compact?: boolean }) {
               style={{ '--equipment-accent': item.accent } as React.CSSProperties}
               onClick={() => selectEquipment('machine', definition.id)}
             >
-              <EquipmentThumbnail type={definition.modelType === 'imported' ? 'imported' : definition.modelType} />
+              <EquipmentThumbnail type={definition.modelType === 'imported' ? 'imported' : isBuildType(definition.modelType) ? definition.modelType : 'machine'} />
               <span className="fm-equipment-card-body">
                 <span className="fm-equipment-glyph" style={{ '--equipment-accent': item.accent } as React.CSSProperties}>◫</span>
                 <span className="fm-equipment-copy"><strong>{item.label}</strong><small>{item.subtitle}</small><em className="is-split-asset">机械制造 · {definition.inputPortCount} 入 / {definition.outputPortCount} 出 · {definition.recipeIds.length} 条工艺</em></span>

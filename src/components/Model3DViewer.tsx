@@ -196,11 +196,12 @@ export function Model3DViewer({ obj, def, onClose }: Props) {
 
     // ---------- 加载模型 ----------
     // washing（清洗去毛刺单元）：优先使用程序化精细建模，带完整机械动画、工件渐变、线缆布线等
-    // washing/inspection/machine/smelter 均使用精细化程序化模型（带完整机械动画）
+    // washing/inspection/legacy machine/smelter 均使用精细化程序化模型（带完整机械动画）；
+    // 机械制造中带 resourceId 的机器必须显示其实际选定模型。
     // 这些设备在 3D 观测中直接显示「▶ 拟运作」按钮，不显示切换按钮
     const PROCEDURAL_FIRST: BuildType[] = ['washing', 'inspection', 'machine', 'smelter']
-    const preferProcedural = PROCEDURAL_FIRST.includes(obj.type)
-    const modelPath = MODEL_PATH_MAP[obj.type]
+    const preferProcedural = PROCEDURAL_FIRST.includes(obj.type) && !(obj.type === 'machine' && obj.resourceId)
+    const modelPath = obj.type === 'machine' && obj.resourceId ? def.assetPath ?? MODEL_PATH_MAP[obj.type] : MODEL_PATH_MAP[obj.type]
     animUpdateRef.current = null
     setHasAnimation(false)
 

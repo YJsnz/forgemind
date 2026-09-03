@@ -1,8 +1,9 @@
-import { canPlace, objectCompatiblePortCells, occupiedCells } from './grid'
+import { canPlace, objectCompatiblePortCells, occupiedCells, stationRackConnections } from './grid'
 import { CARDINALS, cellKey, dirToRotation } from './dir'
-import { BUILD_BOUND, getObjectDef, isTransportType, objectRole, type FactoryObject, type Rotation } from './types'
+import { BUILD_BOUND, OBJECT_DEFS, getObjectDef, isTransportType, objectRole, type FactoryObject, type Rotation } from './types'
 import type { FactorySave } from './save'
-import { SimulationEngine, type SimulationSnapshot } from './simulation'
+import { AGV_SPEED, DRONE_SPEED, SimulationEngine, type SimulationSnapshot } from './simulation'
+import { computeLineBalance, stageModelFromObjects, type LineBalanceReport } from './lineBalancing'
 import type { Recipe } from './item'
 import {
   type AgentFactoryContext,
@@ -74,6 +75,13 @@ export function compileFactoryGoal(objective: string, context: AgentFactoryConte
     hardConstraints.floorWidth = Number(area[1])
     hardConstraints.floorDepth = Number(area[2])
   }
+  const maxChanges = text.match(/(?:最多|不超过|max(?:imum)?|上限)[^0-9]*(\d+)\s*(?:项|个)?\s*(?:修改|变更|操作|changes?)/i)
+  if (maxChanges) hardConstraints.maxChanges = Number(maxChanges[1])
+  const maxEnergy = text.match(/(?:能耗|功率|energy|power)[^0-9]*(?:不超过|最多|上限|<=|≤)?\s*(\d+(?:\.\d+)?)\s*(?:kw|千瓦)/i)
+  if (maxEnergy) hardConstraints.maxEnergyKw = Number(maxEnergy[1])
+  const targetFloor = text.match(/(?:仅限|限定|目标|在)\s*(?:楼层|floor)\s*l?(\d+)/i)
+  if (targetFloor) hardConstraints.floorId = Number(targetFloor[1])
+  if (/保留|不删除|不得删除|不能删除|禁止删除|preserve/i.test(text)) hardConstraints.preserveExistingAssets = true
   if (/能耗|energy|电费/i.test(text)) softConstraints.push('minimize_energy')
   if (/少改|最小调整|least\s+change/i.test(text)) softConstraints.push('minimize_changes')
   if (/吞吐|产能|throughput/i.test(text)) softConstraints.push('maximize_throughput')
@@ -92,6 +100,7 @@ export function compileFactoryGoal(objective: string, context: AgentFactoryConte
         ? 'monitor'
         : 'diagnose'
 
+  if (Object.values(hardConstraints).some((value) => typeof value === 'number' && value < 0)) conflicts.push('硬约束数值不能为负数')
   return {
     schemaVersion: 1,
     objective: text,
@@ -107,7 +116,7 @@ export function compileFactoryGoal(objective: string, context: AgentFactoryConte
     hardConstraints,
     softConstraints,
     timeHorizonSec: parseHorizon(text) ?? 3600,
-    allowedActions: ['inspect', 'explain_constraint', 'update_config', 'move_object', 'add_object', 'remove_object'],
+    allowedActions: ['inspect', 'explain_constraint', 'update_config', 'move_object', 'add_object', 'remove_object', 'adjust_inventory'],
     assumptions: [
       '布局、碰撞、端口连接、物料数量和仿真指标均由本地确定性规则判定。',
       '远程模型（如果启用）只能提出工具选择，不能直接写入工厂状态。',
@@ -254,6 +263,39 @@ export function analyzeFactory(objective: string, context: AgentFactoryContext, 
   if (metrics.utilization >= 90 && metrics.machineCount > 0) add({ severity: 'warning', code: 'high_utilization', title: '生产利用率接近上限', detail: `当前平均利用率为 ${metrics.utilization.toFixed(1)}%。`, impact: '小幅波动就可能放大为排队和交付延迟。', recommendation: '在分支仿真中比较并行设备、缓存或运输策略。', objectIds: machines.map((machine) => machine.id), evidence: [{ kind: 'metric', label: 'UTILIZATION', value: `${metrics.utilization.toFixed(1)}%`, objectIds: machines.map((machine) => machine.id) }] })
   if (metrics.wip > Math.max(6, context.objects.length * 0.7)) add({ severity: 'warning', code: 'wip_accumulation', title: '在途物料堆积', detail: `当前有 ${metrics.wip} 个在途批次。`, impact: '物流节拍低于加工节拍，后续可能出现头堵背压。', recommendation: '检查最慢工序和末端接收容量，不要只增加上游供料。', objectIds: evidenceSnapshot.itemLots.map((lot) => lot.conveyorId), evidence: [{ kind: 'metric', label: 'WIP', value: String(metrics.wip) }] })
   if (goal.metrics.targetThroughputPerHour && metrics.timeSec >= 30 && metrics.throughputPerHour < goal.metrics.targetThroughputPerHour * 0.95) add({ severity: 'warning', code: 'throughput_below_target', title: '实际吞吐低于目标', detail: `当前 ${metrics.throughputPerHour.toFixed(1)}/h，目标 ${goal.metrics.targetThroughputPerHour.toFixed(1)}/h。`, impact: '当前布局或物流配置无法达到目标产能。', recommendation: '先查看瓶颈 Finding，再用受控 Patch 和分支仿真比较方案。', objectIds: [], evidence: [{ kind: 'metric', label: 'THROUGHPUT', value: `${metrics.throughputPerHour.toFixed(1)} / ${goal.metrics.targetThroughputPerHour.toFixed(1)} h` }] })
+  const lineBalance = analyzeAgentLineBalance(context.objects, context.recipes, goal.metrics.targetThroughputPerHour ?? null)
+  if (lineBalance) {
+    const bottleneckStage = lineBalance.bottleneckNodeId ? lineBalance.stages.find((stage) => stage.nodeId === lineBalance.bottleneckNodeId) : undefined
+    if (bottleneckStage && bottleneckStage.capacityGap > 0 && goal.metrics.targetThroughputPerHour) {
+      add({
+        severity: 'warning',
+        code: 'stage_imbalance',
+        title: '工序产能低于目标节拍',
+        detail: `「${bottleneckStage.name}」产能 ${bottleneckStage.capacityPerHour.toFixed(0)}/h，低于目标 ${goal.metrics.targetThroughputPerHour}/h，需要 ${bottleneckStage.requiredCount} 台设备（当前 ${bottleneckStage.machineCount} 台，缺口 ${bottleneckStage.capacityGap} 台）。`,
+        impact: '整线节拍被该工序拉低，实际产出无法达到目标产能。',
+        recommendation: '为该工序增加并行设备并重新接线，或在生成式工厂中切换到平衡目标重建产线。',
+        objectIds: machines.filter((machine) => machine.recipeId === bottleneckStage.recipeId).map((machine) => machine.id),
+        evidence: [
+          { kind: 'metric', label: 'STAGE CAPACITY', value: `${bottleneckStage.capacityPerHour.toFixed(0)} / ${goal.metrics.targetThroughputPerHour} h` },
+          { kind: 'metric', label: 'STAGE GAP', value: `${bottleneckStage.capacityGap} 台` },
+        ],
+      })
+    }
+    for (const nodeId of lineBalance.overprovisionedNodeIds) {
+      const stage = lineBalance.stages.find((entry) => entry.nodeId === nodeId)
+      if (!stage) continue
+      add({
+        severity: 'info',
+        code: 'stage_overprovisioned',
+        title: '工序设备存在冗余',
+        detail: `「${stage.name}」产能 ${stage.capacityPerHour.toFixed(0)}/h，富余 ${-stage.capacityGap} 台并行设备。`,
+        impact: '冗余设备增加投入与能耗，且会抬高上游供料压力。',
+        recommendation: '考虑削减或迁移冗余并行设备，仅保留满足目标节拍的台数。',
+        objectIds: machines.filter((machine) => machine.recipeId === stage.recipeId).map((machine) => machine.id),
+        evidence: [{ kind: 'metric', label: 'STAGE SURPLUS', value: `${-stage.capacityGap} 台` }],
+      })
+    }
+  }
   if (metrics.timeSec < 59.5) add({ severity: 'info', code: 'short_evidence_window', title: '证据窗口较短', detail: `当前只采集到 ${metrics.timeSec.toFixed(1)} 秒仿真数据。`, impact: '吞吐和利用率可能尚未稳定，结论置信度有限。', recommendation: '继续运行仿真至少 60 秒，再确认优化方案。', objectIds: [], evidence: [{ kind: 'timeline', label: 'TIME HORIZON', value: `${metrics.timeSec.toFixed(1)} s` }] })
   if (findings.length === 0 || findings.every((finding) => finding.severity === 'info')) add({ severity: 'success', code: 'no_blocking_findings', title: '未发现阻塞性问题', detail: '工厂图、运行快照和物料边界目前保持一致。', impact: '当前结构可以继续仿真或进入方案比较。', recommendation: '可运行更长证据窗口，或切换到计划设计模式。', objectIds: [], evidence: [{ kind: 'metric', label: 'BLOCKING FINDINGS', value: '0' }] })
 
@@ -464,6 +506,24 @@ export function buildFactoryPatchProposal(analysis: AgentAnalysisResult, context
   for (const finding of analysis.findings.filter((entry) => entry.code === 'inventory_shortage')) {
     if (operations.length >= 64) break
     const source = context.objects.find((entry) => entry.id === finding.objectIds[0])
+    const explicitRestock = /补库存|补充库存|增加库存|restock|replenish/i.test(analysis.goal.objective)
+    if (explicitRestock && source?.type === 'source' && source.itemId) {
+      const rack = Object.values(stationRackConnections(source, plannedObjects)).find((entry): entry is FactoryObject => Boolean(entry && (entry.type === 'oreMiner' || entry.type === 'storage')))
+      if (rack) {
+        const quantityMatch = analysis.goal.objective.match(/(?:补充|增加|restock|replenish)[^0-9]*(\d+(?:\.\d+)?)/i)
+        const quantity = Math.max(1, Number(quantityMatch?.[1] ?? 24))
+        const current = rack.storageConfig?.initialInventory[source.itemId] ?? 0
+        const capacity = rack.storageConfig?.capacity ?? 100
+        const accepted = Math.min(quantity, Math.max(0, capacity - current))
+        if (accepted > 0) {
+          const operationId = `op-${operations.length + 1}`
+          operations.push({ id: operationId, kind: 'adjust_inventory', objectId: rack.id, itemId: source.itemId, quantity: accepted, reason: `为 ${rack.displayName || rack.id} 补充 ${source.itemId} 库存，恢复真实供料` })
+          inverseOperations.unshift({ id: `inverse-${operationId}`, kind: 'adjust_inventory', objectId: rack.id, itemId: source.itemId, quantity: -accepted, reason: `撤销为 ${rack.displayName || rack.id} 补充的 ${source.itemId} 库存` })
+          sourceFindingIds.push(finding.id)
+          continue
+        }
+      }
+    }
     if (!source?.itemId || plannedObjects.some((entry) => entry.type === 'inboundWarehouse' && entry.itemId === source.itemId)) continue
     const pos = findFreePositionNear(source, 'inboundWarehouse', plannedObjects)
     if (!pos) continue
@@ -481,6 +541,59 @@ export function buildFactoryPatchProposal(analysis: AgentAnalysisResult, context
     inverseOperations.unshift({ id: `inverse-${operationId}`, kind: 'remove_object', objectId: warehouse.id, reason: `移除新增的 ${source.itemId} 入货仓库` })
     plannedObjects.push(warehouse)
     sourceFindingIds.push(finding.id)
+  }
+  // —— 产线平衡：为欠配工序增加并行设备，并首次真正执行硬约束 ——
+  // 分支仿真会验证补设备后是否真实提升吞吐，效果不足时 recommend discard。
+  const hard = analysis.goal.hardConstraints
+  const maxChanges = typeof hard.maxChanges === 'number' ? hard.maxChanges : 64
+  const maxEnergyKw = typeof hard.maxEnergyKw === 'number' ? hard.maxEnergyKw : null
+  const targetFloorId = typeof hard.floorId === 'number' ? hard.floorId : null
+  const preserveAssets = hard.preserveExistingAssets === true
+  const machineLimit = typeof hard.machineLimit === 'number' ? hard.machineLimit : null
+  const balanceTarget = analysis.goal.metrics.targetThroughputPerHour
+  const imbalanceFinding = analysis.findings.find((entry) => entry.code === 'stage_imbalance')
+  const balanceReport = imbalanceFinding && balanceTarget !== undefined ? analyzeAgentLineBalance(context.objects, context.recipes, balanceTarget) : null
+  const bottleneckStage = balanceReport?.bottleneckNodeId ? balanceReport.stages.find((stage) => stage.nodeId === balanceReport.bottleneckNodeId) : undefined
+  if (imbalanceFinding && bottleneckStage && bottleneckStage.capacityGap > 0 && !preserveAssets) {
+    const gap = Math.min(bottleneckStage.capacityGap, 2, Math.max(0, maxChanges - operations.length))
+    for (let index = 0; index < gap; index += 1) {
+      const anchor = plannedObjects.find((entry) => entry.recipeId === bottleneckStage.recipeId && (targetFloorId === null || (entry.floorId ?? 1) === targetFloorId))
+        ?? plannedObjects.find((entry) => entry.recipeId === bottleneckStage.recipeId)
+      if (!anchor) break
+      const floorId = targetFloorId ?? anchor.floorId ?? 1
+      if (machineLimit !== null && plannedObjects.filter((entry) => (entry.floorId ?? 1) === floorId && objectRole(entry.type, entry.resourceId) === 'machine').length >= machineLimit) break
+      const pos = findFreePositionNear(anchor, anchor.type, plannedObjects)
+      if (!pos) break
+      if (maxEnergyKw !== null) {
+        const currentKw = plannedObjects.reduce((sum, entry) => sum + powerKwOf(entry.type), 0)
+        if (currentKw + powerKwOf(anchor.type) > maxEnergyKw) break
+      }
+      const operationId = `op-${operations.length + 1}`
+      const machine: FactoryObject = {
+        id: `agent-balance-${hash(`${anchor.id}:${index}:${pos.x}:${pos.z}`).slice(-10)}`,
+        type: anchor.type,
+        pos,
+        rotation: anchor.rotation,
+        floorId,
+        recipeId: anchor.recipeId,
+        ...(anchor.portConfig ? { portConfig: anchor.portConfig } : {}),
+        displayName: `${bottleneckStage.name} 并行单元`,
+      }
+      operations.push({ id: operationId, kind: 'add_object', object: machine, reason: `为瓶颈工序「${bottleneckStage.name}」增加 1 台并行设备，按目标节拍补齐产能缺口` })
+      inverseOperations.unshift({ id: `inverse-${operationId}`, kind: 'remove_object', objectId: machine.id, reason: `移除为「${bottleneckStage.name}」新增的并行设备` })
+      plannedObjects.push(machine)
+      sourceFindingIds.push(imbalanceFinding.id)
+      const feeder = plannedObjects.find((entry) => entry.id !== anchor.id && objectsAreFlowConnected(entry, anchor))
+      const receiver = plannedObjects.find((entry) => entry.id !== anchor.id && objectsAreFlowConnected(anchor, entry))
+      if (feeder) {
+        const inputRoute = findConveyorRouteBetween(feeder, machine, plannedObjects)
+        if (inputRoute && inputRoute.length > 0 && operations.length + inputRoute.length <= 64) appendConveyorRoute(inputRoute, machine, imbalanceFinding, operations, inverseOperations, plannedObjects)
+      }
+      if (receiver) {
+        const outputRoute = findConveyorRouteBetween(machine, receiver, plannedObjects)
+        if (outputRoute && outputRoute.length > 0 && operations.length + outputRoute.length <= 64) appendConveyorRoute(outputRoute, machine, imbalanceFinding, operations, inverseOperations, plannedObjects)
+      }
+    }
   }
   if (operations.length === 0) return null
   return {
@@ -741,7 +854,9 @@ export function validateFactoryPatch(patch: FactoryPatch, context: AgentFactoryC
     if (operation.kind === 'update_config') {
       const object = working.find((entry) => entry.id === operation.objectId)
       if (!object) errors.push(`目标对象不存在：${operation.objectId}`)
+      if (!['recipeId', 'itemId', 'agvProgram', 'stationProgram', 'storageConfig', 'rotation', 'portConfig', 'displayName'].includes(operation.path)) errors.push(`对象字段不允许修改：${operation.path}`)
       if (operation.path === 'recipeId' && typeof operation.value === 'string' && !context.recipes.some((recipe) => recipe.id === operation.value && recipe.enabled !== false)) errors.push(`目标配方不可用：${String(operation.value)}`)
+      if (operation.path === 'itemId' && typeof operation.value === 'string' && !context.items.some((item) => item.id === operation.value)) errors.push(`目标物品不可用：${String(operation.value)}`)
       if (object && operation.path === 'rotation') {
         if (![0, 90, 180, 270].includes(operation.value as number)) errors.push(`传送带方向非法：${operation.objectId}`)
         else object.rotation = operation.value as Rotation
@@ -756,6 +871,12 @@ export function validateFactoryPatch(patch: FactoryPatch, context: AgentFactoryC
       if (working.some((entry) => entry.id === operation.object.id)) errors.push(`新增对象 id 重复：${operation.object.id}`)
       else if (!canPlace(operation.object.pos, operation.object.type, operation.object.rotation, working.filter((entry) => (entry.floorId ?? 1) === (operation.object.floorId ?? 1)), operation.object.resourceId)) errors.push(`新增对象位置碰撞或越界：${operation.object.id}`)
       else working.push(operation.object)
+    } else if (operation.kind === 'adjust_inventory') {
+      const object = working.find((entry) => entry.id === operation.objectId)
+      const current = object?.storageConfig?.initialInventory[operation.itemId] ?? 0
+      const capacity = object?.storageConfig?.capacity ?? 0
+      if (!object || !['oreMiner', 'storage'].includes(object.type)) errors.push(`库存调整目标不是有限货架：${operation.objectId}`)
+      else if (!Number.isFinite(operation.quantity) || current + operation.quantity < 0 || current + operation.quantity > capacity) errors.push(`库存调整超出货架容量或变为负数：${operation.objectId}`)
     } else if (operation.kind === 'remove_object' && !working.some((entry) => entry.id === operation.objectId)) errors.push(`待删除对象不存在：${operation.objectId}`)
   }
   return errors
@@ -775,6 +896,7 @@ export function applyFactoryPatchToSave(save: FactorySave, patch: FactoryPatch):
     if (operation.kind === 'move_object') objects = objects.map((object) => object.id === operation.objectId ? { ...object, pos: { ...operation.target } } : object)
     if (operation.kind === 'add_object' && !objects.some((object) => object.id === operation.object.id)) objects.push({ ...operation.object, pos: { ...operation.object.pos } })
     if (operation.kind === 'remove_object') objects = objects.filter((object) => object.id !== operation.objectId)
+    if (operation.kind === 'adjust_inventory') objects = objects.map((object) => object.id === operation.objectId ? { ...object, storageConfig: { ...(object.storageConfig ?? { capacity: 100, initialInventory: {} }), initialInventory: { ...(object.storageConfig?.initialInventory ?? {}), [operation.itemId]: (object.storageConfig?.initialInventory[operation.itemId] ?? 0) + operation.quantity } } } : object)
   }
   return { ...save, objects }
 }
@@ -806,6 +928,12 @@ export function simulateFactoryBranch(patch: FactoryPatch, context: AgentFactory
   }
 }
 
+/** 只读证据副本：固定种子重放当前工厂，返回最终快照与统一口径指标（自动巡检使用）。 */
+export function runFactoryEvidence(context: AgentFactoryContext, horizonSec = 60): { snapshot: SimulationSnapshot; metrics: AgentMetrics } {
+  const snapshot = runBranch(context.objects, context.recipes, horizonSec)
+  return { snapshot, metrics: collectMetrics(context.objects, snapshot, inferTerminalItemId(context.recipes), null) }
+}
+
 function collectMetrics(objects: FactoryObject[], snapshot: SimulationSnapshot, targetItemId: string | undefined, targetThroughputPerHour: number | null): AgentMetrics {
   const machines = objects.filter((object) => objectRole(object.type, object.resourceId) === 'machine')
   const activeMachines = snapshot.machines.filter((machine) => machine.state === 'processing' || machine.state === 'output').length
@@ -823,9 +951,17 @@ function collectMetrics(objects: FactoryObject[], snapshot: SimulationSnapshot, 
     waitingVehicles: snapshot.agvs.filter((vehicle) => vehicle.motionStatus === 'waiting').length + snapshot.drones.filter((vehicle) => vehicle.motionStatus === 'waiting').length,
     consumed,
     produced,
-    averageTransportSec: 0,
-    inventoryTotal: snapshot.itemLots.length,
+    averageTransportSec: averageVehicleTransportSec(snapshot),
+    inventoryTotal: snapshot.racks.reduce((sum, rack) => sum + Object.values(rack.inventory).reduce((rackSum, quantity) => rackSum + quantity, 0), 0),
   }
+}
+
+function averageVehicleTransportSec(snapshot: SimulationSnapshot): number {
+  const trips = [...snapshot.agvs, ...snapshot.drones].reduce((sum, vehicle) => sum + vehicle.completedTrips, 0)
+  if (trips <= 0) return 0
+  const seconds = snapshot.agvs.reduce((sum, vehicle) => sum + vehicle.distanceTravelled / AGV_SPEED, 0)
+    + snapshot.drones.reduce((sum, vehicle) => sum + vehicle.distanceTravelled / DRONE_SPEED, 0)
+  return seconds / trips
 }
 
 function runBranch(objects: FactoryObject[], recipes: Recipe[], horizonSec: number): SimulationSnapshot {
@@ -847,6 +983,20 @@ function chooseRecipeForObject(object: FactoryObject | undefined, recipes: Recip
 function inferTargetItem(text: string, context: AgentFactoryContext) {
   const lower = text.toLowerCase()
   return context.items.find((item) => lower.includes(item.name.toLowerCase()) || lower.includes(item.id.toLowerCase())) ?? context.items.find((item) => item.category === 'product' && context.recipes.some((recipe) => recipe.outputs.some((output) => output.itemId === item.id))) ?? context.items[context.items.length - 1]
+}
+
+/** 由对象+配方计算节拍平衡报告；无目标节拍或无工序时返回 null。 */
+function analyzeAgentLineBalance(objects: FactoryObject[], recipes: Recipe[], targetThroughputPerHour: number | null): LineBalanceReport | null {
+  if (targetThroughputPerHour === null) return null
+  const stages = stageModelFromObjects(objects, recipes)
+  if (stages.length === 0) return null
+  return computeLineBalance(targetThroughputPerHour, stages)
+}
+
+/** 解析设备功率描述为 kW 数值。 */
+function powerKwOf(type: FactoryObject['type']): number {
+  const match = OBJECT_DEFS[type].power.match(/([\d.]+)/)
+  return match ? Number(match[1]) : 1
 }
 
 function inferTerminalItemId(recipes: Recipe[]): string | undefined {

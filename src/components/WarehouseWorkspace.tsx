@@ -7,13 +7,14 @@ import { ItemModelThumbnail } from './ItemModelThumbnail'
 
 interface WarehouseWorkspaceProps {
   onClose: () => void
+  embedded?: boolean
 }
 
 /**
  * ForgeCore 仓储语义在 ForgeMind 中的轻量映射：货物仓库/原料货架、
  * 内容物、运输层和运行中在途物料都从当前场地状态读取，避免另起一套存档。
  */
-export function WarehouseWorkspace({ onClose }: WarehouseWorkspaceProps) {
+export function WarehouseWorkspace({ onClose, embedded = false }: WarehouseWorkspaceProps) {
   const [tab, setTab] = useState<'inventory' | 'navigation'>('inventory')
   const objects = useForgeMindStore((state) => state.objects)
   const items = useForgeMindStore((state) => state.items)
@@ -47,8 +48,8 @@ export function WarehouseWorkspace({ onClose }: WarehouseWorkspaceProps) {
   const itemForStorage = (object: (typeof storageObjects)[number]) => items.find((item) => item.id === object.itemId)
 
   return (
-    <section className="fm-warehouse-workspace" aria-label="仓储工作区">
-      <header className="fm-warehouse-header">
+    <section className={`fm-warehouse-workspace${embedded ? ' is-embedded' : ''}`} aria-label="仓储工作区">
+      {!embedded && <header className="fm-warehouse-header">
         <div>
           <span className="fm-eyebrow"><b>07</b> / CARGO STORAGE CONTROL</span>
           <h2>货物仓储</h2>
@@ -59,7 +60,7 @@ export function WarehouseWorkspace({ onClose }: WarehouseWorkspaceProps) {
           </nav>
         </div>
         <button type="button" className="fm-warehouse-close" onClick={onClose} aria-label="关闭仓储工作区">×</button>
-      </header>
+      </header>}
 
       {tab === 'navigation' ? <div className="fm-warehouse-navigation-stack"><AgvNavigationControl /><DroneNavigationControl /></div> : <>
       <div className="fm-warehouse-kpis" aria-label="仓储统计">

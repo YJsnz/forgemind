@@ -1,4 +1,6 @@
 import { useForgeMindStore } from '../store/forgeMind'
+import { Pause, Play, RotateCcw } from 'lucide'
+import { MorphingIcon } from './MorphingIcon'
 
 /**
  * 仿真控制面板（Day 4）：播放/暂停/重置/倍率 + 逻辑时间 + 产出统计。
@@ -59,19 +61,21 @@ export function SimPanel() {
       <div className="flex gap-1">
         <button
           onClick={() => setPlaying(!playing)}
-          className="flex-1 border px-2 py-1 text-xs"
+          className="flex flex-1 items-center justify-center gap-1 border px-2 py-1 text-xs"
           style={{
             borderColor: playing ? 'var(--fm-amber)' : 'var(--fm-ok)',
             color: playing ? 'var(--fm-amber)' : 'var(--fm-ok)',
           }}
         >
+          <MorphingIcon icon={playing ? Pause : Play} size={14} aria-hidden="true" />
           {playing ? '暂停' : '启动'}
         </button>
         <button
           onClick={() => requestSimReset()}
-          className="flex-1 border px-2 py-1 text-xs text-[var(--fm-text-dim)]"
+          className="flex flex-1 items-center justify-center gap-1 border px-2 py-1 text-xs text-[var(--fm-text-dim)]"
           style={{ borderColor: 'var(--fm-edge)' }}
         >
+          <MorphingIcon icon={RotateCcw} size={14} aria-hidden="true" />
           重置
         </button>
       </div>

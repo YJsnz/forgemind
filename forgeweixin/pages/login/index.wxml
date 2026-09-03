@@ -1,0 +1,24 @@
+<view class="login-page">
+  <view class="login-grid"></view>
+  <view class="topline"><text>FORGEMIND / FIELD ACCESS</text><text class="topline-status">● API READY</text></view>
+  <view class="brand-stage">
+    <image class="brand-lockup" src="../../assets/brand/forgemind-primary-lockup.png" mode="aspectFit" />
+  </view>
+  <view class="hero-copy">
+    <view class="eyebrow">MOBILE CONTROL / 01</view>
+    <view class="title">让工厂保持<text>在线。</text></view>
+    <view class="subtitle">在现场之外，快速查看结构、设备与生产资料。</view>
+  </view>
+  <view class="signal-chain"><text class="active">SPACE</text><view class="signal-chain-line"></view><text>FLOW</text><view class="signal-chain-line"></view><text>SIGNAL</text></view>
+  <view class="login-card">
+    <view class="form-head"><view><view class="card-kicker">OPERATOR ACCESS</view><view class="card-title">连接运行台</view></view><view class="form-index">01 / 01</view></view>
+    <view class="field-label">用户名</view>
+    <view class="field-wrap"><text class="field-prefix">ID</text><input class="field" type="text" placeholder="ForgeMind 用户名" value="{{username}}" bindinput="onUsernameInput" /></view>
+    <view class="field-label">密码</view>
+    <view class="field-wrap"><text class="field-prefix">KEY</text><input class="field" type="password" placeholder="访问密码" value="{{password}}" bindinput="onPasswordInput" /></view>
+    <view wx:if="{{error}}" class="error">{{error}}</view>
+    <button class="primary submit" loading="{{loading}}" disabled="{{loading}}" bindtap="submit">连接 ForgeMind</button>
+    <view class="hint"><text class="hint-dot">●</text> 通过安全 API 访问项目数据，不直接连接数据库。</view>
+  </view>
+  <view class="login-footer"><text>RULE FIRST</text><text>AI OPTIONAL</text><text>FACTORY ALWAYS ON</text></view>
+</view>

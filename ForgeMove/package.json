@@ -1,0 +1,11 @@
+{
+  "name": "forgemove",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ForgeMind companion WeChat Mini Program",
+  "dependencies": {
+    "@tdesign/miniprogram": "^1.15.0",
+    "lottie-miniprogram": "^1.0.12"
+  }
+}
+

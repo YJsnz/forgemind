@@ -1,16 +1,43 @@
 import { create } from 'zustand'
 import { canCustomizeStorageName, registerImportedObjectDef, registerMachineDefinition, type AgvProgram, type BuildType, type FactoryFloorId, type FactoryObject, type GridPos, type ImportedResource, type MachineDefinition, type Rotation, type StationProgram, type StorageConfig } from '../game/types'
 import { canPlace } from '../game/grid'
-import { type Item, type ItemCategory, type Recipe } from '../game/item'
+import { DEFAULT_ITEMS, DEFAULT_RECIPES, type Item, type ItemCategory, type Recipe } from '../game/item'
 import { genId as itemGenId } from '../game/item'
 import type { FactorySave } from '../game/save'
 import { SAVE_VERSION } from '../game/save'
+import { normalizeStoredLabel } from '../game/labelNormalization'
 import type { SimulationSnapshot } from '../game/simulation'
 import { canPlaceIncline, createInclineObject, isInclineConveyorType, objectsTouchingFloor } from '../game/inclineConveyor'
 import { MAX_FACTORY_FLOORS, clampFloorCount } from '../game/floorConfig'
 import { dirToRotation } from '../game/dir'
 
 export type FactoryId = 'a01' | 'a02'
+
+/**
+ * Unity 原生客户端快照旁路：web 的确定性仿真把每一帧 SimulationSnapshot
+ * 以 ~10Hz 推到本地 Unity SnapshotReceiver（HttpListener /snapshot）。
+ * 默认关闭（VITE_UNITY_SNAPSHOT_URL 未设置时不产生任何请求），不影响 web 正常运行。
+ */
+const runtimeEnv = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env ?? {}
+const UNITY_SNAPSHOT_URL = (typeof runtimeEnv.VITE_UNITY_SNAPSHOT_URL === 'string' ? runtimeEnv.VITE_UNITY_SNAPSHOT_URL : '').replace(/\/$/, '')
+let lastUnitySnapshotPush = 0
+function pushSnapshotToUnity(snap: SimulationSnapshot): void {
+  if (!UNITY_SNAPSHOT_URL) return
+  const now = Date.now()
+  if (now - lastUnitySnapshotPush < 100) return
+  lastUnitySnapshotPush = now
+  try {
+    const body = JSON.stringify(snap)
+    const url = `${UNITY_SNAPSHOT_URL}/snapshot`
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      navigator.sendBeacon(url, new Blob([body], { type: 'text/plain' }))
+    } else {
+      void fetch(url, { method: 'POST', body })
+    }
+  } catch {
+    // 快照推送是尽力而为，Unity 不在线时不阻塞 web 仿真
+  }
+}
 
 /**
  * 低频 UI/编辑状态（补充设计 §5.3：只装低频状态；
@@ -287,19 +314,33 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
         const assetPath = resource.objectDef.assetPath
         if (assetPath?.startsWith('blob:')) URL.revokeObjectURL(assetPath)
       })
-      const withoutImported = (objects: FactoryObject[]) => objects.filter((object) => object.type !== 'imported')
+      const staleMachineDefinitionIds = new Set(
+        s.machineDefinitions
+          .filter((definition) => definition.modelType === 'imported' || Boolean(definition.importedResourceId))
+          .map((definition) => definition.id),
+      )
+      const withoutImported = (objects: FactoryObject[]) => objects.filter((object) => (
+        object.type !== 'imported'
+        && !(object.type === 'machine' && object.resourceId && staleMachineDefinitionIds.has(object.resourceId))
+      ))
       const factoryLayouts = {
         a01: withoutImported(s.factoryLayouts.a01),
         a02: withoutImported(s.factoryLayouts.a02),
       }
-      const selectedIds = s.selectedIds.filter((id) => s.objects.some((object) => object.id === id && object.type !== 'imported'))
+      const selectedIds = s.selectedIds.filter((id) => s.objects.some((object) => (
+        object.id === id
+        && object.type !== 'imported'
+        && !(object.type === 'machine' && object.resourceId && staleMachineDefinitionIds.has(object.resourceId))
+      )))
       return {
         importedResources: [],
+        machineDefinitions: s.machineDefinitions.filter((definition) => !staleMachineDefinitionIds.has(definition.id)),
         selectedImportedResourceId: null,
+        selectedMachineDefinitionId: staleMachineDefinitionIds.has(s.selectedMachineDefinitionId ?? '') ? null : s.selectedMachineDefinitionId,
         factoryLayouts,
         objects: withoutImported(s.objects),
-        buildType: s.buildType === 'imported' ? null : s.buildType,
-        ghost: s.ghost.type === 'imported' ? emptyGhost : s.ghost,
+        buildType: s.buildType === 'imported' || (s.buildType === 'machine' && staleMachineDefinitionIds.has(s.selectedMachineDefinitionId ?? '')) ? null : s.buildType,
+        ghost: s.ghost.type === 'imported' || (s.ghost.type === 'machine' && staleMachineDefinitionIds.has(s.ghost.resourceId ?? '')) ? emptyGhost : s.ghost,
         ghostPath: [],
         ghostPathValid: [],
         selectedId: s.selectedId && selectedIds.includes(s.selectedId) ? s.selectedId : selectedIds[0] ?? null,
@@ -747,7 +788,7 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
     set((s) => {
       const object = s.objects.find((entry) => entry.id === objectId)
       if (!object || !canCustomizeStorageName(object.type)) return {}
-      const displayName = name.trim().slice(0, 40) || undefined
+      const displayName = normalizeStoredLabel(name, '').slice(0, 40) || undefined
       if (object.displayName === displayName) return {}
       pushHistory(s)
       return {
@@ -759,6 +800,7 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
   setSimSnapshot: (snap) => {
     snapshotByFactory[get().factoryId] = snap
     set({ simSnapshot: snap })
+    pushSnapshotToUnity(snap)
   },
   setSimPlaying: (p) => set({ simPlaying: p }),
   setSimSpeed: (x) => set({ simSpeed: x }),
@@ -783,16 +825,42 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
     const factoryId = get().factoryId
     undoStacks[factoryId] = []
     redoStacks[factoryId] = []
-    save.machineDefinitions.forEach((definition) => registerMachineDefinition(definition, get().importedResources))
+    const defaultItemNames = new Map(DEFAULT_ITEMS.map((item) => [item.id, item.name]))
+    const defaultRecipeNames = new Map(DEFAULT_RECIPES.map((recipe) => [recipe.id, recipe.name]))
+    const normalizedSave: FactorySave = {
+      ...save,
+      name: normalizeStoredLabel(save.name, '未命名工厂').slice(0, 80),
+      floorNames: Array.from({ length: save.floorCount }, (_, index) =>
+        normalizeStoredLabel(save.floorNames[index], `${index + 1}F 生产层`).slice(0, 30),
+      ),
+      objects: save.objects.map((object) => ({
+        ...object,
+        displayName: object.displayName
+          ? normalizeStoredLabel(object.displayName, '').slice(0, 40) || undefined
+          : undefined,
+      })),
+      items: save.items.map((item) => ({
+        ...item,
+        name: normalizeStoredLabel(item.name, defaultItemNames.get(item.id) ?? item.id),
+        note: item.note ? normalizeStoredLabel(item.note, '') || undefined : undefined,
+        description: item.description ? normalizeStoredLabel(item.description, '') || undefined : undefined,
+      })),
+      recipes: save.recipes.map((recipe) => ({
+        ...recipe,
+        name: normalizeStoredLabel(recipe.name, defaultRecipeNames.get(recipe.id) ?? recipe.id),
+        description: recipe.description ? normalizeStoredLabel(recipe.description, '') || undefined : undefined,
+      })),
+    }
+    normalizedSave.machineDefinitions.forEach((definition) => registerMachineDefinition(definition, get().importedResources))
     set({
-      factoryName: save.name,
-      floorCount: save.floorCount,
-      floorNames: save.floorNames,
-      factoryLayouts: { ...get().factoryLayouts, [factoryId]: save.objects },
-      objects: save.objects,
-      items: save.items,
-      recipes: save.recipes,
-      machineDefinitions: save.machineDefinitions,
+      factoryName: normalizedSave.name,
+      floorCount: normalizedSave.floorCount,
+      floorNames: normalizedSave.floorNames,
+      factoryLayouts: { ...get().factoryLayouts, [factoryId]: normalizedSave.objects },
+      objects: normalizedSave.objects,
+      items: normalizedSave.items,
+      recipes: normalizedSave.recipes,
+      machineDefinitions: normalizedSave.machineDefinitions,
       selectedId: null,
       selectedIds: [],
       buildType: null,
@@ -869,7 +937,7 @@ export const useForgeMindStore = create<ForgeMindState>((set, get) => {
 
   renameFloor: (floorId, name) =>
     set((s) => ({
-      floorNames: s.floorNames.map((entry, index) => index === floorId - 1 ? name.trim().slice(0, 30) || `${floorId}F 生产层` : entry),
+      floorNames: s.floorNames.map((entry, index) => index === floorId - 1 ? normalizeStoredLabel(name, '').slice(0, 30) || `${floorId}F 生产层` : entry),
     })),
 
   setFactory: (factoryId) => {

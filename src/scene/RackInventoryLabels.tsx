@@ -5,8 +5,10 @@ import type { RackRuntimeSnapshot } from '../game/simulation'
 import { isCargoStorageRack, objectToWorld } from '../game/grid'
 import { buildingVisualScaleForType } from './industrialVisualScale'
 
-/** Always-visible, read-only inventory labels for cargo racks on the active floor. */
-export function RackInventoryLabels({ objects, racks, items }: { objects: FactoryObject[]; racks: RackRuntimeSnapshot[]; items: Item[] }) {
+/** Read-only inventory labels for cargo racks on the active floor. */
+export function RackInventoryLabels({ objects, racks, items, visible = true }: { objects: FactoryObject[]; racks: RackRuntimeSnapshot[]; items: Item[]; visible?: boolean }) {
+  if (!visible) return null
+
   const runtimeById = new Map(racks.map((rack) => [rack.objectId, rack]))
   return <group name="rack-actual-inventory-labels">{objects.filter(isCargoStorageRack).map((object) => {
     const runtime = runtimeById.get(object.id)
@@ -16,6 +18,7 @@ export function RackInventoryLabels({ objects, racks, items }: { objects: Factor
     const capacity = runtime?.capacity ?? object.storageConfig?.capacity ?? 100
     const world = objectToWorld(object)
     const height = getObjectDef(object.type, object.resourceId).height * buildingVisualScaleForType(object.type) + 0.35
+    if (entries.length === 0) return null
     return <Html key={object.id} center sprite distanceFactor={13} position={[world.x, height, world.z]} style={{ pointerEvents: 'none' }}>
       <div className={`fm-rack-inventory-label${entries.length === 0 ? ' is-empty' : ''}`}>
         <span>{getFactoryObjectDisplayName(object)}</span>

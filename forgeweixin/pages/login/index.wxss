@@ -1,0 +1,31 @@
+.login-page { min-height: 100vh; box-sizing: border-box; position: relative; overflow: hidden; padding: 54rpx 48rpx 42rpx; background: var(--fm-bg-2, #f7f8f6); color: var(--fm-text, #252a28); }
+.login-grid { position: absolute; top: 0; right: -76rpx; width: 380rpx; height: 300rpx; opacity: .42; background-image: radial-gradient(var(--fm-cyan, #459ba0) 1.5rpx, transparent 1.5rpx); background-size: 18rpx 18rpx; pointer-events: none; }
+.topline { position: relative; display: flex; justify-content: space-between; color: var(--fm-text-dim, #68716d); font-family: var(--fm-font-mono, monospace); font-size: 16rpx; letter-spacing: 1rpx; }
+.topline-status { color: var(--fm-ok, #3f9d79); }
+.brand-stage { position: relative; display: flex; align-items: center; justify-content: center; height: 246rpx; margin-top: 24rpx; border-top: 1rpx solid var(--fm-edge, rgba(42, 50, 47, .16)); border-bottom: 1rpx solid var(--fm-edge, rgba(42, 50, 47, .16)); background: rgba(255, 255, 255, .48); }
+.brand-lockup { display: block; width: 400rpx; height: 232rpx; mix-blend-mode: multiply; }
+.hero-copy { position: relative; margin-top: 38rpx; }
+.eyebrow { color: #6550c7; font-family: var(--fm-font-mono, monospace); font-size: 19rpx; font-weight: 700; letter-spacing: 3rpx; }
+.title { margin-top: 14rpx; font-family: var(--fm-font-title, sans-serif); font-size: 58rpx; line-height: 1.12; letter-spacing: -1rpx; }
+.title text { color: #6550c7; }
+.subtitle { margin-top: 16rpx; color: var(--fm-text-dim, #68716d); font-size: 25rpx; line-height: 1.55; }
+.signal-chain { position: relative; display: flex; align-items: center; gap: 12rpx; margin-top: 22rpx; color: var(--fm-text-faint, #9ba49f); font-family: var(--fm-font-mono, monospace); font-size: 17rpx; letter-spacing: 1rpx; }
+.signal-chain text.active { color: var(--fm-text, #252a28); font-weight: 700; }
+.signal-chain-line { display: block; width: 30rpx; height: 2rpx; background: var(--fm-cyan, #459ba0); }
+.login-card { position: relative; margin-top: 28rpx; padding: 28rpx 28rpx 24rpx; border: 2rpx solid var(--fm-text, #252a28); background: var(--fm-panel, #f9faf8); box-shadow: 10rpx 10rpx 0 rgba(69, 155, 160, .18); }
+.form-head { display: flex; align-items: flex-start; justify-content: space-between; }
+.card-kicker { color: #6550c7; font-family: var(--fm-font-mono, monospace); font-size: 16rpx; letter-spacing: 1rpx; }
+.card-title { margin-top: 10rpx; font-family: var(--fm-font-title, sans-serif); font-size: 38rpx; }
+.form-index { color: var(--fm-text-faint, #9ba49f); font-family: var(--fm-font-mono, monospace); font-size: 16rpx; }
+.field-label { margin-top: 20rpx; color: var(--fm-text-dim, #68716d); font-family: var(--fm-font-mono, monospace); font-size: 18rpx; letter-spacing: 1rpx; }
+.field-wrap { display: flex; align-items: center; border-bottom: 2rpx solid var(--fm-edge, rgba(42, 50, 47, .16)); }
+.field-prefix { width: 54rpx; color: var(--fm-cyan, #459ba0); font-family: var(--fm-font-mono, monospace); font-size: 17rpx; font-weight: 600; }
+.field { flex: 1; box-sizing: border-box; width: 100%; height: 70rpx; padding: 0 4rpx; color: var(--fm-text, #252a28); font-size: 27rpx; }
+.field::placeholder { color: var(--fm-text-faint, #9ba49f); }
+.submit { margin-top: 26rpx; height: 84rpx; line-height: 84rpx; font-family: var(--fm-font-title, sans-serif); font-size: 31rpx; }
+.hint { display: flex; align-items: center; margin-top: 20rpx; color: var(--fm-text-dim, #68716d); font-size: 20rpx; line-height: 1.5; }
+.hint-dot { margin-right: 8rpx; color: var(--fm-ok, #3f9d79); font-size: 16rpx; }
+.error { margin-top: 14rpx; padding: 14rpx; border-left: 6rpx solid var(--fm-danger, #c95b54); background: #fbe9e6; color: #9c3d39; font-size: 22rpx; line-height: 1.45; }
+.login-footer { position: relative; display: flex; justify-content: space-between; margin-top: 26rpx; color: var(--fm-text-faint, #9ba49f); font-family: var(--fm-font-mono, monospace); font-size: 14rpx; letter-spacing: .6rpx; }
+.login-footer text:nth-child(2) { color: #6550c7; }
+.login-footer text:nth-child(3) { color: var(--fm-accent, #e7ad18); }

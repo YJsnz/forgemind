@@ -182,6 +182,7 @@ export type AgvDecision = 'idle' | 'moving' | 'yielding' | 'replanning' | 'recov
 
 interface AgvRuntime {
   objectId: string
+  floorId: FactoryFloorId
   position: AgvNavigationPoint
   headingY: number
   phase: AgvPhase
@@ -666,8 +667,9 @@ export class SimulationEngine {
       return true
     }
     if (downstreams.length === 0) {
-      m.outputQueue = []
-      return true
+      // An open machine output is a real backpressure condition. Keep the
+      // produced lots until a valid downstream becomes available.
+      return false
     }
     const start = m.outputCursor % downstreams.length
     for (let offset = 0; offset < downstreams.length; offset += 1) {
@@ -928,11 +930,15 @@ export class SimulationEngine {
     if (mission.length === 0) return false
     const target = mission[runtime.routeIndex % mission.length]
     const candidates = target.candidates ?? [target.position]
+    const navigationObjects = this.agvNavigationObjects(runtime)
     const nextPath = candidates
-      .map((candidate) => findAgvPath(this.factoryObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime, true)))
+      .map((candidate) => findAgvPath(navigationObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime, true)))
       .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1))
       ?? candidates
-        .map((candidate) => findAgvPath(this.factoryObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime)))
+        .map((candidate) => findAgvPath(navigationObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime)))
+        .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1))
+      ?? candidates
+        .map((candidate) => findAgvPath(navigationObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime), 0))
         .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1))
     if (!nextPath || nextPath.length <= 1) return false
     runtime.path = nextPath
@@ -1005,7 +1011,7 @@ export class SimulationEngine {
   private dynamicObstaclesFor(runtime: AgvRuntime, includeLookahead = false): AgvDynamicObstacle[] {
     const obstacles: AgvDynamicObstacle[] = []
     for (const other of this.agvs.values()) {
-      if (other.objectId === runtime.objectId || other.motionStatus === 'idle') continue
+      if (other.objectId === runtime.objectId || other.floorId !== runtime.floorId || other.motionStatus === 'idle') continue
       obstacles.push({ position: other.position, radius: AGV_NAV_RADIUS })
       const next = other.path[other.waypointIndex]
       if (next) obstacles.push({ position: next, radius: AGV_NAV_RADIUS })
@@ -1037,8 +1043,12 @@ export class SimulationEngine {
 
   private blockingAgv(runtime: AgvRuntime, position: AgvNavigationPoint): AgvRuntime | undefined {
     return [...this.agvs.values()]
-      .filter((other) => other.objectId !== runtime.objectId && other.motionStatus !== 'idle')
+      .filter((other) => other.objectId !== runtime.objectId && other.floorId === runtime.floorId && other.motionStatus !== 'idle')
       .find((other) => Math.hypot(other.position.x - position.x, other.position.z - position.z) < AGV_CENTER_CLEARANCE)
+  }
+
+  private agvNavigationObjects(runtime: AgvRuntime): FactoryObject[] {
+    return this.factoryObjects.filter((object) => (object.floorId ?? 1) === runtime.floorId)
   }
 
   private planEscapePath(runtime: AgvRuntime, blocker: AgvRuntime): AgvNavigationPoint[] | null {
@@ -1050,8 +1060,9 @@ export class SimulationEngine {
       { x: runtime.position.x - awayX * 3, z: runtime.position.z },
       { x: runtime.position.x, z: runtime.position.z - awayZ * 3 },
     ]
+    const navigationObjects = this.agvNavigationObjects(runtime)
     return candidates
-      .map((candidate) => findAgvPath(this.factoryObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime, true)))
+      .map((candidate) => findAgvPath(navigationObjects, runtime.position, candidate, runtime.objectId, this.dynamicObstaclesFor(runtime, true)))
       .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1)) ?? null
   }
 
@@ -1078,9 +1089,10 @@ export class SimulationEngine {
       { x: runtime.position.x - away.z * 2, z: runtime.position.z + away.x * 2 },
     ]
     const dynamicObstacles = this.dynamicObstaclesFor(runtime, true)
+    const navigationObjects = this.agvNavigationObjects(runtime)
     return targets
       .filter((target) => Math.hypot(target.x - blocker.position.x, target.z - blocker.position.z) >= AGV_CENTER_CLEARANCE)
-      .map((target) => findAgvPath(this.factoryObjects, runtime.position, target, runtime.objectId, dynamicObstacles))
+      .map((target) => findAgvPath(navigationObjects, runtime.position, target, runtime.objectId, dynamicObstacles))
       .find((path): path is AgvNavigationPoint[] => Boolean(path && path.length > 1)) ?? null
   }
 
@@ -1384,14 +1396,16 @@ export class SimulationEngine {
   }
 }
 
-const AGV_SPEED = 2.2
-const DRONE_SPEED = 4.5
+/** Public constants used by diagnostics to convert runtime distance to travel time. */
+export const AGV_SPEED = 2.2
+export const DRONE_SPEED = 4.5
 
 function createAgvRuntime(object: FactoryObject): AgvRuntime {
   const position = objectToWorld(object)
   const direction = rotationToDir(object.rotation)
   return {
     objectId: object.id,
+    floorId: object.floorId ?? 1,
     position,
     headingY: Math.atan2(direction.dz, direction.dx),
     phase: 'to-warehouse',

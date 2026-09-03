@@ -1,0 +1,1 @@
+page { --fm-paper: #f1f2ee; --fm-ink: #12191c; --fm-panel: #1c272b; --fm-purple: #7c5ede; --fm-green: #3fb3a7; --fm-amber: #e1aa23; --fm-red: #c9635f; --fm-muted: #708087; --fm-line: rgba(18,25,28,.14); --fm-display: Georgia, "Songti SC", serif; --fm-mono: "SFMono-Regular", Consolas, monospace; }

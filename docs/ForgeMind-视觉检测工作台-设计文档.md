@@ -1,8 +1,8 @@
 # ForgeMind 视觉检测工作台 — 设计文档
 
-> 目标：双机械臂人机协作质检演示。抓取臂取件 → 摄像头臂（可手柄遥控）检查 → 真视觉检测（OpenCV）→ LLM+BT 语音播报 → 人机分拣。复用既有 Panda 机械臂、手柄控制、语音管线。
+> 目标：双机械臂人机协作质检演示。抓取臂取件 → 摄像头臂（可手柄遥控）检查 → 真视觉检测（OpenCV / YOLO）→ LLM+BT 语音播报 → 人机分拣。复用既有 Panda 机械臂、手柄控制、语音管线。
 
-> 当前落地：视觉检测工作台以独立 `inspection.html` 运行，并由主工厂中的“**双臂视觉质检单元**”设备详情打开。P1/P2 的虚拟相机、OpenCV 检测接口、结果面板和 P4 的安全隔离路由已完成；结果可通过 `/api/ai/tts` 播报。LLM 对检测结果的自然语言解读和手柄全流程控制仍是后续增强项。
+> 当前落地：视觉检测工作台以独立 `inspection.html` 运行，并由主工厂中的“**双臂视觉质检单元**”设备详情打开。右侧面板保留 OpenCV 的手动/自动检测流程；左侧新增 PCB 制成品质检 Demo，播放测试视频时按帧调用本地 YOLOv8 模型并在 Canvas 叠加真实检测框。模型离线时明确显示离线，不使用静态标签冒充推理。结果可通过 `/api/ai/tts` 播报；LLM 对检测结果的自然语言解读和手柄全流程控制仍是后续增强项。
 
 ## 0. 现状盘点（已存在，不重造）
 
@@ -32,6 +32,18 @@
 4. LLM 解读 + BT-7274 语音播报（"检测到表面划痕，判定不合格"）
 5. 摄像头臂回原位
 6. 用户选**手动**（手柄控抓取臂）或**自动**，把不合格件分拣到废品道、合格件送成品道
+
+### 1.1 当前新增：视频实时 YOLO Demo
+
+该 Demo 面向**工业制成品**，当前使用 PCB（印制电路板）缺陷模型，不是安全帽、反光衣等人员安全识别。
+
+1. 打开独立 `inspection.html`，点击左侧 `01 ◉ DEMO YOLO 质检回放`。
+2. Demo 自动播放仓库内的 `public/videos/inspection-pcb-demo.mp4`，视频只提供待检测的 PCB 画面，不内嵌预测框。
+3. 浏览器按约 360ms 抽取一次当前视频帧，发送到 `ai-service` 的 YOLO 接口。
+4. 服务端加载 `ai-service/models/pcb_defect_yolov8s.pt`，返回缺陷类别、置信度、坐标和推理耗时；浏览器将结果绘制到 Canvas 覆盖层。
+5. 页面显示 `YOLOv8 / LIVE INFERENCE` 才代表当前帧已通过模型识别；`MODEL OFFLINE` 表示服务或模型不可用，不代表检测通过。
+
+当前模型识别六类 PCB 制造缺陷：`missing_hole`（缺孔）、`mouse_bite`（鼠咬）、`open_circuit`（断路）、`short`（短路）、`spur`（毛刺）和 `spurious_copper`（多余铜）。
 
 ---
 
@@ -95,6 +107,19 @@
 
 **性能要求**：实时画面 30fps+（离屏渲染分辨率 512×384 足够，右面板小屏显示）；检测截图按需（不逐帧发后端）。
 
+### 4.1 视频 Demo 的实时 YOLO 管线
+
+```text
+HTMLVideoElement 当前帧
+  → Canvas 离屏绘制并编码为 JPEG base64
+  → POST /api/vision/yolo/detect
+  → Ultralytics YOLOv8 加载 pcb_defect_yolov8s.pt 并推理
+  → 返回 boxes / className / confidence / inferenceMs
+  → 浏览器 Canvas 按原视频尺寸缩放叠加黄色检测框
+```
+
+前端使用 `inferenceBusy` 防止同一标签页并发提交；服务端使用单帧并发保护，繁忙时返回可识别的错误状态。模型首次加载会有预热延迟，后续帧耗时取决于 CPU/GPU 和视频帧大小。该 Demo 不进入 `SimulationRunner`，也不修改工厂存档。
+
 ---
 
 ## 5. 缺陷生成方案（让 CV "真有东西可查"）
@@ -152,6 +177,51 @@
 不合格 → 抓取臂（手动或 auto）→ 废品道（标记 red）
 合格   → 抓取臂 → 成品道（标记 green）
 ```
+
+### 6.5 视频实时 YOLO 接口
+
+#### `GET /api/vision/yolo/health`
+
+返回模型文件是否存在、是否已经加载以及类别列表：
+
+```json
+{
+  "status": "ready",
+  "modelExists": true,
+  "loaded": true,
+  "classes": ["missing_hole", "mouse_bite", "open_circuit", "short", "spur", "spurious_copper"]
+}
+```
+
+#### `POST /api/vision/yolo/detect`
+
+请求体：
+
+```json
+{
+  "image": "data:image/jpeg;base64,...",
+  "confidence": 0.28
+}
+```
+
+响应体：
+
+```json
+{
+  "status": "ready",
+  "detections": [
+    {"className": "missing_hole", "confidence": 0.511, "x1": 512, "y1": 194, "x2": 526, "y2": 224}
+  ],
+  "width": 960,
+  "height": 960,
+  "inferenceMs": 274.5,
+  "note": "YOLOv8 PCB 缺陷模型实时推理"
+}
+```
+
+默认模型路径为 `ai-service/models/pcb_defect_yolov8s.pt`，可通过服务端环境变量 `FORGEMIND_YOLO_MODEL` 覆盖。前端接口地址默认是 `http://127.0.0.1:8000/api/vision/yolo/detect`，开发调试时可通过 `VITE_YOLO_DETECT_ENDPOINT` 覆盖。
+
+依赖写在 `ai-service/requirements.txt` 的 `ultralytics`；轻量核心依赖仍不强制安装 YOLO，只有启用视觉 Demo 并运行 AI 服务时才会加载权重。
 复用 `infeed` 搬运逻辑 + `RobotTask='sort'`。
 
 ---
@@ -179,6 +249,7 @@
 | **P3 语音播报** | 检测结果→LLM(BT)→TTS | BT 语音报"检测到划痕，不合格" |
 | **P4 分拣闭环** | 抓取臂取件 + 手动/自动分拣 | 不合格件进废品道，合格进成品道 |
 | **P5 整合+手柄全流程** | 自动检查/手动检查双路径 + 验收 | §9 全过 |
+| **P6 视频实时 YOLO Demo** | PCB 测试视频、YOLOv8 帧推理、Canvas 检测框、离线状态 | `LIVE INFERENCE` 可见，接口返回真实类别/框/置信度 |
 
 **推荐先做 P1**：虚拟相机实时画面是最大卖点，也是其他一切的地基。
 
@@ -193,6 +264,14 @@
 - [ ] 手柄全程可操作（视角、检测、抓取、复位）
 - [ ] 整流程跑通：取件→检查→判定→语音→分拣，无卡死无穿模
 
+### 9.1 视频实时 YOLO Demo 验收（当前已通过）
+
+- [x] 左侧 Demo 按钮打开 PCB 制成品测试视频，视频原帧不包含静态预测标签；
+- [x] 视频播放期间真实调用 `/api/vision/yolo/detect`，返回 `missing_hole`、`spur` 等模型类别、框和置信度；
+- [x] 浏览器 Canvas 将当前帧结果实时叠加，页面显示 `YOLOv8 / LIVE INFERENCE` 和推理耗时；
+- [x] AI 服务不可用时显示 `YOLOv8 / MODEL OFFLINE`，不回退为伪造检测结果；
+- [x] 生产构建、Python 编译、真实接口帧推理、视频播放和浏览器控制台错误检查通过。
+
 ---
 
 ## 10. 风险与取舍
@@ -204,6 +283,8 @@
 | IK 抓取穿模 | 穿帮 | 抓取位硬编码精确坐标，检测位用夹具限位 |
 | 手柄不可用时演示卡住 | 演示风险 | 键盘全程可替代（现有 `__forgeKeys`），UI 提示按键 |
 | 实时画面与主渲染抢帧 | 掉帧 | 离屏分辨率低 + 渲染优先级低，必要时隔帧渲染 |
+| YOLO 推理耗时高或服务忙 | Demo 状态延迟/离线 | 按帧限频、单帧并发保护、首帧预热；UI 明确区分加载、在线和离线 |
+| 模型和样本素材许可不适合直接商用 | 分发风险 | 保留来源、GPL-3.0 边界和模型文件记录；商业发布前复核上游条款 |
 
 ---
 

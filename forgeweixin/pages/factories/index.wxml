@@ -1,0 +1,18 @@
+<view class="page">
+  <view class="eyebrow">PROJECT ARCHIVE</view>
+  <view class="headline">我的工厂</view>
+  <view class="signal-rail"><text class="active">ARCHIVE</text><view class="signal-rail-line"></view><text>STRUCTURE</text><view class="signal-rail-line"></view><text>READY</text></view>
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+  <view wx:elif="{{loading}}" class="card loading">正在读取项目列表…</view>
+  <view wx:elif="{{!projects.length}}" class="card empty"><view class="empty-title">暂无项目</view><view class="muted">请在 Web 工作台手动保存一个工厂。</view></view>
+  <block wx:else>
+    <view wx:for="{{projects}}" wx:key="id" class="project card" data-id="{{item.id}}" bindtap="open">
+      <view class="project-main">
+        <view class="project-name">{{item.name}}</view>
+        <view class="muted project-meta">v{{item.version}} · {{item.floorCount}} 层 · {{item.objectCount}} 个对象</view>
+      </view>
+      <view wx:if="{{item.autosave}}" class="autosave">自动恢复</view>
+      <image class="arrow-icon" src="../../assets/icons/arrow-right.svg" mode="aspectFit" />
+    </view>
+  </block>
+</view>

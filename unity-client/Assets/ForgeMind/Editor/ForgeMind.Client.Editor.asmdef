@@ -1,0 +1,14 @@
+{
+  "name": "ForgeMind.Client.Editor",
+  "rootNamespace": "ForgeMind.Client.Editor",
+  "references": ["ForgeMind.Client"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

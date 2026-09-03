@@ -1,0 +1,36 @@
+{
+  "pages": [
+    "pages/login/index",
+    "pages/dashboard/index",
+    "pages/monitor/index",
+    "pages/tasks/index",
+    "pages/inventory/index",
+    "pages/community/index",
+    "pages/factory/index",
+    "pages/profile/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "ForgeMove",
+    "navigationBarBackgroundColor": "#12191c",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f1f2ee",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#829096",
+    "selectedColor": "#3fb3a7",
+    "backgroundColor": "#12191c",
+    "borderStyle": "white",
+    "list": [
+      { "pagePath": "pages/dashboard/index", "text": "总览" },
+      { "pagePath": "pages/monitor/index", "text": "产线" },
+      { "pagePath": "pages/tasks/index", "text": "任务" },
+      { "pagePath": "pages/community/index", "text": "社区" },
+      { "pagePath": "pages/profile/index", "text": "我的" }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}
+

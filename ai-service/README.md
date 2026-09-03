@@ -57,11 +57,15 @@ ASR/TTS 默认不预热。需要语音时显式设置 `FORGEMIND_VOICE_ENABLED=t
 | POST | `/api/ai/asr` | 可选 WAV 中文识别 |
 | POST | `/api/ai/tts` | 可选语音合成 |
 | POST | `/api/vision/detect` | 视觉检测辅助 |
+| GET | `/api/vision/yolo/health` | PCB YOLOv8 模型状态 |
+| POST | `/api/vision/yolo/detect` | 对视频单帧进行真实 YOLOv8 推理 |
 
 ## 验证
 
 ```powershell
 py -3 -m py_compile main.py vision.py
 ```
+
+实时 PCB Demo 还需要安装 `requirements.txt` 中的 `ultralytics`，并将 `pcb_defect_yolov8s.pt` 放在 `ai-service/models/`（或通过 `FORGEMIND_YOLO_MODEL` 指定路径）。默认核心服务仍不强制加载 YOLO；只有打开视觉检测 Demo 并启动 AI 服务后才会加载权重。
 
 启动后检查 `http://127.0.0.1:8000/api/ai/health`，应显示 `localModelRequired: false`。规则模式下可用 `/api/ai/assistant` 测试“查询工厂状态”“启动仿真”“暂停仿真”“设置 2 倍速”和“重置仿真”。

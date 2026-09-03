@@ -3,7 +3,7 @@ import { objectCompatiblePortCells, objectInterfacePortCells, objectPortCells, s
 import { parseSave, SAVE_VERSION } from '../src/game/save'
 import { SimulationEngine } from '../src/game/simulation'
 import { resolveItemAppearanceParameters } from '../src/game/item'
-import { BUILD_ASSET_PATHS, canBatchAsGenericMachine, getObjectDef, registerMachineDefinition, type FactoryObject, type MachineDefinition } from '../src/game/types'
+import { BUILD_ASSET_PATHS, canBatchAsGenericMachine, getMachineModelAssetPath, getObjectDef, registerMachineDefinition, type FactoryObject, type MachineDefinition } from '../src/game/types'
 import { useForgeMindStore } from '../src/store/forgeMind'
 
 useForgeMindStore.getState().newFactory('制造契约验证')
@@ -42,6 +42,16 @@ assert.equal(canBatchAsGenericMachine({ id: 'legacy-machine', type: 'machine', p
 const cncDefinition: MachineDefinition = { ...definition, id: 'MACHINE_CNC_MODEL_TEST', modelType: 'smelter' }
 registerMachineDefinition(cncDefinition)
 assert.equal(getObjectDef('machine', cncDefinition.id).assetPath, BUILD_ASSET_PATHS.smelter, '选择数控模型后，场景实例必须使用数控模型')
+const apiTankDefinition: MachineDefinition = { ...definition, id: 'MACHINE_API_TANK_MODEL_TEST', modelType: 'apiTank' }
+registerMachineDefinition(apiTankDefinition)
+assert.equal(getMachineModelAssetPath('apiTank'), '/models/industrial/api_tank.glb', '原料药罐模型必须进入机器定义的真实资产路径')
+assert.equal(getObjectDef('machine', apiTankDefinition.id).assetPath, '/models/industrial/api_tank.glb', '原料药罐机器实例必须使用真实 GLB')
+const visionInspectionDefinition: MachineDefinition = { ...definition, id: 'MACHINE_VISION_INSPECTION_MODEL_TEST', modelType: 'visionInspection' }
+registerMachineDefinition(visionInspectionDefinition)
+assert.equal(getObjectDef('machine', visionInspectionDefinition.id).assetPath, '/models/industrial/vision_inspection.glb', '视觉检测 CAD 模型必须进入机械制造机器实例，不得覆盖双臂质检设备')
+const workstationDefinition: MachineDefinition = { ...definition, id: 'MACHINE_WORKSTATION_MODEL_TEST', modelType: 'workstation' }
+registerMachineDefinition(workstationDefinition)
+assert.equal(getObjectDef('machine', workstationDefinition.id).assetPath, '/models/industrial/workstation.glb', '工业工作站机器实例必须使用真实 GLB')
 assert.deepEqual(resolveItemAppearanceParameters({ color: '#123456', modelParameters: { width: 2 } }), { width: 2, color: '#123456' }, '物品场景与缩略图必须继承业务显示颜色和模型参数')
 assert.equal(resolveItemAppearanceParameters({ color: '#123456', modelParameters: { color: '#abcdef' } }).color, '#abcdef', '显式模型颜色必须优先于旧显示色')
 
@@ -99,8 +109,9 @@ assert.equal(retainedLot?.offset, 1, '存货映射侧未吸附货架时必须保
 assert.equal(blockedStoreEngine.getSnapshot().sources.find((source) => source.objectId === store.id)?.inventory?.ITEM_IRON ?? 0, 0, '缺失目标货架时不得把货物写入站体虚拟库存')
 
 const saved = blank.exportSave()
-const parsed = parseSave(JSON.stringify({ ...saved, version: SAVE_VERSION, floorNames: ['首层'], machineDefinitions: [definition] }))
+const parsed = parseSave(JSON.stringify({ ...saved, version: SAVE_VERSION, floorNames: ['首层'], machineDefinitions: [definition, apiTankDefinition, visionInspectionDefinition, workstationDefinition] }))
 assert.equal(parsed.floorNames[0], '首层')
 assert.equal(parsed.machineDefinitions[0]?.id, definition.id)
+assert.deepEqual(parsed.machineDefinitions.slice(1).map((entry) => entry.modelType), ['apiTank', 'visionInspection', 'workstation'], '新增内置模型类型必须可写入并从 v6 存档恢复')
 
 console.log('机械制造回归：空白目录、命名楼层、动态端口、精密装配端口、三面真实货架吸附/库存/背压、双向物流与 v6 存档通过')

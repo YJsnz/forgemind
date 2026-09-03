@@ -48,5 +48,3 @@ export function FormalConveyorSegment({ targetFootprint = 1.05, targetHeight = 0
 
   return <group scale={[1, crossSectionScale, crossSectionScale]}><primitive object={normalized} /></group>
 }
-
-useGLTF.preload(PATH)

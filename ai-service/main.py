@@ -48,6 +48,10 @@ TTS_MODEL_DIR = Path(os.getenv(
     "FORGEMIND_TTS_MODEL_DIR",
     str(PROTOCOL_PATH.parent.parent / "voice-chat" / "models" / "sherpa-onnx-vits-zh-ll"),
 ))
+YOLO_MODEL_PATH = Path(os.getenv(
+    "FORGEMIND_YOLO_MODEL",
+    str(PROTOCOL_PATH.parent.parent / "ai-service" / "models" / "pcb_defect_yolov8s.pt"),
+))
 ASR_MODEL_DIR = Path(os.getenv(
     "FORGEMIND_ASR_MODEL_DIR",
     str(PROTOCOL_PATH.parent.parent / "voice-chat" / "models" / "sherpa-onnx-paraformer-zh-2023-09-14"),
@@ -56,6 +60,9 @@ _asr_recognizer: Any = None
 _asr_lock = threading.Lock()
 _fast_tts: Any = None
 _fast_tts_lock = threading.Lock()
+_yolo_model: Any = None
+_yolo_lock = threading.Lock()
+_yolo_inference_lock = threading.Lock()
 
 SYSTEM_PROMPT = """你是 ForgeMind 工厂的智能管家 BT-7274。
 你称呼用户为“驾驶员”，语气沉稳、冷静、专业、简洁；对简短问候正常回应，不使用活泼语气词。
@@ -758,6 +765,102 @@ class DetectReply(BaseModel):
     defects: list[DetectDefect]
     confidence: float
     note: str | None = None
+
+
+class YoloDetectRequest(BaseModel):
+    """实时 PCB 视频帧：浏览器送入单帧 PNG/JPEG base64。"""
+
+    image: str
+    confidence: float = Field(default=0.35, ge=0.05, le=0.95)
+
+
+class YoloDetection(BaseModel):
+    className: str
+    confidence: float
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+
+
+class YoloDetectReply(BaseModel):
+    status: Literal["ready", "error"]
+    detections: list[YoloDetection] = Field(default_factory=list)
+    width: int = 0
+    height: int = 0
+    inferenceMs: float = 0.0
+    note: str | None = None
+
+
+@app.get("/api/vision/yolo/health")
+def yolo_health() -> dict[str, Any]:
+    """返回实时 YOLO 模型是否可用；不在健康检查阶段加载权重。"""
+    return {
+        "status": "ready" if YOLO_MODEL_PATH.exists() else "error",
+        "model": str(YOLO_MODEL_PATH),
+        "modelExists": YOLO_MODEL_PATH.exists(),
+        "loaded": _yolo_model is not None,
+        "classes": ["missing_hole", "mouse_bite", "open_circuit", "short", "spur", "spurious_copper"],
+    }
+
+
+def get_yolo_model():
+    global _yolo_model
+    if _yolo_model is not None:
+        return _yolo_model
+    with _yolo_lock:
+        if _yolo_model is not None:
+            return _yolo_model
+        if not YOLO_MODEL_PATH.exists():
+            raise RuntimeError(f"找不到 YOLO 模型：{YOLO_MODEL_PATH}")
+        try:
+            from ultralytics import YOLO
+        except ImportError as exc:
+            raise RuntimeError("未安装 ultralytics，请安装 ai-service/requirements-yolo.txt") from exc
+        _yolo_model = YOLO(str(YOLO_MODEL_PATH))
+        return _yolo_model
+
+
+@app.post("/api/vision/yolo/detect", response_model=YoloDetectReply)
+def yolo_detect(req: YoloDetectRequest) -> YoloDetectReply:
+    """使用已加载的 PCB YOLOv8 权重对视频当前帧做真实推理。"""
+    try:
+        import cv2
+        import numpy as np
+        model = get_yolo_model()
+        b64 = req.image.split(",", 1)[-1]
+        img_bytes = base64.b64decode(b64)
+        image = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            return YoloDetectReply(status="error", note="视频帧解码失败")
+        if not _yolo_inference_lock.acquire(blocking=False):
+            return YoloDetectReply(status="error", note="YOLO 正在处理上一帧，请稍后重试")
+        started = __import__("time").perf_counter()
+        try:
+            result = model.predict(source=image, conf=req.confidence, imgsz=640, verbose=False)[0]
+        finally:
+            _yolo_inference_lock.release()
+        detections: list[YoloDetection] = []
+        if result.boxes is not None:
+            for box in result.boxes:
+                coords = [int(round(value)) for value in box.xyxy[0].tolist()]
+                detections.append(YoloDetection(
+                    className=str(model.names[int(box.cls[0])]),
+                    confidence=round(float(box.conf[0]), 3),
+                    x1=coords[0], y1=coords[1], x2=coords[2], y2=coords[3],
+                ))
+        return YoloDetectReply(
+            status="ready",
+            detections=detections,
+            width=int(image.shape[1]),
+            height=int(image.shape[0]),
+            inferenceMs=round((__import__("time").perf_counter() - started) * 1000, 1),
+            note="YOLOv8 PCB 缺陷模型实时推理",
+        )
+    except (ValueError, RuntimeError, ImportError) as exc:
+        return YoloDetectReply(status="error", note=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        return YoloDetectReply(status="error", note=f"YOLO 推理失败：{exc}")
 
 
 @app.post("/api/vision/detect", response_model=DetectReply)

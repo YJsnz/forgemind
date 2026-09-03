@@ -1,0 +1,4 @@
+<view class="metric-card">
+  <view class="metric-value">{{value}}</view>
+  <view class="metric-label">{{label}}</view>
+</view>

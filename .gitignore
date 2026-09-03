@@ -18,6 +18,16 @@ voice-chat/models/**/*.gguf
 # build output
 dist/
 dist-ssr/
+desktop-host/build/
+desktop-host/*.exe
+desktop-host/*.obj
+desktop-host/build/*.exe
+.archive/desktop-host/*.exe
+.archive/desktop-host/build/
+
+# local mini-program IDE state
+**/project.private.config.json
+unity-client/Assets/ForgeMind/Scenes/FactoryS03Performance.unity
 
 # logs
 .forgemind/
@@ -38,6 +48,9 @@ pnpm-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# local scratch space
+.tmp/
 
 # env
 .env

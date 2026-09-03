@@ -1,6 +1,7 @@
 /** Core grid and equipment definitions for the industrial build system. */
 
 import { FLOOR_HEIGHT_M } from './floorConfig'
+import { normalizeStoredLabel } from './labelNormalization'
 
 export type Rotation = 0 | 90 | 180 | 270
 
@@ -66,7 +67,18 @@ export interface ObjectDef {
   outputPortCount?: number
 }
 
-export type MachineModelType = 'machine' | 'smelter' | 'press' | 'washing'
+export type MachineModelType = 'machine' | 'smelter' | 'press' | 'washing' | 'apiTank' | 'visionInspection' | 'workstation'
+
+/** Built-in model types are machine-definition choices, not new simulation object types. */
+export const MACHINE_MODEL_BASE_TYPES: Record<MachineModelType, BuildType> = {
+  machine: 'machine',
+  smelter: 'smelter',
+  press: 'press',
+  washing: 'washing',
+  apiTank: 'storage',
+  visionInspection: 'machine',
+  workstation: 'machine',
+}
 
 /** 用户在“机械制造”中维护的可建造基础加工机器。 */
 export interface MachineDefinition {
@@ -251,7 +263,7 @@ export function registerImportedObjectDef(resource: ImportedResource): void {
 export function registerMachineDefinition(definition: MachineDefinition, importedResources: readonly ImportedResource[] = []): void {
   const base = definition.modelType === 'imported'
     ? importedResources.find((resource) => resource.id === definition.importedResourceId)?.objectDef ?? OBJECT_DEFS.imported
-    : OBJECT_DEFS[definition.modelType]
+    : OBJECT_DEFS[MACHINE_MODEL_BASE_TYPES[definition.modelType]]
   machineObjectDefs.set(definition.id, {
     ...base,
     type: 'machine',
@@ -266,7 +278,7 @@ export function registerMachineDefinition(definition: MachineDefinition, importe
     power: definition.power,
     inputPortCount: definition.inputPortCount,
     outputPortCount: definition.outputPortCount,
-    assetPath: definition.modelType === 'imported' ? base.assetPath : BUILD_ASSET_PATHS[definition.modelType],
+    assetPath: definition.modelType === 'imported' ? base.assetPath : getMachineModelAssetPath(definition.modelType),
     assetKind: base.assetKind ?? 'detailed-process',
   })
 }
@@ -287,7 +299,7 @@ export function canCustomizeStorageName(type: BuildType): boolean {
 }
 
 export function getFactoryObjectDisplayName(object: Pick<FactoryObject, 'type' | 'resourceId' | 'displayName'>): string {
-  const name = object.displayName?.trim()
+  const name = object.displayName ? normalizeStoredLabel(object.displayName, '') : ''
   return name || getObjectDef(object.type, object.resourceId).label
 }
 
@@ -316,6 +328,21 @@ export const BUILD_ASSET_PATHS: Partial<Record<BuildType, string>> = {
   merger: '/models/industrial/flow_node_detail.glb',
 }
 
+/** Actual GLB paths available in the mechanical-manufacturing model library. */
+export const MACHINE_MODEL_ASSET_PATHS: Record<MachineModelType, string> = {
+  machine: BUILD_ASSET_PATHS.machine ?? '/models/industrial/realvirtual_high_detail.glb',
+  smelter: BUILD_ASSET_PATHS.smelter ?? '/models/industrial/cnc_machining_center.glb',
+  press: BUILD_ASSET_PATHS.press ?? '/models/industrial/hydraulic_press_detail.glb',
+  washing: BUILD_ASSET_PATHS.washing ?? '/models/industrial/wash_deburr_detail.glb',
+  apiTank: '/models/industrial/api_tank.glb',
+  visionInspection: '/models/industrial/vision_inspection.glb',
+  workstation: '/models/industrial/workstation.glb',
+}
+
+export function getMachineModelAssetPath(modelType: MachineModelType): string {
+  return MACHINE_MODEL_ASSET_PATHS[modelType]
+}
+
 const CENTER_SPLIT_TYPES = new Set<BuildType>(['machine', 'conveyor', 'inclineUp', 'inclineDown', 'smelter', 'assembler'])
 
 for (const [type, assetPath] of Object.entries(BUILD_ASSET_PATHS)) {
@@ -325,8 +352,8 @@ for (const [type, assetPath] of Object.entries(BUILD_ASSET_PATHS)) {
   }
 }
 
-// 视觉检测单元由两套 Panda URDF 和程序化相机头组成，不再使用旧的
-// sensor_pack / control_cabinet 组合模型。
+// 视觉检测单元继续使用两套 Panda URDF 和程序化相机头；
+// visionInspection 作为机械制造中的独立 CAD 模型选项，不覆盖该运行时组合。
 OBJECT_DEFS.inspection.assetPath = '/models/panda/panda.urdf × 2 + procedural camera head'
 OBJECT_DEFS.inspection.assetKind = 'runtime-assembly'
 

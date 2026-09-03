@@ -1,0 +1,5 @@
+{
+  "desc": "ForgeMove sitemap",
+  "rules": [{ "action": "allow", "page": "*" }]
+}
+

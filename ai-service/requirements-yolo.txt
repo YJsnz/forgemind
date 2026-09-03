@@ -1,0 +1,2 @@
+# Optional real-time industrial product inspection runtime.
+ultralytics==8.4.43

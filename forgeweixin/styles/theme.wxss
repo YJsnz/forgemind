@@ -1,0 +1,19 @@
+/* 与原项目 src/styles/design-tokens.css 对齐。自定义字体由 app.js 在配置 HTTPS 地址后运行时加载。 */
+page {
+  --fm-bg: #e9ecea;
+  --fm-bg-2: #f7f8f6;
+  --fm-panel: #f9faf8;
+  --fm-panel-dark: #292d2c;
+  --fm-accent: #e7ad18;
+  --fm-cyan: #459ba0;
+  --fm-ok: #3f9d79;
+  --fm-danger: #c95b54;
+  --fm-text: #252a28;
+  --fm-text-dim: #68716d;
+  --fm-text-faint: #9ba49f;
+  --fm-edge: rgba(42, 50, 47, 0.16);
+  --fm-font-sans: "MiSans", "HarmonyOS Sans SC", "Microsoft YaHei", sans-serif;
+  --fm-font-mono: "Forge Doto", "Doto", "SFMono-Regular", Consolas, monospace;
+  --fm-font-display: "Forge Bigger", "Bigger Display", "Arial Narrow", sans-serif;
+  --fm-font-title: "Forge MaiCai", "MiSans", "Microsoft YaHei", sans-serif;
+}

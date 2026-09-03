@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.20)
+project(ForgeMindHost LANGUAGES CXX)
+
+if(NOT DEFINED FORGEMIND_WEBVIEW2_SDK)
+  set(FORGEMIND_WEBVIEW2_SDK "$ENV{FORGEMIND_WEBVIEW2_SDK}")
+endif()
+if(NOT FORGEMIND_WEBVIEW2_SDK)
+  set(FORGEMIND_WEBVIEW2_SDK "D:/deps/Microsoft.Web.WebView2")
+endif()
+
+add_executable(ForgeMindHost WIN32 ForgeMindHost.cpp)
+target_compile_features(ForgeMindHost PRIVATE cxx_std_17)
+target_compile_definitions(ForgeMindHost PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN)
+target_include_directories(ForgeMindHost PRIVATE "${FORGEMIND_WEBVIEW2_SDK}/build/native/include")
+target_link_directories(ForgeMindHost PRIVATE "${FORGEMIND_WEBVIEW2_SDK}/build/native/x64")
+target_link_libraries(ForgeMindHost PRIVATE WebView2Loader.dll.lib user32 gdi32 ole32 shlwapi shell32)

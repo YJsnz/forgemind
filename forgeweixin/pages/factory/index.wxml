@@ -1,0 +1,21 @@
+<view class="page">
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+  <view wx:elif="{{loading}}" class="card loading">正在同步工厂存档…</view>
+  <block wx:elif="{{summary}}">
+    <view class="eyebrow">FACTORY ARCHIVE / v{{summary.version}}</view>
+    <view class="headline">{{summary.name}}</view>
+    <view class="muted">结构存档摘要，不替代 Web 三维工作台。</view>
+    <view class="signal-rail"><text class="active">OBJECTS</text><view class="signal-rail-line"></view><text>LAYERS</text><view class="signal-rail-line"></view><text>TRACE</text></view>
+    <view class="stat-grid">
+      <block wx:for="{{summary.stats}}" wx:key="label"><metric-card label="{{item.label}}" value="{{item.value}}" /></block>
+    </view>
+    <view class="card">
+      <view class="section-title"><text>对象清单</text><text class="muted">最多显示 60 项</text></view>
+      <view wx:if="{{!objects.length}}" class="empty muted">当前工厂暂无对象。</view>
+      <view wx:for="{{objects}}" wx:key="id" class="object-row">
+        <view class="object-icon">{{item.floor}}</view>
+        <view class="object-main"><view class="object-label">{{item.label}}</view><view class="muted object-type">{{item.type}} · {{item.id}}</view></view>
+      </view>
+    </view>
+  </block>
+</view>

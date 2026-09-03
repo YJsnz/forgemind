@@ -17,7 +17,9 @@ import { SimulationEngine } from './simulation'
 // interpolation to stay responsive without forcing a React update every frame.
 const SNAPSHOT_HZ = 20
 const SNAPSHOT_INTERVAL = 1000 / SNAPSHOT_HZ
-const LARGE_FACTORY_SNAPSHOT_INTERVAL = 1000 / 10
+// Large factories keep vehicle interpolation smooth at 5Hz while halving
+// React/store snapshot churn during a running simulation.
+const LARGE_FACTORY_SNAPSHOT_INTERVAL = 1000 / 5
 
 /** 种子：MVP 固定种子，保证可复现（§3.3） */
 const SEED = 20260813

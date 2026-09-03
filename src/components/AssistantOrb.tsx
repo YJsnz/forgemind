@@ -20,6 +20,14 @@ const PHASE_COPY: Record<AssistantPresencePhase, { label: string; detail: string
   error: { label: '链路异常', detail: '可选智能服务未连接' },
 }
 
+const PHASE_TOURS: Record<AssistantPresencePhase, string[]> = {
+  idle: ['02', '30', '19', '02'],
+  listening: ['16', '17', '16', '11'],
+  thinking: ['11', '20', '17', '11'],
+  speaking: ['10', '13', '19', '10'],
+  error: ['21', '20', '21'],
+}
+
 /**
  * Assistant presence surface. The optional voice service can drive it with:
  * window.dispatchEvent(new CustomEvent('forgemind:assistant-state', {
@@ -30,6 +38,9 @@ const PHASE_COPY: Record<AssistantPresencePhase, { label: string; detail: string
  * TTS player may be local BT audio, a browser AudioBuffer, or a future stream.
  */
 export function AssistantOrb({ compact = false }: { compact?: boolean }) {
+  const emotionHostRef = useRef<HTMLDivElement>(null)
+  const emotionStageRef = useRef<HTMLDivElement>(null)
+  const emotionEngineRef = useRef<EmotionBallEngine | null>(null)
   const [phase, setPhase] = useState<AssistantPresencePhase>('idle')
   const [message, setMessage] = useState('等待驾驶员指令')
   const [targetLevel, setTargetLevel] = useState(0.16)
@@ -37,7 +48,62 @@ export function AssistantOrb({ compact = false }: { compact?: boolean }) {
   const targetRef = useRef(0.16)
   const phaseRef = useRef<AssistantPresencePhase>('idle')
   const barSeeds = useMemo(() => Array.from({ length: 28 }, (_, index) => 0.56 + ((index * 17) % 11) / 22), [])
-  const byteGlyphs = useMemo(() => createByteGlyphs(64), [])
+
+  useEffect(() => {
+    const host = emotionHostRef.current
+    const api = window.EmotionBall
+    if (!host || !api) return
+
+    const engine = api.create(host, {
+      emotion: '02',
+      shape: 'blob',
+      label: 'ForgeMind BT-7274 Emotion Ball',
+      idle: false,
+    })
+    emotionEngineRef.current = engine
+    engine.startTour(PHASE_TOURS[phaseRef.current], 3200)
+    const pointerMove = (event: PointerEvent) => {
+      const rect = host.getBoundingClientRect()
+      if (!rect.width || !rect.height) return
+      engine.setGaze(
+        Math.max(-1, Math.min(1, (event.clientX - (rect.left + rect.width / 2)) / (rect.width / 2))),
+        Math.max(-1, Math.min(1, (event.clientY - (rect.top + rect.height / 2)) / (rect.height / 2))),
+      )
+    }
+    const pointerLeave = () => engine.clearGaze()
+    const spin = (event: PointerEvent) => {
+      if (event.button !== 0) return
+      event.preventDefault()
+      engine.setActive(true)
+      engine.spin(1, 1)
+
+      // The compact workbench ball is small enough that the engine's yaw can
+      // be easy to miss. Keep the real engine spin and add a short stage cue
+      // so every deliberate click has an immediate, visible response.
+      const stage = emotionStageRef.current
+      if (!stage) return
+      stage.classList.remove('is-click-spinning')
+      void stage.offsetWidth
+      stage.classList.add('is-click-spinning')
+      window.setTimeout(() => stage.classList.remove('is-click-spinning'), 760)
+    }
+    host.addEventListener('pointermove', pointerMove)
+    host.addEventListener('pointerleave', pointerLeave)
+    const stage = emotionStageRef.current
+    stage?.addEventListener('pointerdown', spin, { passive: false })
+
+    return () => {
+      host.removeEventListener('pointermove', pointerMove)
+      host.removeEventListener('pointerleave', pointerLeave)
+      stage?.removeEventListener('pointerdown', spin)
+      engine.destroy()
+      emotionEngineRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    emotionEngineRef.current?.startTour(PHASE_TOURS[phase], 3200)
+  }, [phase])
 
   useEffect(() => {
     const onState = (event: Event) => {
@@ -119,7 +185,7 @@ export function AssistantOrb({ compact = false }: { compact?: boolean }) {
         </div>
       )}
 
-      <div className="fm-assistant-orb-stage" style={{ '--assistant-level': displayLevel } as React.CSSProperties}>
+      <div ref={emotionStageRef} className="fm-assistant-orb-stage" style={{ '--assistant-level': displayLevel } as React.CSSProperties}>
         <div className="fm-assistant-orb-halo fm-assistant-orb-halo-one" />
         <div className="fm-assistant-orb-halo fm-assistant-orb-halo-two" />
         <div className="fm-assistant-orb-wave" aria-hidden="true">
@@ -130,23 +196,8 @@ export function AssistantOrb({ compact = false }: { compact?: boolean }) {
             return <i key={index} style={{ height: `${height.toFixed(1)}px`, transform: `rotate(${(360 / barSeeds.length) * index}deg) translateY(-${radius}px)` }} />
           })}
         </div>
-        <div className="fm-assistant-orb-core">
-          <div className="fm-assistant-byte-sphere" aria-hidden="true">
-            {byteGlyphs.map((glyph, index) => (
-              <span
-                key={index}
-                style={{
-                  left: `${glyph.x * 100}%`,
-                  top: `${glyph.y * 100}%`,
-                  opacity: glyph.opacity,
-                  color: glyph.color,
-                  transform: `translate(-50%, -50%) scale(${glyph.scale})`,
-                }}
-              >
-                {glyph.value}
-              </span>
-            ))}
-          </div>
+        <div className="fm-assistant-orb-core is-emotion-ball">
+          <div ref={emotionHostRef} className="fm-assistant-emotion-ball" aria-label="可交互的 BT-7274 表情球" />
         </div>
       </div>
 
@@ -164,31 +215,4 @@ export function AssistantOrb({ compact = false }: { compact?: boolean }) {
 
 function clamp(value: number): number {
   return Math.min(1, Math.max(0, value))
-}
-
-interface ByteGlyph {
-  x: number
-  y: number
-  scale: number
-  opacity: number
-  color: string
-  value: '0' | '1' | '·'
-}
-
-function createByteGlyphs(count: number): ByteGlyph[] {
-  const goldenAngle = Math.PI * (3 - Math.sqrt(5))
-  return Array.from({ length: count }, (_, index) => {
-    const t = (index + 0.5) / count
-    const latitude = Math.acos(1 - 2 * t)
-    const longitude = goldenAngle * index
-    const depth = (Math.sin(latitude) * Math.sin(longitude) + 1) / 2
-    return {
-      x: 0.5 + Math.sin(latitude) * Math.cos(longitude) * 0.46,
-      y: 0.5 + Math.cos(latitude) * 0.46,
-      scale: 0.55 + depth * 0.8,
-      opacity: 0.2 + depth * 0.7,
-      color: index % 11 === 0 ? '#d7a522' : depth > 0.62 ? '#70c7c0' : '#397f82',
-      value: index % 7 === 0 ? '·' : index % 2 === 0 ? '0' : '1',
-    }
-  })
 }

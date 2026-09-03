@@ -11,6 +11,7 @@ import { NON_VEHICLE_BUILDING_VISUAL_SCALE, PRODUCTION_MACHINE_VISUAL_SCALE } fr
 
 const UP = new THREE.Vector3(0, 1, 0)
 const SCALE_ONE = new THREE.Vector3(1, 1, 1)
+const STATIC_SPATIAL_CELL_SIZE = 18
 
 const STATIC_MODEL_SPECS: Partial<Record<BuildType, {
   path: string
@@ -19,6 +20,7 @@ const STATIC_MODEL_SPECS: Partial<Record<BuildType, {
   rotationOffsetY?: number
   baseY?: number
   sourceObjectName?: string
+  groundReferenceName?: string
 }>> = {
   machine: {
     path: '/models/industrial/realvirtual_high_detail.glb',
@@ -46,6 +48,7 @@ const STATIC_MODEL_SPECS: Partial<Record<BuildType, {
     path: '/models/industrial/wash_deburr_detail.glb',
     targetFootprint: 1.7 * PRODUCTION_MACHINE_VISUAL_SCALE,
     targetHeight: 1.45 * PRODUCTION_MACHINE_VISUAL_SCALE,
+    groundReferenceName: 'WEld_Table_Custom_1600X900__(1)-1',
   },
   storage: {
     path: '/models/industrial/pallet_buffer_detail.glb',
@@ -90,33 +93,39 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
   const gltf = useGLTF(spec.path)
   const refs = useRef(new Map<string, THREE.InstancedMesh>())
   const normalized = useMemo(
-    () => normalizeStaticModel(gltf.scene, spec.targetFootprint, spec.targetHeight, spec.rotationOffsetY ?? 0, spec.sourceObjectName),
-    [gltf.scene, spec.rotationOffsetY, spec.sourceObjectName, spec.targetFootprint, spec.targetHeight],
+    () => normalizeStaticModel(gltf.scene, spec.targetFootprint, spec.targetHeight, spec.rotationOffsetY ?? 0, spec.sourceObjectName, spec.groundReferenceName),
+    [gltf.scene, spec.groundReferenceName, spec.rotationOffsetY, spec.sourceObjectName, spec.targetFootprint, spec.targetHeight],
   )
   const batches = useMemo(() => collectStaticBatches(normalized), [normalized])
+  const objectGroups = useMemo(
+    () => type === 'agv' || type === 'drone' ? [{ key: 'all', objects }] : partitionObjects(objects),
+    [objects, type],
+  )
   const visualMotionRef = useRef(new Map<string, AgvRenderMotion>())
   const targetMotionRef = useRef(new Map<string, AgvRenderMotion>())
   const rootMatrixRef = useRef(new THREE.Matrix4())
   const instanceMatrixRef = useRef(new THREE.Matrix4())
 
   useLayoutEffect(() => {
-    batches.forEach((batch) => {
-      const mesh = refs.current.get(batch.key)
-      if (!mesh) return
-      let instance = 0
-      objects.forEach((object) => {
-        const root = objectMatrix(object, spec.baseY ?? 0)
-        batch.matrices.forEach((local) => {
-          mesh.setMatrixAt(instance, root.clone().multiply(local))
-          instance += 1
+    objectGroups.forEach((objectGroup) => {
+      batches.forEach((batch) => {
+        const mesh = refs.current.get(`${objectGroup.key}:${batch.key}`)
+        if (!mesh) return
+        let instance = 0
+        objectGroup.objects.forEach((object) => {
+          const root = objectMatrix(object, spec.baseY ?? 0)
+          batch.matrices.forEach((local) => {
+            mesh.setMatrixAt(instance, root.clone().multiply(local))
+            instance += 1
+          })
         })
+        mesh.count = instance
+        mesh.instanceMatrix.needsUpdate = true
+        mesh.computeBoundingSphere()
+        mesh.frustumCulled = type !== 'agv' && type !== 'drone'
       })
-      mesh.count = instance
-      mesh.instanceMatrix.needsUpdate = true
-      mesh.computeBoundingSphere()
-      if (type === 'agv' || type === 'drone') mesh.frustumCulled = false
     })
-  }, [batches, objects, type])
+  }, [batches, objectGroups, spec.baseY, type])
 
   useLayoutEffect(() => {
     if ((type !== 'agv' && type !== 'drone') || !motion) return
@@ -162,50 +171,53 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
       current.headingY += shortestAngleDelta(current.headingY, next.headingY) * alpha
     })
 
-    batches.forEach((batch) => {
-      const mesh = refs.current.get(batch.key)
-      if (!mesh) return
-      let instance = 0
-      objects.forEach((object) => {
-        const runtime = visual.get(object.id)
-        const root = runtime
-        ? objectMatrix(object, spec.baseY ?? 0, { x: runtime.x, y: runtime.y, z: runtime.z }, runtime.headingY, rootMatrix)
-          : objectMatrix(object, spec.baseY ?? 0, undefined, undefined, rootMatrix)
-        batch.matrices.forEach((local) => {
-          instanceMatrix.multiplyMatrices(root, local)
-          mesh.setMatrixAt(instance, instanceMatrix)
-          instance += 1
+    objectGroups.forEach((objectGroup) => {
+      batches.forEach((batch) => {
+        const mesh = refs.current.get(`${objectGroup.key}:${batch.key}`)
+        if (!mesh) return
+        let instance = 0
+        objectGroup.objects.forEach((object) => {
+          const runtime = visual.get(object.id)
+          const root = runtime
+            ? objectMatrix(object, spec.baseY ?? 0, { x: runtime.x, y: runtime.y, z: runtime.z }, runtime.headingY, rootMatrix)
+            : objectMatrix(object, spec.baseY ?? 0, undefined, undefined, rootMatrix)
+          batch.matrices.forEach((local) => {
+            instanceMatrix.multiplyMatrices(root, local)
+            mesh.setMatrixAt(instance, instanceMatrix)
+            instance += 1
+          })
         })
+        mesh.instanceMatrix.needsUpdate = true
       })
-      mesh.instanceMatrix.needsUpdate = true
     })
 
   })
 
-  const selectFromBatch = (localCount: number) => (event: ThreeEvent<MouseEvent>) => {
+  const selectFromBatch = (groupObjects: FactoryObject[], localCount: number) => (event: ThreeEvent<MouseEvent>) => {
     if (!onSelect) return
     event.stopPropagation()
     if (event.instanceId === undefined) return
-    const object = objects[Math.floor(event.instanceId / localCount)]
+    const object = groupObjects[Math.floor(event.instanceId / localCount)]
     if (object) onSelect(object.id)
   }
 
   return (
     <group name={`daiyu-batch:${type}`} dispose={null}>
-      {batches.map((batch) => (
+      {objectGroups.flatMap((objectGroup) => batches.map((batch) => (
         <instancedMesh
-          key={batch.key}
+          key={`${objectGroup.key}:${batch.key}`}
           ref={(mesh) => {
-            if (mesh) refs.current.set(batch.key, mesh)
-            else refs.current.delete(batch.key)
+            const refKey = `${objectGroup.key}:${batch.key}`
+            if (mesh) refs.current.set(refKey, mesh)
+            else refs.current.delete(refKey)
           }}
-          args={[batch.geometry, batch.material, Math.max(objects.length * batch.matrices.length, 1)]}
-          visible={objects.length > 0}
+          args={[batch.geometry, batch.material, Math.max(objectGroup.objects.length * batch.matrices.length, 1)]}
+          visible={objectGroup.objects.length > 0}
           castShadow={castShadows}
           receiveShadow
-          onClick={onSelect && type !== 'drone' ? selectFromBatch(batch.matrices.length) : undefined}
+          onClick={onSelect && type !== 'drone' ? selectFromBatch(objectGroup.objects, batch.matrices.length) : undefined}
         />
-      ))}
+      )))}
       {type === 'drone' && onSelect && objects.map((object) => {
         const runtime = motion?.get(object.id)
         const world = runtime?.position ?? objectToWorld(object)
@@ -230,7 +242,7 @@ export const DaiyuStaticModelBatch = memo(function DaiyuStaticModelBatch({
   )
 })
 
-function normalizeStaticModel(source: THREE.Group, targetFootprint: number, targetHeight: number, rotationOffsetY: number, sourceObjectName?: string) {
+function normalizeStaticModel(source: THREE.Group, targetFootprint: number, targetHeight: number, rotationOffsetY: number, sourceObjectName?: string, groundReferenceName?: string) {
   source.updateMatrixWorld(true)
   const scene = new THREE.Group()
   const sourceObject = sourceObjectName ? (source.getObjectByName(sourceObjectName) ?? source) : source
@@ -251,8 +263,14 @@ function normalizeStaticModel(source: THREE.Group, targetFootprint: number, targ
   scene.scale.setScalar(scale)
   scene.updateMatrixWorld(true)
   const normalized = new THREE.Box3().setFromObject(scene)
+  // The washing GLB contains a cable/harness helper whose vertices start at
+  // the source origin even though the visible equipment body starts higher.
+  // Use the authored body node as the floor reference so the body is not
+  // rendered in the air. Other assets keep the complete normalized bounds.
+  const groundReference = groundReferenceName ? scene.getObjectByName(groundReferenceName) : null
+  const groundBox = groundReference ? new THREE.Box3().setFromObject(groundReference) : normalized
   const center = normalized.getCenter(new THREE.Vector3())
-  scene.position.set(-center.x, -normalized.min.y, -center.z)
+  scene.position.set(-center.x, -groundBox.min.y, -center.z)
   scene.updateMatrixWorld(true)
   scene.traverse((node) => {
     if (!(node instanceof THREE.Mesh)) return
@@ -301,6 +319,16 @@ function rotationAngle(rotation: FactoryObject['rotation']) {
   return rotation === 90 ? -Math.PI / 2 : rotation === 180 ? Math.PI : rotation === 270 ? Math.PI / 2 : 0
 }
 
-Object.values(STATIC_MODEL_SPECS).forEach((spec) => {
-  if (spec) useGLTF.preload(spec.path)
-})
+function partitionObjects(objects: FactoryObject[]) {
+  const grouped = new Map<string, FactoryObject[]>()
+  for (const object of objects) {
+    const world = objectToWorld(object)
+    const cellX = Math.floor(world.x / STATIC_SPATIAL_CELL_SIZE)
+    const cellZ = Math.floor(world.z / STATIC_SPATIAL_CELL_SIZE)
+    const key = `${cellX}:${cellZ}`
+    const group = grouped.get(key)
+    if (group) group.push(object)
+    else grouped.set(key, [object])
+  }
+  return [...grouped.entries()].map(([key, cellObjects]) => ({ key, objects: cellObjects }))
+}

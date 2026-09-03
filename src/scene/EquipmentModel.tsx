@@ -1,4 +1,4 @@
-import { Suspense, useMemo, useRef } from 'react'
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useGLTF } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
@@ -12,6 +12,31 @@ import {
   NON_VEHICLE_BUILDING_VISUAL_SCALE,
   PRODUCTION_MACHINE_VISUAL_SCALE,
 } from './industrialVisualScale'
+
+type RuntimeDetailSignalEntry = {
+  mesh: THREE.Mesh | null
+  active: boolean
+  kind: 'press' | 'wash' | 'storage' | 'flow'
+}
+
+// 状态灯的视觉频率保持不变，统一逐帧更新，避免高密度场景中每个设备
+// 都注册一个 useFrame 回调。材质、颜色和模型几何均不变。
+const runtimeDetailSignalEntries = new Set<RuntimeDetailSignalEntry>()
+
+export function RuntimeDetailSignalTicker() {
+  useFrame(({ clock }) => {
+    const elapsed = clock.getElapsedTime()
+    for (const entry of runtimeDetailSignalEntries) {
+      const mesh = entry.mesh
+      if (!mesh) continue
+      const pulse = entry.active ? 0.78 + Math.sin(elapsed * 8) * 0.2 : 0.22
+      const material = mesh.material as THREE.MeshBasicMaterial
+      material.opacity = pulse
+      mesh.scale.x = entry.active ? 1 + Math.sin(elapsed * 5) * 0.08 : 0.72
+    }
+  })
+  return null
+}
 
 interface EquipmentModelProps {
   type: BuildType
@@ -29,9 +54,16 @@ interface EquipmentModelProps {
   castShadows?: boolean
   suppressPanda?: boolean
   suppressConveyor?: boolean
+  simplified?: boolean
 }
 
-export function EquipmentModel({ type, resourceId, color, accent, height, active = false, running = false, runtime, sourceRuntime, stationMode, conveyorCorner = false, conveyorCornerInput = 'left', castShadows = true, suppressPanda = false, suppressConveyor = false }: EquipmentModelProps) {
+export function EquipmentModel({ type, resourceId, color, accent, height, active = false, running = false, runtime, sourceRuntime, stationMode, conveyorCorner = false, conveyorCornerInput = 'left', castShadows = true, suppressPanda = false, suppressConveyor = false, simplified = false }: EquipmentModelProps) {
+  if (simplified) {
+    if (type === 'conveyor') return <Belt color={color} accent={accent} active={false} />
+    if (type === 'storage' || type === 'oreMiner') return <NonVehicleBuildingScale><RawRack color={color} accent={accent} /></NonVehicleBuildingScale>
+    if (type === 'agv') return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/forgecore/forgecore_agv.glb" targetFootprint={1.85} targetHeight={height} sourceObjectName="GeoContainer_572__16_36" /></Suspense>
+    return <SolidUnit color={color} height={height} />
+  }
   if (type === 'imported') {
     const importedDef = getObjectDef(type, resourceId)
     const model = importedDef.assetPath
@@ -58,7 +90,7 @@ export function EquipmentModel({ type, resourceId, color, accent, height, active
     case 'inspection':
       return <ProductionMachineScale><Suspense fallback={<InspectionCell color={color} accent={accent} />}><ImportedInspectionCell accent={accent} castShadows={castShadows} /></Suspense></ProductionMachineScale>
     case 'washing':
-      return <ProductionMachineScale><Suspense fallback={<WashCell color={color} accent={accent} runtime={runtime} />}><DetailedAsset path="/models/industrial/wash_deburr_detail.glb" targetFootprint={1.7} targetHeight={height} accent={accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="wash" /></Suspense></ProductionMachineScale>
+      return <ProductionMachineScale><Suspense fallback={<WashCell color={color} accent={accent} runtime={runtime} />}><DetailedAsset path="/models/industrial/wash_deburr_detail.glb" targetFootprint={1.7} targetHeight={height} accent={accent} active={runtime?.state === 'processing' || runtime?.state === 'loading'} kind="wash" groundReferenceName="WEld_Table_Custom_1600X900__(1)-1" /></Suspense></ProductionMachineScale>
     case 'agv':
       return <Suspense fallback={<SolidUnit color={color} height={height} />}><ImportedModel path="/models/forgecore/forgecore_agv.glb" targetFootprint={1.85} targetHeight={height} sourceObjectName="GeoContainer_572__16_36" /></Suspense>
     case 'drone':
@@ -258,7 +290,7 @@ function WorkcellPlinth() {
   </group>
 }
 
-function ImportedInspectionCell({ accent, castShadows }: { accent: string; castShadows: boolean; color?: string; targetFootprint?: number; targetHeight?: number; suppressImports?: boolean }) {
+function ImportedInspectionCell({ accent, castShadows }: { accent: string; castShadows: boolean }) {
   return <InspectionDualArmCell accent={accent} castShadows={castShadows} />
 }
 
@@ -319,7 +351,7 @@ function CameraHead({ accent, position }: { accent: string; position: [number, n
   </group>
 }
 
-function ImportedModel({ path, targetFootprint, targetHeight, rotationOffsetY = 0, stripDirectionTexture = false, castShadows = true, sourceObjectName }: { path: string; targetFootprint: number; targetHeight: number; rotationOffsetY?: number; stripDirectionTexture?: boolean; castShadows?: boolean; sourceObjectName?: string }) {
+function ImportedModel({ path, targetFootprint, targetHeight, rotationOffsetY = 0, stripDirectionTexture = false, castShadows = true, sourceObjectName, groundReferenceName }: { path: string; targetFootprint: number; targetHeight: number; rotationOffsetY?: number; stripDirectionTexture?: boolean; castShadows?: boolean; sourceObjectName?: string; groundReferenceName?: string }) {
   const gltf = useGLTF(path)
   const normalized = useMemo(() => {
     const source = sourceObjectName ? gltf.scene.getObjectByName(sourceObjectName) : gltf.scene
@@ -329,14 +361,17 @@ function ImportedModel({ path, targetFootprint, targetHeight, rotationOffsetY = 
     // around the cell origin, which makes the belt drift away from its arrow.
     scene.position.set(0, 0, 0)
     scene.rotation.set(0, rotationOffsetY, 0)
+    scene.updateMatrixWorld(true)
     const box = new THREE.Box3().setFromObject(scene)
     const size = box.getSize(new THREE.Vector3())
     const scale = Math.min(targetFootprint / Math.max(size.x, size.z, 0.0001), targetHeight / Math.max(size.y, 0.0001))
     scene.scale.setScalar(scale)
     scene.updateMatrixWorld(true)
     const normalizedBox = new THREE.Box3().setFromObject(scene)
+    const groundReference = groundReferenceName ? scene.getObjectByName(groundReferenceName) : null
+    const groundBox = groundReference ? new THREE.Box3().setFromObject(groundReference) : normalizedBox
     const center = normalizedBox.getCenter(new THREE.Vector3())
-    scene.position.set(-center.x, -normalizedBox.min.y, -center.z)
+    scene.position.set(-center.x, -groundBox.min.y, -center.z)
     scene.updateMatrixWorld(true)
     scene.traverse((node) => {
       if (node instanceof THREE.Mesh) {
@@ -357,23 +392,29 @@ function ImportedModel({ path, targetFootprint, targetHeight, rotationOffsetY = 
       }
     })
     return scene
-  }, [castShadows, gltf, rotationOffsetY, sourceObjectName, stripDirectionTexture, targetFootprint, targetHeight])
+  }, [castShadows, gltf, groundReferenceName, rotationOffsetY, sourceObjectName, stripDirectionTexture, targetFootprint, targetHeight])
   return <primitive object={normalized} />
 }
 
-function DetailedAsset({ path, targetFootprint, targetHeight, accent, active, kind }: { path: string; targetFootprint: number; targetHeight: number; accent: string; active: boolean; kind: 'press' | 'wash' | 'storage' | 'flow' }) {
-  return <group><ImportedModel path={path} targetFootprint={targetFootprint} targetHeight={targetHeight} /><RuntimeDetailSignal accent={accent} active={active} kind={kind} /></group>
+function DetailedAsset({ path, targetFootprint, targetHeight, accent, active, kind, groundReferenceName }: { path: string; targetFootprint: number; targetHeight: number; accent: string; active: boolean; kind: 'press' | 'wash' | 'storage' | 'flow'; groundReferenceName?: string }) {
+  return <group><ImportedModel path={path} targetFootprint={targetFootprint} targetHeight={targetHeight} groundReferenceName={groundReferenceName} /><RuntimeDetailSignal accent={accent} active={active} kind={kind} /></group>
 }
 
 export function RuntimeDetailSignal({ accent, active, kind }: { accent: string; active: boolean; kind: 'press' | 'wash' | 'storage' | 'flow' }) {
   const ref = useRef<THREE.Mesh>(null)
-  useFrame(({ clock }) => {
-    if (!ref.current) return
-    const pulse = active ? 0.78 + Math.sin(clock.getElapsedTime() * 8) * 0.2 : 0.22
-    const material = ref.current.material as THREE.MeshBasicMaterial
-    material.opacity = pulse
-    ref.current.scale.x = active ? 1 + Math.sin(clock.getElapsedTime() * 5) * 0.08 : 0.72
-  })
+  const entry = useMemo<RuntimeDetailSignalEntry>(() => ({ mesh: null, active, kind }), [])
+  useLayoutEffect(() => {
+    entry.mesh = ref.current
+    entry.active = active
+    entry.kind = kind
+  }, [active, entry, kind])
+  useEffect(() => {
+    runtimeDetailSignalEntries.add(entry)
+    return () => {
+      runtimeDetailSignalEntries.delete(entry)
+      entry.mesh = null
+    }
+  }, [entry])
   if (kind === 'storage') return <mesh ref={ref} position={[0, targetSignalHeight(kind), 0.84]}><boxGeometry args={[0.75, 0.018, 0.018]} /><meshBasicMaterial color={accent} transparent opacity={0.22} /></mesh>
   if (kind === 'flow') return <mesh ref={ref} position={[0, targetSignalHeight(kind), 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[0.28, 0.31, 24]} /><meshBasicMaterial color={accent} transparent opacity={0.22} /></mesh>
   return <mesh ref={ref} position={[0, targetSignalHeight(kind), 0]}><boxGeometry args={[0.9, 0.018, 0.028]} /><meshBasicMaterial color={accent} transparent opacity={0.22} /></mesh>
@@ -385,15 +426,3 @@ function targetSignalHeight(kind: 'press' | 'wash' | 'storage' | 'flow') {
   if (kind === 'storage') return 1.62
   return 0.67
 }
-
-useGLTF.preload('/models/forgecore/forgecore_agv.glb')
-useGLTF.preload('/models/forgecore/forgecore_drone.glb')
-useGLTF.preload('/models/industrial/cnc_machining_center.glb')
-useGLTF.preload('/models/industrial/robot_cell.glb')
-useGLTF.preload('/models/industrial/roller_conveyor.glb')
-useGLTF.preload('/models/industrial/roller_conveyor_segment.glb')
-useGLTF.preload('/models/industrial/safety_fence.glb')
-useGLTF.preload('/models/industrial/hydraulic_press_detail.glb')
-useGLTF.preload('/models/industrial/wash_deburr_detail.glb')
-useGLTF.preload('/models/industrial/pallet_buffer_detail.glb')
-useGLTF.preload('/models/industrial/flow_node_detail.glb')

@@ -38,11 +38,18 @@ const cellToPoint = (x: number, z: number): AgvNavigationPoint => ({ x: x + 0.5,
  * a one-cell safety envelope; AGVs and drones stay dynamic and do not become
  * permanent walls in the warehouse aisle.
  */
-export function findAgvPath(objects: FactoryObject[], start: AgvNavigationPoint, target: AgvNavigationPoint, vehicleId: string, dynamicObstacles: readonly AgvDynamicObstacle[] = []): AgvNavigationPoint[] | null {
+export function findAgvPath(
+  objects: FactoryObject[],
+  start: AgvNavigationPoint,
+  target: AgvNavigationPoint,
+  vehicleId: string,
+  dynamicObstacles: readonly AgvDynamicObstacle[] = [],
+  clearanceCells = CLEARANCE_CELLS,
+): AgvNavigationPoint[] | null {
   const startCell = pointToCell(start)
   const targetCell = pointToCell(target)
   const dynamicBlocked = createDynamicBlockedCells(dynamicObstacles)
-  const blocked = createBlockedCells(objects, vehicleId, dynamicBlocked)
+  const blocked = createBlockedCells(objects, vehicleId, dynamicBlocked, clearanceCells)
   blocked.delete(key(startCell.x, startCell.z))
   if (!dynamicBlocked.has(key(targetCell.x, targetCell.z))) blocked.delete(key(targetCell.x, targetCell.z))
 
@@ -129,13 +136,13 @@ class MinHeap {
   }
 }
 
-function createBlockedCells(objects: FactoryObject[], vehicleId: string, dynamicBlocked: Set<string>) {
+function createBlockedCells(objects: FactoryObject[], vehicleId: string, dynamicBlocked: Set<string>, clearanceCells: number) {
   const blocked = new Set<string>()
   objects.forEach((object) => {
     if (object.id === vehicleId || object.type === 'agv' || object.type === 'drone') return
     occupiedCells(object).forEach((cell) => {
-      for (let dx = -CLEARANCE_CELLS; dx <= CLEARANCE_CELLS; dx += 1) {
-        for (let dz = -CLEARANCE_CELLS; dz <= CLEARANCE_CELLS; dz += 1) blocked.add(key(cell.x + dx, cell.z + dz))
+      for (let dx = -clearanceCells; dx <= clearanceCells; dx += 1) {
+        for (let dz = -clearanceCells; dz <= clearanceCells; dz += 1) blocked.add(key(cell.x + dx, cell.z + dz))
       }
     })
   })

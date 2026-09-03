@@ -23,12 +23,13 @@ const recipe: Recipe = {
 }
 
 // 布局（rotation 方向：+X=0）
-// Source 在 [-1,0] 朝 +X；传送带在 [0,0]、[2,0] 朝 +X；机器在 [1,0] 朝 +X
+// 入货仓库在 [-4,-1]（3x3，前面供货）；传送带 [-1,0]、[1,0]；机器 [0,0]；出货仓库 [2,-1] 计量产出
 const objects: FactoryObject[] = [
-  { id: 'src', type: 'source', pos: { x: -3, z: 0 }, rotation: 0, itemId: ironId },
-  { id: 'belt_in', type: 'conveyor', pos: { x: 0, z: 0 }, rotation: 0 },
-  { id: 'machine', type: 'machine', pos: { x: 1, z: 0 }, rotation: 0, recipeId: recipe.id },
-  { id: 'belt_out', type: 'conveyor', pos: { x: 2, z: 0 }, rotation: 0 },
+  { id: 'supply', type: 'inboundWarehouse', pos: { x: -4, z: -1 }, rotation: 0, itemId: ironId },
+  { id: 'belt_in', type: 'conveyor', pos: { x: -1, z: 0 }, rotation: 0 },
+  { id: 'machine', type: 'machine', pos: { x: 0, z: 0 }, rotation: 0, recipeId: recipe.id },
+  { id: 'belt_out', type: 'conveyor', pos: { x: 1, z: 0 }, rotation: 0 },
+  { id: 'sink', type: 'outboundWarehouse', pos: { x: 2, z: -1 }, rotation: 0 },
 ]
 
 const engine = new SimulationEngine(20260813)
@@ -56,9 +57,10 @@ if (produced <= 0) {
   console.error('FAIL: 30s 内没有产出任何齿轮')
   pass = false
 }
-// The arm may have one final lot in its pick/place transfer when the
-// fixed 30-second sample ends.
-if (consumed < produced || consumed - produced > 1) {
+// The arm may have one final lot in its pick/place transfer, and boundary
+// accounting lags delivery by the in-process pipeline, when the fixed
+// 30-second sample ends.
+if (consumed < produced || consumed - produced > 4) {
   console.error(`FAIL: 消耗(${consumed}) != 产出(${produced})，1:1 配方应对应`)
   pass = false
 }

@@ -1,0 +1,21 @@
+{
+  "desc": "ForgeMind 移动端页面索引",
+  "rules": [
+    {
+      "action": "allow",
+      "page": "pages/dashboard/index"
+    },
+    {
+      "action": "allow",
+      "page": "pages/factories/index"
+    },
+    {
+      "action": "allow",
+      "page": "pages/factory/index"
+    },
+    {
+      "action": "allow",
+      "page": "pages/profile/index"
+    }
+  ]
+}

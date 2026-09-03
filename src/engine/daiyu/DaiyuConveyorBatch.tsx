@@ -19,6 +19,7 @@ import {
 } from '../../scene/industrialVisualScale'
 
 const CONVEYOR_PATH = '/models/industrial/roller_conveyor_segment.glb'
+const CONVEYOR_SPATIAL_CELL_SIZE = 18
 const UP = new THREE.Vector3(0, 1, 0)
 const IDENTITY_SCALE = new THREE.Vector3(1, 1, 1)
 
@@ -50,34 +51,37 @@ export const DaiyuConveyorBatch = memo(function DaiyuConveyorBatch({
 }) {
   const gltf = useGLTF(CONVEYOR_PATH)
   const batchRefs = useRef(new Map<string, THREE.InstancedMesh>())
-  const motionRef = useRef<THREE.InstancedMesh>(null)
+  const motionRefs = useRef(new Map<string, THREE.InstancedMesh>())
   const motionPhaseRef = useRef(0)
   const motionAccumulatorRef = useRef(0)
   const selectedRefs = useRef(new Map<string, THREE.LineSegments>())
   const rootRef = useRef<THREE.Group>(null)
   const normalized = useMemo(() => normalizeConveyor(gltf.scene), [gltf.scene])
   const batches = useMemo(() => collectBatches(normalized), [normalized])
+  const objectGroups = useMemo(() => partitionConveyorObjects(objects), [objects])
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
   const selectedObjects = useMemo(() => objects.filter((object) => selectedSet.has(object.id)), [objects, selectedSet])
 
   useLayoutEffect(() => {
-    batches.forEach((batch) => {
-      const mesh = batchRefs.current.get(batch.key)
-      if (!mesh) return
-      let instance = 0
-      objects.forEach((object) => {
-        const root = objectMatrix(object)
-        batch.localMatrices.forEach((local) => {
-          mesh.setMatrixAt(instance, root.clone().multiply(local))
-          instance += 1
+    objectGroups.forEach((objectGroup) => {
+      batches.forEach((batch) => {
+        const mesh = batchRefs.current.get(`${objectGroup.key}:${batch.key}`)
+        if (!mesh) return
+        let instance = 0
+        objectGroup.objects.forEach((object) => {
+          const root = objectMatrix(object)
+          batch.localMatrices.forEach((local) => {
+            mesh.setMatrixAt(instance, root.clone().multiply(local))
+            instance += 1
+          })
         })
+        mesh.count = instance
+        mesh.instanceMatrix.needsUpdate = true
+        mesh.computeBoundingSphere()
       })
-      mesh.count = instance
-      mesh.instanceMatrix.needsUpdate = true
-      mesh.computeBoundingSphere()
     })
-    updateMotionInstances(motionRef.current, objects, 0)
-  }, [batches, objects])
+    objectGroups.forEach((objectGroup) => updateMotionInstances(motionRefs.current.get(objectGroup.key) ?? null, objectGroup.objects, 0))
+  }, [batches, objectGroups])
 
   useFrame(({ clock }, delta) => {
     if (!running || !rootRef.current || !isHierarchyVisible(rootRef.current)) return
@@ -87,47 +91,59 @@ export const DaiyuConveyorBatch = memo(function DaiyuConveyorBatch({
       const motionDelta = motionAccumulatorRef.current
       motionAccumulatorRef.current = 0
       motionPhaseRef.current = (motionPhaseRef.current + motionDelta * CONVEYOR_DIRECTION_STRIPE_PHASE_RATE) % 1
-      updateMotionInstances(motionRef.current, objects, motionPhaseRef.current)
+      objectGroups.forEach((objectGroup) => updateMotionInstances(motionRefs.current.get(objectGroup.key) ?? null, objectGroup.objects, motionPhaseRef.current))
     }
     const pulse = 1 + (0.5 + 0.5 * Math.sin(elapsed * 3)) * 0.03
     selectedRefs.current.forEach((outline) => outline.scale.setScalar(pulse))
   })
 
-  const selectFromBatch = (localCount: number) => (event: ThreeEvent<MouseEvent>) => {
+  const selectFromBatch = (groupObjects: FactoryObject[], localCount: number) => (event: ThreeEvent<MouseEvent>) => {
     event.stopPropagation()
     if (event.instanceId === undefined) return
-    const object = objects[Math.floor(event.instanceId / localCount)]
+    const object = groupObjects[Math.floor(event.instanceId / localCount)]
     if (object) onSelect(object.id)
   }
 
-  const selectMotion = (event: ThreeEvent<MouseEvent>) => {
+  const selectMotion = (groupObjects: FactoryObject[]) => (event: ThreeEvent<MouseEvent>) => {
     event.stopPropagation()
     if (event.instanceId === undefined) return
-    const object = objects[Math.floor(event.instanceId / conveyorStripeCount(1))]
+    const object = groupObjects[Math.floor(event.instanceId / conveyorStripeCount(1))]
     if (object) onSelect(object.id)
   }
 
   return (
     <group ref={rootRef} name="daiyu-batch:conveyor" dispose={null}>
-      {batches.map((batch) => (
+      {objectGroups.flatMap((objectGroup) => batches.map((batch) => (
         <instancedMesh
-          key={batch.key}
+          key={`${objectGroup.key}:${batch.key}`}
           ref={(mesh) => {
-            if (mesh) batchRefs.current.set(batch.key, mesh)
-            else batchRefs.current.delete(batch.key)
+            const refKey = `${objectGroup.key}:${batch.key}`
+            if (mesh) batchRefs.current.set(refKey, mesh)
+            else batchRefs.current.delete(refKey)
           }}
-          args={[batch.geometry, batch.material, Math.max(objects.length * batch.localMatrices.length, 1)]}
+          args={[batch.geometry, batch.material, Math.max(objectGroup.objects.length * batch.localMatrices.length, 1)]}
           castShadow={castShadows && batch.castShadow}
           receiveShadow={batch.receiveShadow}
-          visible={objects.length > 0}
-          onClick={selectFromBatch(batch.localMatrices.length)}
+          visible={objectGroup.objects.length > 0}
+          onClick={selectFromBatch(objectGroup.objects, batch.localMatrices.length)}
         />
-      ))}
+      )))}
 
-      <instancedMesh ref={motionRef} args={[undefined, undefined, Math.max(objects.length * conveyorStripeCount(1), 1)]} visible={objects.length > 0} onClick={selectMotion}>
-        <boxGeometry args={[CONVEYOR_DIRECTION_STRIPE_LENGTH_M, CONVEYOR_DIRECTION_STRIPE_HEIGHT_M, CONVEYOR_DIRECTION_STRIPE_WIDTH_M]} />
-        <meshBasicMaterial color={CONVEYOR_DIRECTION_STRIPE_COLOR} transparent opacity={CONVEYOR_DIRECTION_STRIPE_OPACITY} depthWrite={false} toneMapped={false} />
-      </instancedMesh>
+      {objectGroups.map((objectGroup) => (
+        <instancedMesh
+          key={`motion:${objectGroup.key}`}
+          ref={(mesh) => {
+            if (mesh) motionRefs.current.set(objectGroup.key, mesh)
+            else motionRefs.current.delete(objectGroup.key)
+          }}
+          args={[undefined, undefined, Math.max(objectGroup.objects.length * conveyorStripeCount(1), 1)]}
+          visible={objectGroup.objects.length > 0}
+          onClick={selectMotion(objectGroup.objects)}
+        >
+          <boxGeometry args={[CONVEYOR_DIRECTION_STRIPE_LENGTH_M, CONVEYOR_DIRECTION_STRIPE_HEIGHT_M, CONVEYOR_DIRECTION_STRIPE_WIDTH_M]} />
+          <meshBasicMaterial color={CONVEYOR_DIRECTION_STRIPE_COLOR} transparent opacity={CONVEYOR_DIRECTION_STRIPE_OPACITY} depthWrite={false} toneMapped={false} />
+        </instancedMesh>
+      ))}
 
       {selectedObjects.map((selected) => (
         <lineSegments
@@ -214,11 +230,16 @@ function collectBatches(scene: THREE.Group) {
   return [...grouped.values()]
 }
 
-function objectMatrix(object: FactoryObject) {
+function objectMatrix(
+  object: FactoryObject,
+  target = new THREE.Matrix4(),
+  position = new THREE.Vector3(),
+  quaternion = new THREE.Quaternion(),
+) {
   const world = objectToWorld(object)
-  return new THREE.Matrix4().compose(
-    new THREE.Vector3(world.x, 0, world.z),
-    new THREE.Quaternion().setFromAxisAngle(UP, rotationAngle(object.rotation)),
+  return target.compose(
+    position.set(world.x, 0, world.z),
+    quaternion.setFromAxisAngle(UP, rotationAngle(object.rotation)),
     IDENTITY_SCALE,
   )
 }
@@ -226,16 +247,22 @@ function objectMatrix(object: FactoryObject) {
 function updateMotionInstances(mesh: THREE.InstancedMesh | null, objects: FactoryObject[], phase: number) {
   if (!mesh) return
   const stripeCount = conveyorStripeCount(1)
+  const root = new THREE.Matrix4()
+  const local = new THREE.Matrix4()
+  const world = new THREE.Matrix4()
+  const position = new THREE.Vector3()
+  const quaternion = new THREE.Quaternion()
   let instance = 0
   objects.forEach((object) => {
-    const root = objectMatrix(object)
+    objectMatrix(object, root, position, quaternion)
     for (let stripe = 0; stripe < stripeCount; stripe += 1) {
-      const local = new THREE.Matrix4().makeTranslation(
+      local.makeTranslation(
         conveyorStripeProgress(phase, stripe, stripeCount) - 0.5,
         CONVEYOR_VISUAL_SURFACE_Y_M + 0.018,
         0,
       )
-      mesh.setMatrixAt(instance, root.clone().multiply(local))
+      world.multiplyMatrices(root, local)
+      mesh.setMatrixAt(instance, world)
       instance += 1
     }
   })
@@ -256,4 +283,16 @@ function isHierarchyVisible(object: THREE.Object3D) {
   return true
 }
 
-useGLTF.preload(CONVEYOR_PATH)
+function partitionConveyorObjects(objects: FactoryObject[]) {
+  const grouped = new Map<string, FactoryObject[]>()
+  for (const object of objects) {
+    const world = objectToWorld(object)
+    const cellX = Math.floor(world.x / CONVEYOR_SPATIAL_CELL_SIZE)
+    const cellZ = Math.floor(world.z / CONVEYOR_SPATIAL_CELL_SIZE)
+    const key = `${cellX}:${cellZ}`
+    const group = grouped.get(key)
+    if (group) group.push(object)
+    else grouped.set(key, [object])
+  }
+  return [...grouped.entries()].map(([key, cellObjects]) => ({ key, objects: cellObjects }))
+}

@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { getObjectDef, objectRole } from '../game/types'
@@ -9,6 +9,27 @@ import { buildingVisualScaleForType } from './industrialVisualScale'
 import { CornerConveyorMotionStripes, LinearConveyorMotionStripes } from './ConveyorMotionStripes'
 import type { FactoryObject, PortSide } from '../game/types'
 import type { MachineRuntime, SourceRuntimeSnapshot } from '../game/simulation'
+
+type PortMarkerPulseEntry = {
+  group: THREE.Group | null
+  phase: number
+}
+
+// 端口标记保持原有呼吸灯效果，但统一在一个 useFrame 中更新，避免高密度工厂
+// 为每个端口创建独立的 React Three Fiber 帧回调。
+const portMarkerPulseEntries = new Set<PortMarkerPulseEntry>()
+
+export function PortMarkerPulseTicker() {
+  useFrame(({ clock }) => {
+    const time = clock.getElapsedTime() * 3.2
+    for (const entry of portMarkerPulseEntries) {
+      if (!entry.group) continue
+      const pulse = 0.92 + Math.sin(time + entry.phase) * 0.08
+      entry.group.scale.setScalar(pulse)
+    }
+  })
+  return null
+}
 
 /**
  * 单个已放置对象的渲染。
@@ -28,6 +49,7 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   castShadows = true,
   suppressPanda = false,
   suppressConveyor = false,
+  simplified = false,
   onClick,
 }: {
   obj: FactoryObject
@@ -42,6 +64,7 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   castShadows?: boolean
   suppressPanda?: boolean
   suppressConveyor?: boolean
+  simplified?: boolean
   onClick?: (id: string) => void
 }) {
   const def = getObjectDef(obj.type, obj.resourceId)
@@ -54,18 +77,6 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   const conveyorLinks = def.role === 'conveyor' && obj.type === 'conveyor'
     ? getConveyorLinks(obj, objects)
     : null
-  // 选中态低强度发光脉冲
-  useFrame(({ clock }) => {
-    if (!group.current || !selected) return
-    const t = clock.getElapsedTime()
-    const pulse = 0.5 + 0.5 * Math.sin(t * 3)
-    group.current.scale.setScalar(1 + pulse * 0.03)
-  })
-
-  useEffect(() => {
-    if (!selected) group.current?.scale.setScalar(1)
-  }, [selected])
-
   useLayoutEffect(() => {
     group.current?.traverse((node) => {
       if (!(node instanceof THREE.Mesh)) return
@@ -87,9 +98,10 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
         onClick(obj.id)
       } : undefined}
     >
+      {selected && <SelectedObjectPulse target={group} />}
       {isMachine ? (
         <>
-        {!suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />}
+        {!suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} simplified={simplified} />}
           {/* 状态色底座（显示机器状态，模型上方不遮挡） */}
           <mesh position={[0, 0.025, 0]} receiveShadow>
             <boxGeometry args={[fp.w, 0.04, fp.d]} />
@@ -105,9 +117,9 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
           </mesh>
         </>
       ) : def.role === 'conveyor' || def.role === 'storage' ? (
-        !suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={def.role === 'conveyor' ? running && active : active} running={running} runtime={runtime} sourceRuntime={sourceRuntime} stationMode={obj.stationProgram?.mode} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
+        !suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} runtime={runtime} sourceRuntime={sourceRuntime} stationMode={obj.stationProgram?.mode} conveyorCorner={Boolean(conveyorLinks?.corner)} conveyorCornerInput={conveyorLinks?.inputSide} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} simplified={simplified} />
       ) : (
-        !suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} running={running} runtime={runtime} sourceRuntime={sourceRuntime} stationMode={obj.stationProgram?.mode} conveyorCorner={Boolean(conveyorLinks?.corner)} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} />
+        !suppressEquipmentModel && <EquipmentModel type={obj.type} resourceId={obj.resourceId} color={def.color} accent={def.accent} height={def.height} active={active} running={running} runtime={runtime} sourceRuntime={sourceRuntime} stationMode={obj.stationProgram?.mode} conveyorCorner={Boolean(conveyorLinks?.corner)} castShadows={castShadows} suppressPanda={suppressPanda} suppressConveyor={suppressConveyor} simplified={simplified} />
       )}
 
       {suppressEquipmentModel && obj.type === 'press' && (
@@ -153,6 +165,21 @@ export const FactoryObjectMesh = memo(function FactoryObjectMesh({
   )
 })
 
+function SelectedObjectPulse({ target }: { target: React.RefObject<THREE.Group> }) {
+  useFrame(({ clock }) => {
+    const group = target.current
+    if (!group) return
+    const pulse = 0.5 + 0.5 * Math.sin(clock.getElapsedTime() * 3)
+    group.scale.setScalar(1 + pulse * 0.03)
+  })
+
+  useEffect(() => () => {
+    target.current?.scale.setScalar(1)
+  }, [target])
+
+  return null
+}
+
 export function getConveyorLinks(obj: FactoryObject, objects: FactoryObject[]) {
   const sharesCell = (cells: { x: number; z: number }[], target: { x: number; z: number }[]) => cells.some((a) => target.some((b) => a.x === b.x && a.z === b.z))
   const isConnected = (upstream: FactoryObject, downstream: FactoryObject) => {
@@ -194,7 +221,7 @@ export function getConveyorLinks(obj: FactoryObject, objects: FactoryObject[]) {
   }
 }
 
-function PortMarkers({ obj, input, output, hideInput = false, hideOutput = false }: { obj: FactoryObject; input: PortSide | null; output: PortSide | null; hideInput?: boolean; hideOutput?: boolean }) {
+export function PortMarkers({ obj, input, output, hideInput = false, hideOutput = false }: { obj: FactoryObject; input: PortSide | null; output: PortSide | null; hideInput?: boolean; hideOutput?: boolean }) {
   // Conveyors communicate direction through the belt flow. Rendering a full
   // input/output marker pair on every 1x1 segment creates floating dots at
   // every joint, especially where a route turns.
@@ -207,11 +234,20 @@ function PortMarkers({ obj, input, output, hideInput = false, hideOutput = false
 
 function PortMarker({ kind, side, obj, cell, color }: { kind: 'input' | 'output'; side: PortSide; obj: FactoryObject; cell: { x: number; z: number }; color: string }) {
   const beacon = useRef<THREE.Group>(null)
-  useFrame(({ clock }) => {
-    if (!beacon.current) return
-    const pulse = 0.92 + Math.sin(clock.getElapsedTime() * 3.2 + (kind === 'output' ? 0.8 : 0)) * 0.08
-    beacon.current.scale.setScalar(pulse)
-  })
+  const pulseEntry = useMemo<PortMarkerPulseEntry>(() => ({
+    group: null,
+    phase: kind === 'output' ? 0.8 : 0,
+  }), [kind])
+  useLayoutEffect(() => {
+    pulseEntry.group = beacon.current
+  }, [pulseEntry])
+  useEffect(() => {
+    portMarkerPulseEntries.add(pulseEntry)
+    return () => {
+      portMarkerPulseEntries.delete(pulseEntry)
+      pulseEntry.group = null
+    }
+  }, [pulseEntry])
   const world = gridToWorld(cell)
   const centre = objectToWorld(obj)
   const angle = rotationAngle(obj.rotation)

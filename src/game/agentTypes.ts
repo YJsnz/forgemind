@@ -119,10 +119,11 @@ export interface AgentAnalysisResult {
 }
 
 export type FactoryPatchOperation =
-  | { id: string; kind: 'update_config'; objectId: string; path: 'recipeId' | 'itemId' | 'agvProgram' | 'stationProgram' | 'storageConfig' | 'rotation'; value: unknown; reason: string }
+  | { id: string; kind: 'update_config'; objectId: string; path: 'recipeId' | 'itemId' | 'agvProgram' | 'stationProgram' | 'storageConfig' | 'rotation' | 'portConfig' | 'displayName'; value: unknown; reason: string }
   | { id: string; kind: 'move_object'; objectId: string; target: { x: number; z: number }; reason: string }
   | { id: string; kind: 'add_object'; object: FactoryObject; reason: string }
   | { id: string; kind: 'remove_object'; objectId: string; reason: string }
+  | { id: string; kind: 'adjust_inventory'; objectId: string; itemId: string; quantity: number; reason: string }
 
 export interface FactoryPatch {
   id: string

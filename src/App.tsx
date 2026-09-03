@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { stagger } from 'animejs'
+import { ChevronDown as ChevronDownData, CircleHelp as CircleHelpData, GitBranch as GitBranchData, Hammer as HammerData, LayoutDashboard as LayoutDashboardData, MonitorCog as MonitorCogData, Power as PowerData, Settings as SettingsData, Stethoscope as StethoscopeData, X as XData } from 'lucide'
 import { FactoryCanvas, type FactoryView } from './scene/FactoryCanvas'
 import { BuildMenu } from './components/BuildMenu'
 import { InfoPanel } from './components/InfoPanel'
 import { SimPanel } from './components/SimPanel'
 import { LoginOverlay } from './components/LoginOverlay'
 import { SimulationRunner } from './game/SimulationRunner'
+import type { SimulationSnapshot } from './game/simulation'
 import { useForgeMindStore } from './store/forgeMind'
 import { useAuthStore } from './store/auth'
 import { isMachineType, isTransportType, objectRole } from './game/types'
@@ -13,13 +15,11 @@ import { diagnoseFactory } from './game/factoryDiagnostics'
 import { AssistantOrb } from './components/AssistantOrb'
 import { AssistantRuntime } from './components/AssistantRuntime'
 import { AssistantVoiceButton } from './components/AssistantVoiceButton'
-import { ProductionWorkspace } from './components/ProductionWorkspace'
-import { ProductionRouteWorkspace } from './components/ProductionRouteWorkspace'
-import { WarehouseWorkspace } from './components/WarehouseWorkspace'
-import { MachineManufacturingWorkspace } from './components/MachineManufacturingWorkspace'
-import { ItemDetailWorkspace } from './components/ItemDetailWorkspace'
-import { FactoryAgentWorkspace } from './components/FactoryAgentWorkspace'
-import { GenerativeFactoryWorkspace } from './components/GenerativeFactoryWorkspace'
+import { FactoryCatalogWorkspace, type FactoryCatalogSection } from './components/FactoryCatalogWorkspace'
+const ProductionWorkspace = lazy(() => import('./components/ProductionWorkspace').then((m) => ({ default: m.ProductionWorkspace })))
+const ProductionRouteWorkspace = lazy(() => import('./components/ProductionRouteWorkspace').then((m) => ({ default: m.ProductionRouteWorkspace })))
+const FactoryAgentWorkspace = lazy(() => import('./components/FactoryAgentWorkspace').then((m) => ({ default: m.FactoryAgentWorkspace })))
+const GenerativeFactoryWorkspace = lazy(() => import('./components/GenerativeFactoryWorkspace').then((m) => ({ default: m.GenerativeFactoryWorkspace })))
 import { ForgeMindIntro } from './components/ForgeMindIntro'
 import { FloorSwitcher } from './components/FloorSwitcher'
 import type { FactoryFloorId } from './scene/FactoryFloorSystem'
@@ -33,6 +33,11 @@ import { getFactoryFloors, MAX_FACTORY_FLOORS } from './game/floorConfig'
 import type { FactoryProjectSummary } from './api/factoryProjects'
 import { selectionKeyboardAction } from './game/selection'
 import type { DaiyuTargetFps } from './engine/daiyu/config'
+import { isUnityBridgeAvailable } from './platform/unityBridge'
+import { MorphingIcon } from './components/MorphingIcon'
+import { ForgeCloudConsole } from './components/ForgeCloudConsole'
+import { ForgePassPage } from './components/ForgePassPage'
+import './forgecloud.css'
 
 const TARGET_FPS_STORAGE_KEY = 'forgemind.target-fps'
 
@@ -65,12 +70,22 @@ const VIEW_META: Record<FactoryView, { code: string; label: string; title: strin
 
 const VIEW_ORDER: FactoryView[] = ['overview', 'build', 'flow', 'diagnostics']
 type DiagnosticsSurface = 'diagnose' | 'generate'
+type LiveKpiData = {
+  productionEfficiency: number
+  utilization: number
+  outputRatePerMinute: number
+  logisticsLoad: number
+  producedTotal: number
+  activeMachines: number
+}
 
 function App() {
-  const [portalOpen, setPortalOpen] = useState(true)
+  const [portalOpen, setPortalOpen] = useState(() => window.location.pathname !== '/forgecloud')
+  const [cloudOpen, setCloudOpen] = useState(() => window.location.pathname === '/forgecloud')
   const [view, setView] = useState<FactoryView>('overview')
   const [diagnosticsSurface, setDiagnosticsSurface] = useState<DiagnosticsSurface>('diagnose')
-  const [auxPanel, setAuxPanel] = useState<'manufacturing' | 'productionRoute' | 'itemDetails' | 'warehouse' | null>(null)
+  const [auxPanel, setAuxPanel] = useState<'catalog' | 'productionRoute' | null>(null)
+  const [catalogSection, setCatalogSection] = useState<FactoryCatalogSection>('manufacturing')
   const [topMenu, setTopMenu] = useState<'help' | 'settings' | 'user' | null>(null)
   const [showViewportTools, setShowViewportTools] = useState(true)
   const [showInterfaceHints, setShowInterfaceHints] = useState(true)
@@ -81,6 +96,7 @@ function App() {
   const [projectReady, setProjectReady] = useState(false)
   const [projectDialogOpen, setProjectDialogOpen] = useState(true)
   const [currentProject, setCurrentProject] = useState<FactoryProjectSummary | null>(null)
+  const [trendHistory, setTrendHistory] = useState<number[]>(() => Array.from({ length: 12 }, () => 0))
   const shellRef = useRef<HTMLDivElement>(null)
   const topActionsRef = useRef<HTMLDivElement>(null)
   const objects = useForgeMindStore((s) => s.objects)
@@ -151,6 +167,7 @@ function App() {
     setAuxPanel(null)
     setProjectReady(true)
     setCurrentProject(project)
+    setTrendHistory(Array.from({ length: 12 }, () => 0))
     setProjectDialogOpen(false)
   }
 
@@ -162,6 +179,49 @@ function App() {
     setProjectDialogOpen(true)
     void logout()
   }
+
+  const enterForgeCloud = () => {
+    window.history.pushState({}, '', '/forgecloud')
+    setCloudOpen(true)
+    setPortalOpen(false)
+  }
+
+  const exitForgeCloud = () => {
+    window.history.pushState({}, '', '/')
+    setCloudOpen(false)
+    setPortalOpen(true)
+  }
+
+  const navigatePortal = (path: string) => {
+    window.history.pushState({}, '', path)
+    setCloudOpen(false)
+    setPortalOpen(true)
+  }
+
+  const enterWorkspaceFromCloud = () => {
+    window.history.pushState({}, '', '/')
+    setCloudOpen(false)
+    setPortalOpen(false)
+  }
+
+  const enterWorkspaceFromPortal = () => {
+    window.history.replaceState({}, '', '/')
+    setPortalOpen(false)
+  }
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (window.location.pathname === '/forgecloud') {
+        setCloudOpen(true)
+        setPortalOpen(false)
+      } else if (window.location.pathname === '/') {
+        setCloudOpen(false)
+        setPortalOpen(true)
+      }
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   // 挂载时用本地 token 续登（无 token 则停留在电梯舱）
   useEffect(() => {
@@ -316,7 +376,7 @@ function App() {
     sources: objects.filter((o) => objectRole(o.type) === 'source').length,
   }), [objects])
 
-  const liveKpis = useMemo(() => {
+  const liveKpis = useMemo<LiveKpiData>(() => {
     const producedTotal = Object.values(snapshot.stats.produced).reduce((sum, value) => sum + value, 0)
     const outputRatePerMinute = snapshot.timeSec > 0 ? producedTotal / (snapshot.timeSec / 60) : 0
     const theoreticalRatePerMinute = objects
@@ -346,25 +406,52 @@ function App() {
     }
   }, [counts.conveyors, floorCount, objects, recipes, snapshot])
 
+  const liveKpisRef = useRef<LiveKpiData>(liveKpis)
+  useEffect(() => {
+    liveKpisRef.current = liveKpis
+  }, [liveKpis])
+
+  useEffect(() => {
+    if (!projectReady || phase !== 'factory') return
+    const timer = window.setInterval(() => {
+      setTrendHistory((current) => [...current.slice(-11), liveKpisRef.current.outputRatePerMinute])
+    }, 1200)
+    return () => window.clearInterval(timer)
+  }, [phase, projectReady])
+
   const meta = VIEW_META[view]
-  const activeTool = auxPanel === 'manufacturing' ? '机械制造工作区已打开' : auxPanel === 'productionRoute' ? '生产路线工作区已打开' : auxPanel === 'itemDetails' ? '物品详情工作区已打开' : auxPanel === 'warehouse' ? '货物仓储工作区已打开' : buildType ? '建造工具已启用' : '浏览与选择'
+  const activeTool = auxPanel === 'catalog' ? `${catalogSection === 'manufacturing' ? '机械制造' : catalogSection === 'itemDetails' ? '物品详情' : '货物仓储'}工作区已打开` : auxPanel === 'productionRoute' ? '生产路线工作区已打开' : buildType ? '建造工具已启用' : '浏览与选择'
+  const showRackLabels = phase === 'factory'
+    && projectReady
+    && !projectDialogOpen
+    && view === 'overview'
+    && buildType === null
+    && auxPanel === null
+    && selectedIds.length === 0
+    && topMenu === null
+
+  if (cloudOpen) {
+    return token
+      ? <ForgeCloudConsole onExit={exitForgeCloud} onLogout={handleLogout} onEnterWorkspace={enterWorkspaceFromCloud} onNavigatePortal={navigatePortal} />
+      : <ForgePassPage onBack={exitForgeCloud} onSuccess={() => undefined} onEnterWorkspace={() => { exitForgeCloud(); window.setTimeout(() => setPortalOpen(false), 0) }} />
+  }
 
   if (portalOpen) {
-    return <ForgeMindIntro onEnterWorkspace={() => setPortalOpen(false)} />
+    return <ForgeMindIntro onEnterWorkspace={enterWorkspaceFromPortal} onOpenForgeCloud={enterForgeCloud} />
   }
 
   // 未进厂：电梯舱登录界面（舱门打开 + BT 音效 + 推镜进厂在 store phase 中驱动）
   if (phase !== 'factory') {
     return (
       <div className="fm-login-shell">
-        <FactoryCanvas view="overview" targetFps={targetFps} activeFloor={1} floorCount={1} />
+        <FactoryCanvas view="overview" targetFps={targetFps} activeFloor={1} floorCount={1} showRackLabels={false} />
         <LoginOverlay />
       </div>
     )
   }
 
   return (
-    <div ref={shellRef} className="fm-shell" data-reduced-motion={reducedMotion ? 'true' : 'false'} data-warehouse-open={auxPanel === 'warehouse' ? 'true' : 'false'} data-panel-open={Boolean(auxPanel || view !== 'overview' || selectedIds.length === 1 || topMenu) ? 'true' : 'false'}>
+    <div ref={shellRef} className="fm-shell" data-reduced-motion={reducedMotion ? 'true' : 'false'} data-warehouse-open={auxPanel === 'catalog' && catalogSection === 'warehouse' ? 'true' : 'false'} data-panel-open={Boolean(auxPanel || view !== 'overview' || selectedIds.length > 0 || topMenu || projectDialogOpen || portalOpen) ? 'true' : 'false'}>
       <SimulationRunner />
       <AssistantRuntime />
 
@@ -395,7 +482,7 @@ function App() {
             aria-label="打开帮助"
             aria-expanded={topMenu === 'help'}
             onClick={() => setTopMenu(topMenu === 'help' ? null : 'help')}
-          >?</button>
+          ><MorphingIcon icon={topMenu === 'help' ? XData : CircleHelpData} size={15} /></button>
           <button
             type="button"
             className={`fm-icon-button ${topMenu === 'settings' ? 'is-active' : ''}`}
@@ -403,7 +490,7 @@ function App() {
             aria-label="打开设置"
             aria-expanded={topMenu === 'settings'}
             onClick={() => setTopMenu(topMenu === 'settings' ? null : 'settings')}
-          >⚙</button>
+          ><MorphingIcon icon={topMenu === 'settings' ? XData : SettingsData} size={15} /></button>
           <button
             type="button"
             className={`fm-user-chip ${topMenu === 'user' ? 'is-active' : ''}`}
@@ -411,13 +498,13 @@ function App() {
             aria-expanded={topMenu === 'user'}
             onClick={() => setTopMenu(topMenu === 'user' ? null : 'user')}
           >
-            <span /> {user ? user.toUpperCase() : 'OPERATOR'} <b aria-hidden="true">⌄</b>
+            <span /> {user ? user.toUpperCase() : 'OPERATOR'} <MorphingIcon icon={ChevronDownData} size={13} aria-hidden="true" />
           </button>
-          <button type="button" className="fm-icon-button" title="登出" aria-label="退出登录" onClick={handleLogout}>⏻</button>
+          <button type="button" className="fm-icon-button" title="登出" aria-label="退出登录" onClick={handleLogout}><MorphingIcon icon={PowerData} size={15} /></button>
 
           {topMenu === 'help' && (
             <div className="fm-top-popover fm-help-popover" role="dialog" aria-label="帮助">
-              <div className="fm-top-popover-head"><div><span className="fm-top-popover-kicker">HELP / QUICK REFERENCE</span><h2>操作手册</h2></div><button type="button" onClick={() => setTopMenu(null)} aria-label="关闭帮助">×</button></div>
+              <div className="fm-top-popover-head"><div><span className="fm-top-popover-kicker">HELP / QUICK REFERENCE</span><h2>操作手册</h2></div><button type="button" onClick={() => setTopMenu(null)} aria-label="关闭帮助"><MorphingIcon icon={XData} size={16} /></button></div>
               <p className="fm-top-popover-lead">在工厂视口中直接浏览、选择和调整设备。当前页面的快捷操作如下。</p>
               <div className="fm-top-shortcut-list">
                 <div><span><kbd>拖动</kbd></span><small>旋转镜头</small></div>
@@ -437,7 +524,7 @@ function App() {
 
           {topMenu === 'settings' && (
             <div className="fm-top-popover fm-settings-popover" role="dialog" aria-label="设置">
-              <div className="fm-top-popover-head"><div><span className="fm-top-popover-kicker">SYSTEM / DISPLAY</span><h2>界面设置</h2></div><button type="button" onClick={() => setTopMenu(null)} aria-label="关闭设置">×</button></div>
+              <div className="fm-top-popover-head"><div><span className="fm-top-popover-kicker">SYSTEM / DISPLAY</span><h2>界面设置</h2></div><button type="button" onClick={() => setTopMenu(null)} aria-label="关闭设置"><MorphingIcon icon={XData} size={16} /></button></div>
               <div className="fm-settings-list">
                 <button type="button" className="fm-setting-row" aria-pressed={showViewportTools} onClick={() => setShowViewportTools(!showViewportTools)}><span><b>视口辅助信息</b><small>显示坐标、网格与镜头提示</small></span><i className={showViewportTools ? 'is-on' : ''}>{showViewportTools ? 'ON' : 'OFF'}</i></button>
                 <button type="button" className="fm-setting-row" aria-pressed={showInterfaceHints} onClick={() => setShowInterfaceHints(!showInterfaceHints)}><span><b>操作快捷提示</b><small>显示撤回、旋转和建造提示</small></span><i className={showInterfaceHints ? 'is-on' : ''}>{showInterfaceHints ? 'ON' : 'OFF'}</i></button>
@@ -450,7 +537,7 @@ function App() {
 
           {topMenu === 'user' && (
             <div className="fm-top-popover fm-user-popover" role="dialog" aria-label="操作员信息">
-              <div className="fm-top-popover-head"><div><span className="fm-top-popover-kicker">OPERATOR / SESSION</span><h2>{user ? user.toUpperCase() : 'OPERATOR'}</h2></div><button type="button" onClick={() => setTopMenu(null)} aria-label="关闭操作员菜单">×</button></div>
+              <div className="fm-top-popover-head"><div><span className="fm-top-popover-kicker">OPERATOR / SESSION</span><h2>{user ? user.toUpperCase() : 'OPERATOR'}</h2></div><button type="button" onClick={() => setTopMenu(null)} aria-label="关闭操作员菜单"><MorphingIcon icon={XData} size={16} /></button></div>
               <div className="fm-user-status"><span className="fm-live-dot" /><div><b>会话已授权</b><small>当前工厂 · {factoryName}</small></div></div>
               <button type="button" className="fm-top-popover-action" onClick={handleLogout}>退出当前会话 <span>⏻</span></button>
             </div>
@@ -470,28 +557,28 @@ function App() {
                   className={`fm-rail-item ${view === key ? 'is-active' : ''}`}
                   onClick={() => changeView(key)}
                 >
-                  <span className="fm-rail-icon">{key === 'overview' ? '⌂' : key === 'build' ? '⊞' : key === 'flow' ? '⇢' : '◌'}</span>
+                  <span className="fm-rail-icon"><MorphingIcon icon={key === 'overview' ? LayoutDashboardData : key === 'build' ? HammerData : key === 'flow' ? GitBranchData : StethoscopeData} size={16} /></span>
                   <span>{item.label}</span>
                 </button>
               )
             })}
           </div>
           <div className="fm-rail-bottom">
-            <button className="fm-rail-item"><span className="fm-rail-icon">⌁</span><span>系统</span></button>
+            <button className="fm-rail-item"><span className="fm-rail-icon"><MorphingIcon icon={MonitorCogData} size={16} /></span><span>系统</span></button>
             <div className="fm-rail-version">BUILD<br />0.1.0</div>
           </div>
         </aside>
 
         <main className="fm-main">
           <section className="fm-viewport" data-building={buildType ? 'true' : 'false'} aria-label="3D 工厂视口">
-            <FactoryCanvas view={view} targetFps={targetFps} activeFloor={activeFloor} visibleFloors={[...visibleFloors]} floorCount={floorCount} />
+            <FactoryCanvas view={view} targetFps={targetFps} activeFloor={activeFloor} visibleFloors={[...visibleFloors]} floorCount={floorCount} showRackLabels={showRackLabels} nativeSurfaceEnabled={projectReady && !projectDialogOpen && isUnityBridgeAvailable()} />
             {projectReady && <FloorSwitcher activeFloor={activeFloor} visibleFloors={visibleFloors} floors={getFactoryFloors(floorCount, floorNames)} onChange={selectFloor} onToggleVisibility={toggleFloorVisibility} onAddFloor={handleAddFloor} onRenameFloor={renameFloor} canAddFloor={floorCount < MAX_FACTORY_FLOORS} />}
 
             {selectedIds.length === 1 && selectedId && view !== 'flow' && (
-              <aside className={`fm-device-drawer glass3d ${view === 'build' || auxPanel === 'manufacturing' ? 'is-workspace-compact' : ''}`} aria-label={selectedIsVehicle ? '载具状态' : '设备详情'}>
+              <aside className={`fm-device-drawer glass3d ${view === 'build' || auxPanel === 'catalog' ? 'is-workspace-compact' : ''}`} aria-label={selectedIsVehicle ? '载具状态' : '设备详情'}>
                 <div className="fm-device-drawer-bar">
                   <span>{selectedIsVehicle ? 'VEHICLE / LIVE STATUS' : 'DEVICE / LIVE INSPECTOR'}</span>
-                  <button type="button" onClick={() => select(null)} aria-label={selectedIsVehicle ? '关闭载具状态' : '关闭设备详情'}>×</button>
+                  <button type="button" onClick={() => select(null)} aria-label={selectedIsVehicle ? '关闭载具状态' : '关闭设备详情'}><MorphingIcon icon={XData} size={16} /></button>
                 </div>
                 <InfoPanel />
               </aside>
@@ -535,28 +622,28 @@ function App() {
                 ))}
               </div>
               {view === 'overview' && <div className="fm-aux-dock">
-                <button type="button" className={auxPanel === 'manufacturing' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('manufacturing') }}><span>05</span>机械制造</button>
-                <button type="button" className={auxPanel === 'productionRoute' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('productionRoute') }}><span>06</span>生产路线</button>
-                <button type="button" className={auxPanel === 'itemDetails' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('itemDetails') }}><span>07</span>物品详情</button>
-                <button type="button" className={auxPanel === 'warehouse' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('warehouse') }}><span>08</span>货物仓储</button>
+                <button type="button" className={auxPanel === 'productionRoute' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('productionRoute') }}><span>05</span>生产路线</button>
+                <button type="button" className={auxPanel === 'catalog' ? 'is-active' : ''} onClick={() => { setView('overview'); setBuildType(null); setAuxPanel('catalog') }}><span>06</span>生产资料</button>
               </div>}
             </div>}
 
-            {view === 'flow' ? <ProductionWorkspace /> : view === 'diagnostics' ? diagnosticsSurface === 'generate' ? <GenerativeFactoryWorkspace onSurfaceChange={setDiagnosticsSurface} /> : <FactoryAgentWorkspace currentProject={currentProject} onLocate={() => setView('overview')} onEnterGenerative={() => setDiagnosticsSurface('generate')} /> : view !== 'overview' && (
-              <div className={`fm-mode-panel fm-mode-panel-${view} is-open`}>
-                {view === 'build' ? <BuildMenu compact /> : <ViewSummary view={view} counts={counts} />}
-                <div className="fm-mode-shortcuts" aria-label="快捷键">
-                  <kbd>ESC</kbd><span>返回</span>
-                  <kbd>R</kbd><span>旋转</span>
-                  <kbd>CTRL</kbd><kbd>Z</kbd><span>撤回</span>
-                  <kbd>CTRL</kbd><kbd>SHIFT</kbd><kbd>Z</kbd><span>重做</span>
+            <Suspense fallback={null}>
+              {view === 'flow' ? <ProductionWorkspace /> : view === 'diagnostics' ? diagnosticsSurface === 'generate' ? <GenerativeFactoryWorkspace onSurfaceChange={setDiagnosticsSurface} /> : <FactoryAgentWorkspace currentProject={currentProject} onLocate={() => setView('overview')} onEnterGenerative={() => setDiagnosticsSurface('generate')} /> : view !== 'overview' && (
+                <div className={`fm-mode-panel fm-mode-panel-${view} is-open`}>
+                  {view === 'build' ? <BuildMenu compact /> : <ViewSummary view={view} counts={counts} />}
+                  <div className="fm-mode-shortcuts" aria-label="快捷键">
+                    <kbd>ESC</kbd><span>返回</span>
+                    <kbd>R</kbd><span>旋转</span>
+                    <kbd>CTRL</kbd><kbd>Z</kbd><span>撤回</span>
+                    <kbd>CTRL</kbd><kbd>SHIFT</kbd><kbd>Z</kbd><span>重做</span>
+                  </div>
                 </div>
-              </div>
-            )}
-            {auxPanel === 'productionRoute' && <ProductionRouteWorkspace onClose={() => setAuxPanel(null)} />}
-            {auxPanel === 'itemDetails' && <ItemDetailWorkspace onClose={() => setAuxPanel(null)} />}
-            {auxPanel === 'warehouse' && <WarehouseWorkspace onClose={() => setAuxPanel(null)} />}
-            {auxPanel === 'manufacturing' && <MachineManufacturingWorkspace onClose={() => setAuxPanel(null)} />}
+              )}
+            </Suspense>
+            <Suspense fallback={null}>
+              {auxPanel === 'productionRoute' && <ProductionRouteWorkspace onClose={() => setAuxPanel(null)} />}
+              {auxPanel === 'catalog' && <FactoryCatalogWorkspace activeSection={catalogSection} onSectionChange={setCatalogSection} onClose={() => setAuxPanel(null)} />}
+            </Suspense>
 
           </section>
 
@@ -585,6 +672,7 @@ function App() {
           <div className="fm-panel-rule" />
           <div className="fm-panel-scroll">
             <SimPanel />
+            <RuntimeOverviewCard snapshot={snapshot} liveKpis={liveKpis} counts={counts} trendHistory={trendHistory} playing={playing} />
           </div>
         </aside>
       </div>
@@ -606,6 +694,56 @@ function Kpi({ label, value, trend, tone = 'default' }: { label: string; value: 
 
 function MiniStat({ label, value }: { label: string; value: number }) {
   return <div className="fm-mini-stat"><span>{label}</span><strong>{value.toString().padStart(2, '0')}</strong></div>
+}
+
+function RuntimeOverviewCard({ snapshot, liveKpis, counts, trendHistory, playing }: { snapshot: SimulationSnapshot; liveKpis: LiveKpiData; counts: { machines: number; conveyors: number; sources: number }; trendHistory: number[]; playing: boolean }) {
+  const producedTotal = Object.values(snapshot.stats.produced).reduce((sum, value) => sum + value, 0)
+  const activeSources = snapshot.sources.filter((source) => source.state !== 'idle').length
+  const chartPoints = sparklinePoints(trendHistory)
+
+  return (
+    <section className={`fm-runtime-card ${playing ? 'is-live' : 'is-paused'}`} aria-label="生产运行状态与物流趋势">
+      <header className="fm-runtime-card-head">
+        <div><span className="fm-runtime-card-kicker">RUNTIME / FLOW SIGNAL</span><strong>生产运行状态</strong></div>
+        <span className="fm-runtime-card-state"><i /> {playing ? 'RUNNING' : 'PAUSED'}</span>
+      </header>
+      <div className="fm-runtime-status-grid">
+        <div><span>逻辑时间</span><strong>{formatRuntimeTime(snapshot.timeSec)}</strong></div>
+        <div><span>在途物料</span><strong>{snapshot.itemLots.length}</strong></div>
+        <div><span>设备利用率</span><strong>{liveKpis.utilization.toFixed(1)}%</strong></div>
+        <div><span>实时产出</span><strong>{liveKpis.outputRatePerMinute.toFixed(1)}<small> / min</small></strong></div>
+      </div>
+      <div className="fm-runtime-flow">
+        <div className="fm-runtime-section-label"><span>物流流向</span><small>{activeSources} 个供料端活动</small></div>
+        <div className="fm-runtime-flow-line">
+          <div><strong>{counts.sources.toString().padStart(2, '0')}</strong><span>供料端</span></div><b>→</b>
+          <div><strong>{liveKpis.activeMachines.toString().padStart(2, '0')}</strong><span>加工中</span></div><b>→</b>
+          <div><strong>{snapshot.itemLots.length.toString().padStart(2, '0')}</strong><span>在途</span></div><b>→</b>
+          <div><strong>{producedTotal.toString().padStart(2, '0')}</strong><span>已产出</span></div>
+        </div>
+      </div>
+      <div className="fm-runtime-trend">
+        <div className="fm-runtime-trend-head"><span>产出趋势 / UNITS PER MINUTE</span><strong>{liveKpis.outputRatePerMinute.toFixed(1)}</strong></div>
+        <svg viewBox="0 0 180 42" preserveAspectRatio="none" role="img" aria-label="实时产出趋势图">
+          <path className="fm-runtime-trend-grid" d="M0 10H180M0 21H180M0 32H180" />
+          <polyline points={chartPoints} />
+        </svg>
+        <div className="fm-runtime-trend-foot"><span>LIVE SAMPLE</span><span>{counts.conveyors} 条物流段 · {liveKpis.logisticsLoad.toFixed(1)}% 负载</span></div>
+      </div>
+    </section>
+  )
+}
+
+function formatRuntimeTime(seconds: number) {
+  const minutes = Math.floor(seconds / 60)
+  const remainder = (seconds % 60).toFixed(1).padStart(4, '0')
+  return `${String(minutes).padStart(2, '0')}:${remainder}`
+}
+
+function sparklinePoints(values: number[]) {
+  const source = values.length > 1 ? values : [0, 0]
+  const max = Math.max(1, ...source)
+  return source.map((value, index) => `${(index / (source.length - 1)) * 180},${38 - (Math.max(0, value) / max) * 30}`).join(' ')
 }
 
 function readTargetFps(): DaiyuTargetFps {

@@ -2,7 +2,7 @@
  * 认证后端 API 客户端。带超时，错误时抛出后端返回的中文信息。
  */
 
-const AUTH_BASE = 'http://localhost:8080'
+import { BACKEND_BASE } from './backendBase'
 
 export interface AuthResult {
   token: string
@@ -27,7 +27,7 @@ async function withTimeout<T>(p: Promise<T>, ms = 5000): Promise<T> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await withTimeout(fetch(`${AUTH_BASE}${path}`, init))
+  const res = await withTimeout(fetch(`${BACKEND_BASE}${path}`, init))
   if (!res.ok) {
     let message = `后端返回 ${res.status}`
     try {

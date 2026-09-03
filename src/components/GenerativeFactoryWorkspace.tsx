@@ -1,7 +1,9 @@
 import { stagger } from 'animejs'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { diagnoseFactory, type FactoryFloorDiagnostic } from '../game/factoryDiagnostics'
-import { analyzeFactory, applyFactoryPatchToSave, buildFactoryPatchProposal, createFactoryVersion, simulateFactoryBranch, validateFactoryPatch } from '../game/factoryAgent'
+import { applyFactoryPatchToSave, createFactoryVersion, validateFactoryPatch } from '../game/factoryAgent'
+import { runAgentInWorker, type AgentWorkerTask } from '../game/agentWorker'
+import { compareAgentBranches } from '../game/agentBranch'
 import type { AgentAnalysisResult, AgentMode, BranchSimulationResult, FactoryPatch } from '../game/agentTypes'
 import { requestFactorySpec } from '../game/factoryAI'
 import { DEFAULT_COST_ASSUMPTIONS, parseGenerationBrief, type GeneratedCandidate, type GenerationSpec, type WhatIfMutation, type WhatIfResult } from '../game/generativeFactory'
@@ -48,7 +50,8 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
     cncLimit: 4,
     agvLimit: 3,
     objective: 'energy',
-    searchRounds: 2,
+    searchRounds: 1,
+    simulationSeconds: 420,
     economics: { ...DEFAULT_COST_ASSUMPTIONS },
   })
   const [candidates, setCandidates] = useState<GeneratedCandidate[]>([])
@@ -66,6 +69,7 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
   const [agentPatch, setAgentPatch] = useState<FactoryPatch | null>(null)
   const [agentBranch, setAgentBranch] = useState<BranchSimulationResult | null>(null)
   const [agentBusy, setAgentBusy] = useState(false)
+  const agentTask = useRef<AgentWorkerTask | null>(null)
   const [agentHistory, setAgentHistory] = useState<AgentAnalysisResult[]>([])
 
   const selectedCandidate = useMemo(
@@ -92,6 +96,8 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
     setAgentAnalysis(null)
     setAgentPatch(null)
     setAgentBranch(null)
+    agentTask.current?.cancel()
+    agentTask.current = null
     try {
       const savedRuns = JSON.parse(window.localStorage.getItem(`forgemind.agent-runs.${factoryId}`) ?? '[]')
       const history = Array.isArray(savedRuns) ? savedRuns.filter((run): run is AgentAnalysisResult => Boolean(run && typeof run.runId === 'string' && Array.isArray(run.findings))).slice(0, 8) : []
@@ -109,11 +115,16 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
     whatIfRequest.current += 1
     whatIfCancel.current?.()
     whatIfCancel.current = null
+    agentTask.current?.cancel()
+    agentTask.current = null
   }, [])
 
   useEffect(() => {
     if (!isGenerating) return
-    if (generationStep >= GENERATION_STEPS.length - 1) return
+    // Keep the progress indicator at the simulation stage until the worker
+    // actually returns. Ranking is not complete while the candidate sims are
+    // still running.
+    if (generationStep >= GENERATION_STEPS.length - 2) return
     const timer = window.setTimeout(() => setGenerationStep((step) => step + 1), 430)
     return () => window.clearTimeout(timer)
   }, [generationStep, isGenerating])
@@ -166,7 +177,7 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
         currentObjects: hasCurrentLine ? objects : undefined,
       })
       plannerCancel.current = task.cancel
-      setNotice(`${source === 'rule' || source === 'fallback' ? '规则解析已接管' : `${source.toUpperCase()} 已返回约束`}，黛玉规划线程正在搜索候选并运行副本仿真`)
+      setNotice(`${source === 'rule' || source === 'fallback' ? '规则解析已接管' : `${source.toUpperCase()} 已返回约束`}，正在运行 ${resolvedSpec.simulationSeconds ?? 420} 秒候选副本仿真，请保持页面打开`)
       task.promise
         .then((nextCandidates) => {
           if (request !== generationRequest.current) return
@@ -174,7 +185,9 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
           setSelectedId(nextCandidates[0]?.id ?? null)
           setGenerationStep(GENERATION_STEPS.length - 1)
           setIsGenerating(false)
-          setNotice(`${source === 'rule' || source === 'fallback' ? '规则解析已接管' : `${source.toUpperCase()} 已返回约束`}，${hasCurrentLine ? '完成当前工厂调整评估' : '完成结构校验与副本仿真'}`)
+          setNotice(nextCandidates.length > 0
+            ? `${source === 'rule' || source === 'fallback' ? '规则解析已接管' : `${source.toUpperCase()} 已返回约束`}，${hasCurrentLine ? '完成当前工厂调整评估' : '完成结构校验与副本仿真'}`
+            : '规划线程完成，但没有返回候选；请降低目标产能或检查工艺约束后重试')
         })
         .catch((error: unknown) => {
           if (request !== generationRequest.current || (error instanceof Error && error.name === 'AbortError')) return
@@ -252,25 +265,36 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
     setAgentBusy(true)
     setAgentPatch(null)
     setAgentBranch(null)
-    window.setTimeout(() => {
-      const result = analyzeFactory(agentObjective, currentAgentContext(), agentMode)
+    const task = runAgentInWorker({ objective: agentObjective, context: currentAgentContext(), mode: agentMode, buildPatch: false })
+    agentTask.current = task
+    task.promise.then(({ analysis: result }) => {
       setAgentAnalysis(result)
       setAgentHistory((current) => {
         const next = [result, ...current.filter((run) => run.runId !== result.runId)].slice(0, 8)
         window.localStorage.setItem(`forgemind.agent-runs.${factoryId}`, JSON.stringify(next))
         return next
       })
-      setAgentBusy(false)
       setNotice(`Agent ${agentMode === 'diagnose' ? '诊断' : '计划设计'}完成：${result.findings.length} 条结构化结论`)
-    }, 0)
+    }).catch((error: unknown) => setNotice(error instanceof Error ? error.message : 'Agent 运行失败')).finally(() => {
+      if (agentTask.current === task) agentTask.current = null
+      setAgentBusy(false)
+    })
   }
 
   const proposeAgentPatch = () => {
-    if (!agentAnalysis) return
-    const patch = buildFactoryPatchProposal(agentAnalysis, currentAgentContext())
-    setAgentPatch(patch)
-    setAgentBranch(null)
-    setNotice(patch ? `已生成 ${patch.operations.length} 项待审批 Patch` : '当前 Finding 没有安全的自动补丁，需要人工定位')
+    if (!agentAnalysis || agentBusy) return
+    setAgentBusy(true)
+    const task = runAgentInWorker({ objective: agentObjective, context: currentAgentContext(), mode: 'plan_design', buildPatch: true, analysis: agentAnalysis })
+    agentTask.current = task
+    task.promise.then(({ analysis, patch }) => {
+      setAgentAnalysis(analysis)
+      setAgentPatch(patch)
+      setAgentBranch(null)
+      setNotice(patch ? `已生成 ${patch.operations.length} 项待审批 Patch` : '当前 Finding 没有安全的自动补丁，需要人工定位')
+    }).catch((error: unknown) => setNotice(error instanceof Error ? error.message : 'Patch 生成失败')).finally(() => {
+      if (agentTask.current === task) agentTask.current = null
+      setAgentBusy(false)
+    })
   }
 
   const approveAgentPatch = () => {
@@ -293,8 +317,11 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
       setNotice(errors[0])
       return
     }
-    setAgentBranch(simulateFactoryBranch(agentPatch, currentAgentContext(), 60))
-    setNotice('Patch 分支仿真已完成，可比较基线与提案指标')
+    setAgentBusy(true)
+    compareAgentBranches(agentPatch, currentAgentContext(), 60)
+      .then((result) => { setAgentBranch(result); setNotice('Patch 分支仿真已完成，可比较基线与提案指标') })
+      .catch((error: unknown) => setNotice(error instanceof Error ? error.message : 'Patch 分支仿真失败'))
+      .finally(() => setAgentBusy(false))
   }
 
   const applyAgentPatch = () => {
@@ -407,7 +434,7 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
             </div>
             <label className="fm-generative-field"><span>优化优先级</span><select value={spec.objective} onChange={(event) => updateSpec('objective', event.target.value as GenerationSpec['objective'])}><option value="energy">降低能耗</option><option value="balanced">综合平衡</option><option value="throughput">最大吞吐</option></select></label>
             <div className="fm-generative-field-grid fm-generative-planning-fields">
-              <label className="fm-generative-field"><span>搜索轮次</span><input type="number" min={1} max={4} value={spec.searchRounds ?? 2} onChange={(event) => updateSpec('searchRounds', Number(event.target.value) || 1)} /></label>
+              <label className="fm-generative-field"><span>搜索轮次</span><input type="number" min={1} max={4} value={spec.searchRounds ?? 1} onChange={(event) => updateSpec('searchRounds', Number(event.target.value) || 1)} /></label>
               <label className="fm-generative-field"><span>电价 / kWh</span><input type="number" min={0} step={0.01} value={spec.economics?.energyPricePerKwh ?? DEFAULT_COST_ASSUMPTIONS.energyPricePerKwh} onChange={(event) => updateEconomics('energyPricePerKwh', Number(event.target.value) || 0)} /></label>
               <label className="fm-generative-field"><span>单位贡献 / 件</span><input type="number" min={0} value={spec.economics?.contributionPerUnit ?? DEFAULT_COST_ASSUMPTIONS.contributionPerUnit} onChange={(event) => updateEconomics('contributionPerUnit', Number(event.target.value) || 0)} /></label>
               <label className="fm-generative-field"><span>月运行 / H</span><input type="number" min={1} value={spec.economics?.operatingHoursPerMonth ?? DEFAULT_COST_ASSUMPTIONS.operatingHoursPerMonth} onChange={(event) => updateEconomics('operatingHoursPerMonth', Number(event.target.value) || 1)} /></label>
@@ -442,12 +469,12 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
               })}
             </div>
             <div className="fm-generative-stage-footer"><span>PLANNER STATUS</span><b>{isGenerating ? GENERATION_STEPS[generationStep] : candidates.length ? 'CANDIDATES VERIFIED' : 'IDLE / AWAITING INPUT'}</b></div>
-            {selectedCandidate && <div className="fm-generative-graph-summary"><div><span>RECIPE GRAPH</span><b>{selectedCandidate.recipeGraph.nodes.length} 工序 · {selectedCandidate.recipeGraph.edges.length} 条物流边</b></div><div><span>EQUIPMENT PLAN</span><b>{selectedCandidate.equipment.reduce((sum, item) => sum + item.count, 0)} 台设备</b></div><div><span>SEARCH / ROUND</span><b>BEAM {selectedCandidate.searchRound + 1} / {spec.searchRounds ?? 2}</b></div><div><span>BOTTLENECK</span><b>{selectedCandidate.simulation.bottleneck}</b></div></div>}
+            {selectedCandidate && <div className="fm-generative-graph-summary"><div><span>RECIPE GRAPH</span><b>{selectedCandidate.recipeGraph.nodes.length} 工序 · {selectedCandidate.recipeGraph.edges.length} 条物流边</b></div><div><span>EQUIPMENT PLAN</span><b>{selectedCandidate.equipment.reduce((sum, item) => sum + item.count, 0)} 台设备</b></div><div><span>SEARCH / ROUND</span><b>BEAM {selectedCandidate.searchRound + 1} / {spec.searchRounds ?? 1}</b></div><div><span>BOTTLENECK</span><b>{selectedCandidate.simulation.bottleneck}</b></div></div>}
           </section>
 
           <aside className="fm-generative-card fm-generative-results glass3d">
             <div className="fm-generative-card-head"><span>03 / TOP 3 SOLUTIONS</span><b>候选方案</b></div>
-            {candidates.length === 0 ? <div className="fm-generative-empty"><span>＋</span><b>{hasCurrentLine ? '还没有调整方案' : '还没有生成方案'}</b><small>{hasCurrentLine ? '输入目标后，ForgeMind 会先诊断当前产线，再返回最小调整、重布线和完整重构方案。' : '填写需求后，ForgeMind 会生成并仿真 3 个可比较的布局策略。'}</small></div> : <div className="fm-generative-candidate-list">{candidates.map((candidate, index) => <button type="button" key={candidate.id} className={`fm-generative-candidate glass3d ${selectedId === candidate.id ? 'is-selected' : ''}`} onClick={() => setSelectedId(candidate.id)}><div className="fm-generative-candidate-top"><span>{String(index + 1).padStart(2, '0')}</span><small>{candidate.validation.passed ? 'SIMULATION VERIFIED' : 'REVIEW REQUIRED'}</small><i>{selectedId === candidate.id ? 'SELECTED' : `SCORE ${candidate.score.toFixed(1)}`}</i></div><h3>{candidate.name}</h3><p>{candidate.description}</p><div className="fm-generative-candidate-metrics"><Metric label="THROUGHPUT" value={`${candidate.metrics.throughputPerHour.toFixed(1)} / H`} /><Metric label="UTILIZATION" value={`${candidate.metrics.utilization.toFixed(1)}%`} /><Metric label="ENERGY / UNIT" value={`${candidate.metrics.energyPerUnit.toFixed(1)} kWh`} /><Metric label="LOGISTICS" value={`${candidate.metrics.logisticsEfficiency.toFixed(1)}%`} /><Metric label="PAYBACK" value={candidate.metrics.economics.paybackMonths === null ? '—' : `${candidate.metrics.economics.paybackMonths.toFixed(1)} M`} /></div><div className="fm-generative-candidate-foot"><span>{candidate.simulation.outputUnits} 件成品 / {candidate.simulation.simulatedSeconds}s</span><b>{candidate.simulation.bottleneck}</b></div>{candidate.adjustments.length > 0 && <small className="fm-generative-adjustment-note">{candidate.adjustments.map((action) => action.title).join(' · ')}</small>}<small className="fm-generative-diff-note">Δ +{candidate.diff.added} / −{candidate.diff.removed} · 移动 {candidate.diff.moved} · 改造成本 {candidate.metrics.changeCost.toFixed(1)} · P{candidate.paretoRank}</small>{candidate.equipment.some((item) => item.count > 1) && <small className="fm-generative-scale-note">AUTO SCALE · {candidate.equipment.filter((item) => item.count > 1).map((item) => `${item.nodeId} ×${item.count}`).join(' · ')}</small>}{candidate.warnings.map((warning) => <small className="fm-generative-warning" key={warning}>! {warning}</small>)}</button>)}</div>}
+            {candidates.length === 0 ? <div className="fm-generative-empty"><span>＋</span><b>{hasCurrentLine ? '还没有调整方案' : '还没有生成方案'}</b><small>{hasCurrentLine ? '输入目标后，ForgeMind 会先诊断当前产线，再返回最小调整、重布线和完整重构方案。' : '填写需求后，ForgeMind 会生成并仿真 3 个可比较的布局策略。'}</small></div> : <div className="fm-generative-candidate-list">{candidates.map((candidate, index) => <button type="button" key={candidate.id} className={`fm-generative-candidate glass3d ${selectedId === candidate.id ? 'is-selected' : ''}`} onClick={() => setSelectedId(candidate.id)}><div className="fm-generative-candidate-top"><span>{String(index + 1).padStart(2, '0')}</span><small>{candidate.validation.passed ? 'SIMULATION VERIFIED' : 'REVIEW REQUIRED'}</small><i>{selectedId === candidate.id ? 'SELECTED' : `SCORE ${candidate.score.toFixed(1)}`}</i></div><h3>{candidate.name}</h3><p>{candidate.description}</p><div className="fm-generative-candidate-metrics"><Metric label="THROUGHPUT" value={`${candidate.metrics.throughputPerHour.toFixed(1)} / H`} /><Metric label="UTILIZATION" value={`${candidate.metrics.utilization.toFixed(1)}%`} /><Metric label="ENERGY / UNIT" value={`${candidate.metrics.energyPerUnit.toFixed(1)} kWh`} /><Metric label="LOGISTICS" value={`${candidate.metrics.logisticsEfficiency.toFixed(1)}%`} /><Metric label="PAYBACK" value={candidate.metrics.economics.paybackMonths === null ? '—' : `${candidate.metrics.economics.paybackMonths.toFixed(1)} M`} /></div><div className="fm-generative-candidate-foot"><span>{candidate.simulation.outputUnits} 件成品 / {candidate.simulation.simulatedSeconds}s</span><b>{candidate.simulation.bottleneck}</b></div>{candidate.adjustments.length > 0 && <small className="fm-generative-adjustment-note">{candidate.adjustments.map((action) => action.title).join(' · ')}</small>}<small className="fm-generative-diff-note">Δ +{candidate.diff.added} / −{candidate.diff.removed} · 移动 {candidate.diff.moved} · 改造成本 {candidate.metrics.changeCost.toFixed(1)} · P{candidate.paretoRank}</small><small className="fm-generative-structure-note">{candidateStructureSummary(candidate)}</small>{candidate.warnings.map((warning) => <small className="fm-generative-warning" key={warning}>! {warning}</small>)}</button>)}</div>}
             {selectedCandidate && <div className="fm-generative-comparison"><div><span>LIVE → CANDIDATE</span><b>{liveDiagnostic.throughputPerHour.toFixed(1)} → {selectedCandidate.metrics.throughputPerHour.toFixed(1)} / H</b></div><div><span>ASSETS</span><b>{objects.length} → {selectedCandidate.objects.length}</b></div><div><span>CAPEX / PAYBACK</span><b>¥{Math.round(selectedCandidate.metrics.economics.incrementalCapex).toLocaleString()} · {selectedCandidate.metrics.economics.paybackMonths === null ? '—' : `${selectedCandidate.metrics.economics.paybackMonths.toFixed(1)} M`}</b></div></div>}
             <WhatIfPanel result={whatIf} running={isWhatIfRunning} onRun={runWhatIf} />
             <div className="fm-generative-result-actions"><button type="button" onClick={previewCandidate} disabled={!selectedCandidate || isGenerating}>查看方案</button><button type="button" className="is-primary" onClick={applyCandidate} disabled={!selectedCandidate || isGenerating || !selectedCandidate.validation.passed}>应用到 {factoryId.toUpperCase()}</button><button type="button" onClick={rollback} disabled={!canUndo || isGenerating}>撤销上一版</button></div>
@@ -623,6 +650,15 @@ function Metric({ label, value }: { label: string; value: string }) {
   return <div><span>{label}</span><b>{value}</b></div>
 }
 
+function candidateStructureSummary(candidate: GeneratedCandidate): string {
+  const parallel = candidate.equipment
+    .filter((item) => item.count > 1)
+    .map((item) => `${item.nodeId} ×${item.count}`)
+  const agvCount = candidate.objects.filter((object) => object.type === 'agv').length
+  const conveyorCount = candidate.objects.filter((object) => object.type === 'conveyor').length
+  return `STRUCTURE · ${parallel.length > 0 ? parallel.join(' · ') : '单机单线'} · AGV ×${agvCount} · 物流 ${conveyorCount} 段`
+}
+
 function WhatIfPanel({ result, running, onRun }: { result: WhatIfResult | null; running: boolean; onRun: (mutation: WhatIfMutation) => void }) {
   const options: Array<{ mutation: WhatIfMutation; label: string }> = [
     { mutation: 'add-cnc', label: '+ CNC' },
@@ -653,7 +689,8 @@ function mergeGenerationSpec(base: GenerationSpec, remote: Partial<GenerationSpe
     cncLimit: Math.round(validPositiveNumber(remote.cncLimit, base.cncLimit)),
     agvLimit: Math.round(validPositiveNumber(remote.agvLimit, base.agvLimit)),
     objective,
-    searchRounds: Math.round(validPositiveNumber(remote.searchRounds, base.searchRounds ?? 2)),
+    searchRounds: Math.round(validPositiveNumber(remote.searchRounds, base.searchRounds ?? 1)),
+    simulationSeconds: Math.round(validPositiveNumber(remote.simulationSeconds, base.simulationSeconds ?? 420)),
     economics: { ...DEFAULT_COST_ASSUMPTIONS, ...base.economics },
   }
 }

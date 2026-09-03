@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { BUILD_ASSET_PATHS, OBJECT_DEFS, type ImportedResource, type MachineDefinition, type MachineModelType } from '../game/types'
+import { getMachineModelAssetPath, OBJECT_DEFS, type ImportedResource, type MachineDefinition, type MachineModelType } from '../game/types'
 import { useForgeMindStore } from '../store/forgeMind'
 import { EquipmentModelPreview } from './EquipmentModelPreview'
 import { ResourceImportDialog } from './ResourceImportDialog'
@@ -9,19 +9,64 @@ type ModelKey = MachineModelType | `imported:${string}`
 type EditorState = { mode: 'create'; modelKey: ModelKey } | { mode: 'edit'; definition: MachineDefinition }
 interface MachineModelRecord { key: ModelKey; name: string; subtitle: string; description: string; path?: string; previewDataUrl?: string; footprint: { w: number; d: number }; height: number; throughput: string; power: string; importedResourceId?: string }
 
-const BUILTIN_TYPES: MachineModelType[] = ['machine', 'smelter', 'press', 'washing']
+const BUILTIN_TYPES: MachineModelType[] = ['machine', 'smelter', 'press', 'washing', 'apiTank', 'visionInspection', 'workstation']
+
+const EXTRA_BUILTIN_MODEL_META: Partial<Record<'apiTank' | 'visionInspection' | 'workstation', { name: string; subtitle: string; description: string; baseType: 'storage' | 'machine'; footprint: { w: number; d: number }; height: number; throughput: string; power: string }>> = {
+  apiTank: {
+    name: '原料药罐',
+    subtitle: 'API MATERIAL TANK Mk.I',
+    description: '真实 CAD 原料药罐模型，可作为液体或粉体原料的储存与供料型基础机器。',
+    baseType: 'storage',
+    footprint: { w: 2, d: 2 },
+    height: 2,
+    throughput: '60 / min',
+    power: '4 kW',
+  },
+  visionInspection: {
+    name: '视觉检测 CAD 单元',
+    subtitle: 'VISION INSPECTION CELL Mk.I',
+    description: '真实 CAD 视觉检测设备模型，用于机械制造中登记独立质检工艺机器；不替换现有双臂视觉质检运行时设备。',
+    baseType: 'machine',
+    footprint: { w: 2, d: 2 },
+    height: 1.6,
+    throughput: '20 / min',
+    power: '6 kW',
+  },
+  workstation: {
+    name: '工业工作站',
+    subtitle: 'INDUSTRIAL WORKSTATION Mk.I',
+    description: '真实 CAD 工业工作站模型，适用于钻孔、攻丝、装配前处理等通用离散工艺。',
+    baseType: 'machine',
+    footprint: { w: 2, d: 2 },
+    height: 1.6,
+    throughput: '30 / min',
+    power: '8 kW',
+  },
+}
 
 function builtInRecord(type: MachineModelType): MachineModelRecord {
-  const base = OBJECT_DEFS[type]
-  return { key: type, name: base.label, subtitle: base.subtitle, description: base.function, path: BUILD_ASSET_PATHS[type], footprint: { ...base.footprint }, height: base.height, throughput: base.throughput, power: base.power }
+  const extra = EXTRA_BUILTIN_MODEL_META[type as 'apiTank' | 'visionInspection' | 'workstation']
+  const baseType = type === 'apiTank' ? 'storage' : type === 'visionInspection' || type === 'workstation' ? 'machine' : type
+  const base = OBJECT_DEFS[baseType]
+  return {
+    key: type,
+    name: extra?.name ?? base.label,
+    subtitle: extra?.subtitle ?? base.subtitle,
+    description: extra?.description ?? base.function,
+    path: getMachineModelAssetPath(type),
+    footprint: { ...(extra?.footprint ?? base.footprint) },
+    height: extra?.height ?? base.height,
+    throughput: extra?.throughput ?? base.throughput,
+    power: extra?.power ?? base.power,
+  }
 }
 function importedRecord(resource: ImportedResource): MachineModelRecord {
   return { key: `imported:${resource.id}`, name: resource.name, subtitle: `IMPORTED / ${resource.id}`, description: resource.objectDef.function, path: resource.objectDef.assetPath, previewDataUrl: resource.previewDataUrl, footprint: { ...resource.objectDef.footprint }, height: resource.objectDef.height, throughput: resource.objectDef.throughput, power: resource.objectDef.power, importedResourceId: resource.id }
 }
 function machineModelKey(definition: MachineDefinition): ModelKey { return definition.modelType === 'imported' ? `imported:${definition.importedResourceId ?? ''}` : definition.modelType }
 
-export function MachineManufacturingWorkspace({ onClose }: { onClose: () => void }) {
-  return <div className="fm-manufacturing-workspace"><header className="fm-manufacturing-head"><div><span>MECHANICAL MANUFACTURING</span><h2>机械制造</h2><p>机器仓库与模型库独立展示；新建、编辑和工艺录入在悬浮窗口完成。</p></div><button type="button" onClick={onClose} aria-label="关闭机械制造">×</button></header><main><MachineRegistry /></main></div>
+export function MachineManufacturingWorkspace({ onClose, embedded = false }: { onClose: () => void; embedded?: boolean }) {
+  return <div className={`fm-manufacturing-workspace${embedded ? ' is-embedded' : ''}`}>{!embedded && <header className="fm-manufacturing-head"><div><span>MECHANICAL MANUFACTURING</span><h2>机械制造</h2><p>机器仓库与模型库独立展示；新建、编辑和工艺录入在悬浮窗口完成。</p></div><button type="button" onClick={onClose} aria-label="关闭机械制造">×</button></header>}<main><MachineRegistry /></main></div>
 }
 
 function MachineRegistry() {

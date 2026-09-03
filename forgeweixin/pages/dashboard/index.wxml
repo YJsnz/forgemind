@@ -1,0 +1,37 @@
+<view class="page">
+  <view class="eyebrow">FORGEMIND / MOBILE CONTROL</view>
+  <view class="headline">你好，{{username || '工程师'}}</view>
+  <view class="muted intro">今天从工厂结构和生产资料开始。</view>
+  <view class="signal-rail"><text class="active">SPACE</text><view class="signal-rail-line"></view><text>FLOW</text><view class="signal-rail-line"></view><text>SIGNAL</text></view>
+
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+  <view wx:elif="{{loading}}" class="card loading">正在同步后端项目数据…</view>
+  <block wx:elif="{{summary}}">
+    <view class="hero card" bindtap="openCurrent">
+      <view class="hero-top">
+        <view class="hero-identity"><image class="hero-icon" src="../../assets/icons/factory.svg" mode="aspectFit" /><view>
+          <view class="muted small">当前项目</view>
+          <view class="factory-name">{{summary.name}}</view>
+        </view></view>
+        <image class="hero-arrow" src="../../assets/icons/arrow-right.svg" mode="aspectFit" />
+      </view>
+      <view class="status"><image class="status-icon" src="../../assets/icons/activity.svg" mode="aspectFit" />{{summary.status}}</view>
+    </view>
+
+    <view class="stat-grid">
+      <block wx:for="{{summary.stats}}" wx:key="label"><metric-card label="{{item.label}}" value="{{item.value}}" /></block>
+    </view>
+
+    <view class="card quick-card">
+      <view class="section-title"><text>当前工厂</text><text class="link" bindtap="openFactories">全部项目</text></view>
+      <view class="quick-row"><text class="muted">存档版本</text><text>v{{summary.version}}</text></view>
+      <view class="quick-row"><text class="muted">楼层数量</text><text>{{summary.floors}} 层</text></view>
+      <view class="quick-row"><text class="muted">数据来源</text><text>Spring Boot / MySQL</text></view>
+    </view>
+  </block>
+  <view wx:else class="card empty">
+    <view class="empty-title">还没有工厂项目</view>
+    <view class="muted">请先在 Web 工作台创建或保存工厂。</view>
+    <button class="primary empty-button" bindtap="openFactories">刷新项目列表</button>
+  </view>
+</view>

@@ -15,11 +15,13 @@ import java.util.UUID;
 public class AuthService {
     private final DbUserRepository users;
     private final DbSessionRepository sessions;
+    private final CloudProjectionService cloud;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
 
-    public AuthService(DbUserRepository users, DbSessionRepository sessions) {
+    public AuthService(DbUserRepository users, DbSessionRepository sessions, CloudProjectionService cloud) {
         this.users = users;
         this.sessions = sessions;
+        this.cloud = cloud;
     }
 
     public AuthResult register(String rawUsername, String password) {
@@ -33,6 +35,7 @@ public class AuthService {
         } catch (DuplicateKeyException e) {
             throw new IllegalArgumentException("用户名已存在", e);
         }
+        cloud.ensureWorkspace(user.id());
         return new AuthResult(issue(user), user.username());
     }
 

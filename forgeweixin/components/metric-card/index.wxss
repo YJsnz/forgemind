@@ -1,0 +1,25 @@
+.metric-card {
+  box-sizing: border-box;
+  min-height: 132rpx;
+  margin-top: 20rpx;
+  padding: 22rpx;
+  border: 1rpx solid rgba(42, 50, 47, .08);
+  border-radius: 0;
+  background: var(--fm-panel, #fff);
+  box-shadow: 4rpx 4rpx 0 rgba(69, 155, 160, .08);
+}
+
+.metric-value {
+  color: var(--fm-text, #252a28);
+  font-family: var(--fm-font-mono, monospace);
+  font-size: 42rpx;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.metric-label {
+  margin-top: 10rpx;
+  color: var(--fm-text-dim, #68716d);
+  font-family: var(--fm-font-sans, sans-serif);
+  font-size: 23rpx;
+}

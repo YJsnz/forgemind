@@ -1,4 +1,4 @@
-import { Component, useMemo, useRef, type ErrorInfo, type ReactNode } from 'react'
+import { Component, useEffect, useMemo, useRef, useLayoutEffect, type ErrorInfo, type ReactNode } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
@@ -13,6 +13,36 @@ import { getFloorElevation } from './FactoryFloorSystem'
 import { resolveItemAppearanceParameters } from '../game/item'
 import { ParametricItemModel } from '../components/ParametricItemModel'
 
+type ItemLotMotionEntry = {
+  group: THREE.Group | null
+  initialized: boolean
+  px: number
+  pz: number
+  targetY: number
+}
+
+// 物料仍然保留逐件平滑插值，但把 500+ 个 useFrame 回调合并成一个共享调度器。
+// 这样不会改变物料模型、尺寸或材质，只减少 React Three Fiber 的回调分发开销。
+const itemLotMotionEntries = new Set<ItemLotMotionEntry>()
+
+export function ItemLotMotionTicker() {
+  useFrame((_, delta) => {
+    for (const entry of itemLotMotionEntries) {
+      const group = entry.group
+      if (!group) continue
+      if (!entry.initialized) {
+        group.position.set(entry.px, entry.targetY, entry.pz)
+        entry.initialized = true
+        continue
+      }
+      group.position.x = THREE.MathUtils.damp(group.position.x, entry.px, 10, delta)
+      group.position.y = THREE.MathUtils.damp(group.position.y, entry.targetY, 12, delta)
+      group.position.z = THREE.MathUtils.damp(group.position.z, entry.pz, 10, delta)
+    }
+  })
+  return null
+}
+
 /**
  * 在途物品（ItemLot）渲染（Day 5）。
  * 物品沿传送带朝向插值移动：世界位置 = 传送带格中心 + dir * (offset - 0.5)。
@@ -20,7 +50,6 @@ import { ParametricItemModel } from '../components/ParametricItemModel'
  */
 export function ItemLotMesh({ lot, renderFloorId = lot.floorId }: { lot: ItemLot; renderFloorId?: FactoryFloorId }) {
   const ref = useRef<THREE.Group>(null)
-  const initialized = useRef(false)
   const objects = useForgeMindStore((s) => s.objects)
   const items = useForgeMindStore((s) => s.items)
 
@@ -53,17 +82,26 @@ export function ItemLotMesh({ lot, renderFloorId = lot.floorId }: { lot: ItemLot
     targetY = CONVEYOR_VISUAL_SURFACE_Y_M + size / 2
   }
 
-  useFrame((_, delta) => {
-    if (!ref.current) return
-    if (!initialized.current) {
-      ref.current.position.set(px, targetY, pz)
-      initialized.current = true
-      return
+  const motion = useMemo<ItemLotMotionEntry>(() => ({
+    group: null,
+    initialized: false,
+    px,
+    pz,
+    targetY,
+  }), [])
+  useLayoutEffect(() => {
+    motion.px = px
+    motion.pz = pz
+    motion.targetY = targetY
+    motion.group = ref.current
+  }, [motion, px, pz, targetY])
+  useEffect(() => {
+    itemLotMotionEntries.add(motion)
+    return () => {
+      itemLotMotionEntries.delete(motion)
+      motion.group = null
     }
-    ref.current.position.x = THREE.MathUtils.damp(ref.current.position.x, px, 10, delta)
-    ref.current.position.y = THREE.MathUtils.damp(ref.current.position.y, targetY, 12, delta)
-    ref.current.position.z = THREE.MathUtils.damp(ref.current.position.z, pz, 10, delta)
-  })
+  }, [motion])
 
   return (
     <group ref={ref}>

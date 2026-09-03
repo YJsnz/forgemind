@@ -2,6 +2,7 @@ import { CARDINALS, cellKey, dirToRotation } from './dir'
 import { objectCompatiblePortCells, objectPortCells, objectPortCellsForSide, occupiedCells } from './grid'
 import { DEFAULT_ITEMS, DEFAULT_RECIPES, type Item, type Recipe, type RecipePort } from './item'
 import { SimulationEngine } from './simulation'
+import { computeLineBalance, DEFAULT_BALANCE_TOLERANCE, type LineBalanceReport, type StageInput } from './lineBalancing'
 import { OBJECT_DEFS, objectRole, type BuildType, type FactoryObject, type PortSide, type Rotation } from './types'
 
 export interface GenerationSpec {
@@ -14,6 +15,8 @@ export interface GenerationSpec {
   objective: 'balanced' | 'throughput' | 'energy'
   /** Number of neighborhood-search rounds. Kept optional for saved briefs. */
   searchRounds?: number
+  /** Simulation horizon used while ranking candidates; defaults to 420 seconds. */
+  simulationSeconds?: number
   /** Optional economic assumptions supplied by the planning UI. */
   economics?: CostAssumptions
 }
@@ -120,6 +123,8 @@ export interface CandidateSimulation {
   outputItemId: string
   outputUnits: number
   throughputPerHour: number
+  /** 仿真吞吐是否达到目标节拍（容差 ±15%）。 */
+  meetsTarget: boolean
   utilization: number
   energyPerUnit: number
   logisticsEfficiency: number
@@ -140,6 +145,8 @@ export interface GeneratedCandidate {
   equipment: EquipmentEstimate[]
   validation: CandidateValidation
   simulation: CandidateSimulation
+  /** 计划设备数的节拍平衡报告（纯理论产能，不额外仿真）。 */
+  balance: LineBalanceReport
   objects: FactoryObject[]
   mode: 'generate' | 'adjust'
   adjustments: AdjustmentAction[]
@@ -210,9 +217,10 @@ const EQUIPMENT_CAPEX: Partial<Record<BuildType, number>> = {
 
 type Cell = { x: number; z: number }
 
-// Ten minutes is long enough to expose steady-state backpressure while keeping
-// the three candidate simulations responsive in the browser main thread.
-const SIMULATION_SECONDS = 600
+// Seven minutes exposes the first steady-state/backpressure signal on the
+// generated line while avoiding an unnecessarily long wait for three cards.
+const DEFAULT_SIMULATION_SECONDS = 420
+const MAX_SIMULATION_SECONDS = 600
 const ITEM_NAMES: Record<string, string> = {
   item_steel_blank: '钢制毛坯',
   item_steel_sheet: '冷轧钢板',
@@ -282,6 +290,12 @@ export function parseGenerationBrief(brief: string, fallback: GenerationSpec): B
     extracted.push(`产出：${next.targetThroughputPerHour}/h`)
   }
 
+  const takt = text.match(/(?:目标节拍|节拍)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:秒|s)/i)?.[1]
+  if (takt && !throughput) {
+    next.targetThroughputPerHour = Math.max(1, Math.round(3600 / Number(takt)))
+    extracted.push(`节拍：${takt}s → ${next.targetThroughputPerHour}/h`)
+  }
+
   const floor = text.match(/场地\s*(\d+(?:\.\d+)?)\s*[×xX*]\s*(\d+(?:\.\d+)?)/i)
   if (floor) {
     next.floorWidth = Math.max(10, Number(floor[1]))
@@ -307,7 +321,7 @@ export function parseGenerationBrief(brief: string, fallback: GenerationSpec): B
   } else if (/吞吐|产能|最大化|最快/i.test(text)) {
     next.objective = 'throughput'
     extracted.push('目标：最大吞吐')
-  } else if (/平衡|综合/i.test(text)) {
+  } else if (/平衡|均衡|综合/i.test(text)) {
     next.objective = 'balanced'
     extracted.push('目标：综合平衡')
   }
@@ -323,9 +337,30 @@ export function generateFactoryCandidates(spec: GenerationSpec, factoryKey = 'a0
   const graph = buildRecipeGraph(spec)
   const baseCnc = Math.max(1, Math.min(spec.cncLimit, spec.objective === 'throughput' ? 3 : 2))
   const variants: CandidateVariant[] = [
-    { key: 'balanced', cncCount: baseCnc, agvCount: Math.max(1, Math.min(spec.agvLimit, 2)), strategy: 'BALANCED FLOW', description: '完整四路物料齐套，平衡产能、路径长度和设备利用率。' },
-    { key: 'throughput', cncCount: Math.max(baseCnc, Math.min(spec.cncLimit, 3)), agvCount: Math.max(1, Math.min(spec.agvLimit, 2)), strategy: 'HIGH THROUGHPUT', description: '增加并行 CNC，优先降低机加工工序的等待时间。' },
-    { key: 'energy', cncCount: 1, agvCount: 1, strategy: 'LOW ENERGY', description: '减少并行设备和物流距离，牺牲部分峰值吞吐换取低能耗。' },
+    {
+      key: 'balanced',
+      cncCount: baseCnc,
+      agvCount: Math.max(1, Math.min(spec.agvLimit, 2)),
+      strategy: 'BALANCED FLOW',
+      description: '完整四路物料齐套，只扩展机加工瓶颈，平衡产能、路径长度和设备利用率。',
+      parallelOverrides: bottleneckBalancedPlan(graph, baseCnc),
+    },
+    {
+      key: 'throughput',
+      cncCount: Math.max(baseCnc, Math.min(spec.cncLimit, 3)),
+      agvCount: Math.max(1, Math.min(spec.agvLimit, 3)),
+      strategy: 'HIGH THROUGHPUT',
+      description: '机加工扩展为并行单元并配置更多 AGV，优先消除机加工等待和物流背压。',
+      parallelOverrides: highThroughputPlan(graph, Math.max(baseCnc, Math.min(spec.cncLimit, 3))),
+    },
+    {
+      key: 'energy',
+      cncCount: 1,
+      agvCount: 1,
+      strategy: 'LOW ENERGY',
+      description: '全链路保持单机单线和单 AGV，减少设备启停、分流节点与物流距离，牺牲峰值吞吐换取低能耗。',
+      parallelOverrides: singleLinePlan(graph),
+    },
   ]
 
   const initial = variants.map((variant) => makeCandidate(factoryKey, variant, spec, graph))
@@ -351,7 +386,7 @@ export function generateFactoryCandidates(spec: GenerationSpec, factoryKey = 'a0
     frontier = rankCandidates(dedupeCandidates([...frontier, ...evaluated])).slice(0, 4)
   }
 
-  return rankCandidates(dedupeCandidates(pool)).slice(0, 3)
+  return selectDiverseCandidates(pool, factoryKey)
 }
 
 /**
@@ -482,18 +517,22 @@ export function buildRecipeGraph(spec: GenerationSpec): RecipeGraph {
 function planMachineCounts(spec: GenerationSpec, graph: RecipeGraph, variant?: CandidateVariant): Record<string, number> {
   const plan: Record<string, number> = {}
   const throughputBias = spec.objective === 'throughput' ? 3 : spec.objective === 'balanced' ? 2 : 1
+  const parallelizeByTakt = spec.objective !== 'energy'
   for (const node of graph.nodes) {
     const recipe = graph.recipes.find((candidate) => candidate.id === node.recipeId)
     const capacityPerHour = recipe ? 3600 / recipe.durationSec : 1
     const requiredCount = Math.max(1, Math.ceil(spec.targetThroughputPerHour / capacityPerHour))
-    // CNC has a verified splitter/merger layout in the current 30×20 floor.
-    // Other multi-input cells remain visible in the demand estimate until a
-    // collision-free expansion variant is found by the neighborhood search.
+    // CNC has a verified splitter/merger layout; the other single-input stages
+    // share the same `connectSingleInputStage` template, so a non-energy
+    // objective parallelizes every stage up to its Takt-derived required count.
+    // Assembly stays single-line unless the neighborhood search raises it.
     const defaultCount = node.id === 'machining'
       ? Math.max(1, Math.min(spec.cncLimit, throughputBias))
       : node.id === 'assembly'
         ? 1
-        : Math.min(requiredCount, throughputBias)
+        : parallelizeByTakt
+          ? Math.min(requiredCount, 3)
+          : Math.min(requiredCount, throughputBias)
     plan[node.id] = clamp(Math.round(variant?.parallelOverrides?.[node.id] ?? defaultCount), 1, 3)
   }
   if (variant) plan.machining = clamp(Math.round(variant.cncCount), 1, Math.max(1, Math.min(spec.cncLimit, 3)))
@@ -505,6 +544,21 @@ function countPlanFromObjects(objects: FactoryObject[], graph: RecipeGraph): Rec
     node.id,
     Math.max(1, objects.filter((object) => object.recipeId === node.recipeId).length),
   ]))
+}
+
+/** 由计划并行度 + 配方时长计算纯理论节拍平衡报告（不额外仿真）。 */
+function computeCandidateBalance(parallelPlan: Record<string, number>, graph: RecipeGraph, spec: GenerationSpec): LineBalanceReport {
+  const stages: StageInput[] = graph.nodes.map((node) => {
+    const recipe = graph.recipes.find((entry) => entry.id === node.recipeId)
+    return {
+      nodeId: node.id,
+      name: node.name,
+      recipeId: node.recipeId,
+      durationSec: recipe?.durationSec ?? 1,
+      machineCount: parallelPlan[node.id] ?? 1,
+    }
+  })
+  return computeLineBalance(spec.targetThroughputPerHour, stages)
 }
 
 function estimateEquipment(spec: GenerationSpec, graph: RecipeGraph, plan = planMachineCounts(spec, graph)): EquipmentEstimate[] {
@@ -571,6 +625,22 @@ interface CandidateVariant {
   searchRound?: number
 }
 
+function singleLinePlan(graph: RecipeGraph): Record<string, number> {
+  return Object.fromEntries(graph.nodes.map((node) => [node.id, 1]))
+}
+
+function bottleneckBalancedPlan(graph: RecipeGraph, cncCount: number): Record<string, number> {
+  return { ...singleLinePlan(graph), machining: cncCount, assembly: 1 }
+}
+
+function highThroughputPlan(graph: RecipeGraph, cncCount: number): Record<string, number> {
+  // The current bounded layout has a verified parallel topology for CNC.
+  // Keep the other stages single-line until their own branch templates are
+  // collision- and backpressure-verified; the extra AGVs still make the
+  // logistics strategy materially different.
+  return { ...singleLinePlan(graph), machining: cncCount }
+}
+
 function neighborVariants(candidate: GeneratedCandidate, spec: GenerationSpec, _graph: RecipeGraph, round: number): CandidateVariant[] {
   const plan = Object.fromEntries(candidate.recipeGraph.nodes.map((node) => [node.id, node.parallelCount]))
   const cnc = candidate.equipment.find((item) => item.nodeId === 'machining')?.count ?? 1
@@ -591,6 +661,10 @@ function neighborVariants(candidate: GeneratedCandidate, spec: GenerationSpec, _
   push('flow', cnc + (spec.objective === 'throughput' ? 1 : 0), agv, { ...plan }, '沿上一轮优胜布局增加关键工序并行度，重新验证物流背压。')
   push('energy', cnc, Math.max(1, agv - 1), { ...plan, washing: Math.max(1, (plan.washing ?? 1) - 1), inspection: Math.max(1, (plan.inspection ?? 1) - 1) }, '沿上一轮优胜布局压缩低负载单元与 AGV，验证能耗/吞吐折中。')
   push('assembly', cnc, agv, { ...plan, assembly: Math.min(3, (plan.assembly ?? 1) + 1) }, '围绕装配瓶颈增加并行单元，重新搜索齐套物流路径。')
+  const bottleneckNodeId = candidate.balance?.bottleneckNodeId
+  if (bottleneckNodeId) {
+    push('balance', cnc, agv, { ...plan, [bottleneckNodeId]: Math.min(3, (plan[bottleneckNodeId] ?? 1) + 1) }, `围绕节拍瓶颈工序「${bottleneckNodeId}」增加 1 台并行设备，重新验证齐套物流与背压。`)
+  }
   return variants
 }
 
@@ -615,9 +689,24 @@ function makeCandidate(
   baselineObjects: FactoryObject[] = [],
 ): GeneratedCandidate {
   const prefix = `${factoryKey}_${variant.key}`
-  const parallelPlan = planMachineCounts(spec, graph, variant)
+  let parallelPlan = planMachineCounts(spec, graph, variant)
   const equipment = estimateEquipment(spec, graph, parallelPlan)
-  const objects = createConnectedLayout(prefix, parallelPlan, variant.agvCount, graph)
+  // A Takt-driven parallel stage may collide on the bounded floor. The CNC
+  // splitter/merger template is well-verified, so degrade to CNC-only, then to
+  // the single-line baseline, rather than dropping the search node entirely.
+  let objects: FactoryObject[]
+  try {
+    objects = createConnectedLayout(prefix, parallelPlan, variant.agvCount, graph)
+  } catch {
+    const cncOnly = { ...singleLinePlan(graph), machining: parallelPlan.machining ?? 1 }
+    try {
+      objects = createConnectedLayout(prefix, cncOnly, variant.agvCount, graph)
+      parallelPlan = cncOnly
+    } catch {
+      parallelPlan = singleLinePlan(graph)
+      objects = createConnectedLayout(prefix, parallelPlan, variant.agvCount, graph)
+    }
+  }
   return makeEvaluatedCandidate(factoryKey, variant, spec, graph, equipment, objects, { mode: 'generate', adjustments: [], baselineObjects, parallelPlan })
 }
 
@@ -635,7 +724,9 @@ function makeEvaluatedCandidate(
   const validation = simulation.outputUnits > 0 ? layoutValidation : { ...layoutValidation, passed: false }
   const diff = compareLayouts(context.baselineObjects ?? [], objects)
   const layoutRisk = layoutValidation.issues.length * 10 + diff.changeCost * 0.12
-  const score = scoreCandidate(simulation, validation, spec, diff, context.mode)
+  const parallelPlan = context.parallelPlan ?? countPlanFromObjects(objects, graph)
+  const balance = computeCandidateBalance(parallelPlan, graph, spec)
+  const score = scoreCandidate(simulation, validation, spec, diff, context.mode, balance)
   const warnings: string[] = []
   if (!layoutValidation.passed) warnings.push(`布局校验发现 ${layoutValidation.issues.length} 个问题，未达到可直接应用标准。`)
   if (simulation.outputUnits <= 0) warnings.push(`副本仿真没有产出 ${graph.product}，当前候选不能直接应用。`)
@@ -643,7 +734,6 @@ function makeEvaluatedCandidate(
     warnings.push(`副本仿真产出 ${simulation.throughputPerHour.toFixed(1)}/h，低于目标 ${spec.targetThroughputPerHour}/h。`)
   }
   if (simulation.blockedSources > 0 && simulation.throughputPerHour < spec.targetThroughputPerHour) warnings.push(`${simulation.blockedSources} 个来料站受到下游满载背压，正在限制目标产能。`)
-  const parallelPlan = context.parallelPlan ?? countPlanFromObjects(objects, graph)
   const economics = calculateEconomics(objects, simulation, spec, diff, context.baselineObjects ?? [], graph)
 
   return {
@@ -668,6 +758,7 @@ function makeEvaluatedCandidate(
     equipment: equipment.map((item) => ({ ...item, count: parallelPlan[item.nodeId] ?? item.count })),
     validation,
     simulation,
+    balance,
     objects,
     mode: context.mode,
     adjustments: context.adjustments,
@@ -693,8 +784,21 @@ function footprintFloor(objects: FactoryObject[], spec: GenerationSpec): { width
 }
 
 function createAdjustmentLayout(currentObjects: FactoryObject[], factoryKey: string, graph: RecipeGraph, variant: 'reroute' | 'compact-left' | 'compact-right'): { objects: FactoryObject[]; adjustments: AdjustmentAction[]; variant: string } | null {
-  const findSource = (itemId: string) => currentObjects.find((object) => (object.type === 'source' || object.type === 'inboundWarehouse') && object.itemId === itemId)
-  const findMachine = (recipeId: string) => currentObjects.find((object) => object.recipeId === recipeId)
+  // A-01 contains several parallel floors with overlapping recipe IDs. An
+  // adjustment route is a same-floor repair, so choose the floor carrying the
+  // most anchors for this product before selecting sources and machines.
+  const recipeIds = new Set(Object.values(graph.recipeIds))
+  const floorAnchorCounts = new Map<number, number>()
+  for (const object of currentObjects) {
+    if (object.recipeId && recipeIds.has(object.recipeId)) {
+      const floorId = object.floorId ?? 1
+      floorAnchorCounts.set(floorId, (floorAnchorCounts.get(floorId) ?? 0) + 1)
+    }
+  }
+  const preferredFloor = [...floorAnchorCounts.entries()].sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0] ?? 1
+  const onPreferredFloor = (object: FactoryObject) => (object.floorId ?? 1) === preferredFloor
+  const findSource = (itemId: string) => currentObjects.find((object) => onPreferredFloor(object) && (object.type === 'source' || object.type === 'inboundWarehouse') && object.itemId === itemId)
+  const findMachine = (recipeId: string) => currentObjects.find((object) => onPreferredFloor(object) && object.recipeId === recipeId)
   const sourceSteel = findSource(graph.sourceItems.steel)
   const sourceSheet = findSource(graph.sourceItems.sheet)
   const sourceFastener = findSource(graph.sourceItems.fastener)
@@ -707,7 +811,10 @@ function createAdjustmentLayout(currentObjects: FactoryObject[], factoryKey: str
   const assembly = findMachine(graph.recipeIds.assembly)
   const inspection = findMachine(graph.recipeIds.inspection)
   const packaging = findMachine(graph.recipeIds.packaging)
-  const storage = currentObjects.find((object) => object.type === 'outboundWarehouse')
+  const storage = currentObjects.find((object) => onPreferredFloor(object) && object.type === 'outboundWarehouse')
+    ?? currentObjects.find((object) => onPreferredFloor(object) && object.type === 'storage' && /finished|成品/i.test(object.id))
+    ?? currentObjects.filter((object) => onPreferredFloor(object) && object.type === 'storage').sort((a, b) => b.pos.x - a.pos.x)[0]
+    ?? currentObjects.find((object) => object.type === 'outboundWarehouse')
     ?? currentObjects.find((object) => object.type === 'storage' && /finished|成品/i.test(object.id))
     ?? currentObjects.filter((object) => object.type === 'storage').sort((a, b) => b.pos.x - a.pos.x)[0]
   if (!sourceSteel || !sourceSheet || !sourceFastener || !sourceCopper || !cnc || !washing || !press || !fastenerKit || !coil || !assembly || !inspection || !storage) return null
@@ -738,7 +845,7 @@ function createAdjustmentLayout(currentObjects: FactoryObject[], factoryKey: str
   const preservedCells = new Map<string, string>()
   for (const object of preserved) {
     for (const cell of occupiedCells(object)) {
-      const key = cellKey(cell.x, cell.z)
+      const key = `${object.floorId ?? 1}:${cellKey(cell.x, cell.z)}`
       if (preservedCells.has(key)) return null
       preservedCells.set(key, object.id)
     }
@@ -941,6 +1048,28 @@ interface LayoutBuilder {
   respectMachineOutputFacing?: boolean
 }
 
+function selectDiverseCandidates(candidates: GeneratedCandidate[], factoryKey: string): GeneratedCandidate[] {
+  const ranked = rankCandidates(dedupeCandidates(candidates))
+  const selected: GeneratedCandidate[] = []
+  const selectedIds = new Set<string>()
+
+  // Keep one representative of each explainable strategy. Search iterations
+  // are still ranked, but may not crowd out the energy / balanced / throughput
+  // comparison the user explicitly asked for.
+  for (const key of ['balanced', 'throughput', 'energy']) {
+    const anchor = ranked.find((candidate) => candidate.id === `${factoryKey}_${key}`)
+    if (anchor) {
+      selected.push(anchor)
+      selectedIds.add(anchor.id)
+    }
+  }
+  for (const candidate of ranked) {
+    if (selected.length >= 3) break
+    if (!selectedIds.has(candidate.id)) selected.push(candidate)
+  }
+  return rankCandidates(selected.slice(0, 3))
+}
+
 function addObject(builder: LayoutBuilder, object: FactoryObject): void {
   builder.objects.push(object)
 }
@@ -1034,7 +1163,7 @@ export function validateGeneratedLayout(objects: FactoryObject[], floorWidth = 3
 
   for (const object of objects) {
     for (const cell of occupiedCells(object)) {
-      const key = cellKey(cell.x, cell.z)
+      const key = `${object.floorId ?? 1}:${cellKey(cell.x, cell.z)}`
       const existing = byCell.get(key)
       if (existing) issues.push({ objectId: object.id, message: `与 ${existing.id} 占用同一格 ${key}` })
       else byCell.set(key, object)
@@ -1045,6 +1174,7 @@ export function validateGeneratedLayout(objects: FactoryObject[], floorWidth = 3
   }
 
   const connects = (upstream: FactoryObject, downstream: FactoryObject) => {
+    if ((upstream.floorId ?? 1) !== (downstream.floorId ?? 1)) return false
     const inputCells = objectCompatiblePortCells(downstream, 'input')
     const outputHitsDownstream = objectCompatiblePortCells(upstream, 'output')
       .some((output) => occupiedCells(downstream).some((cell) => sameCell(output, cell)))
@@ -1060,7 +1190,8 @@ export function validateGeneratedLayout(objects: FactoryObject[], floorWidth = 3
       issues.push({ objectId: object.id, message: '没有找到有效的上游输出接口' })
     }
     const output = objectPortCells(object, 'output')[0]
-    const downstream = (output ? byCell.get(cellKey(output.x, output.z)) : undefined)
+    const outputKey = output ? `${object.floorId ?? 1}:${cellKey(output.x, output.z)}` : null
+    const downstream = (outputKey ? byCell.get(outputKey) : undefined)
       ?? objects.find((candidate) => candidate.id !== object.id && objectRole(candidate.type, candidate.resourceId) === 'machine' && connects(object, candidate))
     if (!downstream || !connects(object, downstream)) issues.push({ objectId: object.id, message: '输出端没有接入下游设备或传送带' })
   }
@@ -1087,24 +1218,25 @@ function makeValidation(objects: FactoryObject[], floorWidth: number, floorDepth
 }
 
 function simulateCandidate(objects: FactoryObject[], spec: GenerationSpec, graph: RecipeGraph, validation: CandidateValidation): CandidateSimulation {
+  const simulationSeconds = Math.max(30, Math.min(MAX_SIMULATION_SECONDS, Math.round(spec.simulationSeconds ?? DEFAULT_SIMULATION_SECONDS)))
   const engine = new SimulationEngine(20260813)
   engine.init(objects, graph.recipes)
-  engine.advance(SIMULATION_SECONDS)
+  engine.advance(simulationSeconds)
   const snapshot = engine.getSnapshot()
   const outputUnits = snapshot.stats.produced[graph.targetItemId] ?? 0
-  const throughputPerHour = outputUnits / (SIMULATION_SECONDS / 3600)
+  const throughputPerHour = outputUnits / (simulationSeconds / 3600)
   const machines = objects.filter((object) => OBJECT_DEFS[object.type].role === 'machine')
   const utilization = machines.length === 0
     ? 0
-    : clamp((snapshot.machines.reduce((sum, machine) => sum + machine.processingTime, 0) / (machines.length * SIMULATION_SECONDS)) * 100, 0, 100)
+    : clamp((snapshot.machines.reduce((sum, machine) => sum + machine.processingTime, 0) / (machines.length * simulationSeconds)) * 100, 0, 100)
   const turns = objects.filter((object) => object.type === 'conveyor' && object.rotation !== 0).length
   const logisticsEfficiency = clamp(100 - objects.filter((object) => object.type === 'conveyor').length * 0.32 - turns * 0.38, 0, 100)
   const activeEnergy = snapshot.machines.reduce((sum, machine) => {
     const object = objects.find((candidate) => candidate.id === machine.objectId)
     return sum + (object ? powerKw(object.type) * machine.processingTime : 0)
   }, 0)
-  const idleLogisticsEnergy = objects.filter((object) => object.type === 'conveyor').length * 1.5 * SIMULATION_SECONDS * 0.18
-    + objects.filter((object) => object.type === 'agv').length * 5 * SIMULATION_SECONDS * 0.05
+  const idleLogisticsEnergy = objects.filter((object) => object.type === 'conveyor').length * 1.5 * simulationSeconds * 0.18
+    + objects.filter((object) => object.type === 'agv').length * 5 * simulationSeconds * 0.05
   const energyPerUnit = outputUnits > 0 ? (activeEnergy + idleLogisticsEnergy) / outputUnits : 99
   const blockedSources = snapshot.sources.filter((source) => source.state === 'blocked').length
   const bottleneck = !validation.passed
@@ -1118,6 +1250,7 @@ function simulateCandidate(objects: FactoryObject[], spec: GenerationSpec, graph
     outputItemId: graph.targetItemId,
     outputUnits,
     throughputPerHour,
+    meetsTarget: throughputPerHour >= spec.targetThroughputPerHour * (1 - DEFAULT_BALANCE_TOLERANCE),
     utilization,
     energyPerUnit,
     logisticsEfficiency,
@@ -1283,16 +1416,20 @@ function scoreCandidate(
   spec: GenerationSpec,
   diff: LayoutDiff,
   mode: GeneratedCandidate['mode'],
+  balance?: LineBalanceReport,
 ): number {
-  const throughput = clamp(simulation.throughputPerHour / Math.max(1, spec.targetThroughputPerHour), 0, 1.4) / 1.4
+  const rawThroughput = clamp(simulation.throughputPerHour / Math.max(1, spec.targetThroughputPerHour), 0, 1.4) / 1.4
+  // 未达目标节拍的候选显著降权（非硬过滤，低吞吐的 energy 锚点仍保留）。
+  const throughput = rawThroughput * (simulation.meetsTarget ? 1 : 0.6)
   const energy = clamp(1 - simulation.energyPerUnit / 99, 0, 1)
   const logistics = simulation.logisticsEfficiency / 100
   const utilization = simulation.utilization / 100
   const structural = validation.passed ? 1 : 0
   const changePenalty = mode === 'adjust' ? clamp(diff.changeCost / 120, 0, 1) : 0
-  if (spec.objective === 'throughput') return structural * 35 + throughput * 42 + utilization * 15 + logistics * 8 - changePenalty * 4
-  if (spec.objective === 'energy') return structural * 35 + energy * 36 + logistics * 20 + throughput * 9 - changePenalty * 3
-  return structural * 35 + throughput * 28 + energy * 18 + logistics * 12 + utilization * 7 - changePenalty * 4
+  const balanceFit = balance ? 1 - balance.balanceLoss : 1
+  if (spec.objective === 'throughput') return structural * 35 + throughput * 42 + utilization * 15 + logistics * 8 - changePenalty * 4 + balanceFit * 4
+  if (spec.objective === 'energy') return structural * 35 + energy * 36 + logistics * 20 + throughput * 9 - changePenalty * 3 + balanceFit * 2
+  return structural * 35 + throughput * 28 + energy * 18 + logistics * 12 + utilization * 7 - changePenalty * 4 + balanceFit * 12
 }
 
 function rankCandidates(candidates: GeneratedCandidate[]): GeneratedCandidate[] {

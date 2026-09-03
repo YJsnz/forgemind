@@ -1,6 +1,5 @@
 import type { ImportedResource } from '../game/types'
-
-const RESOURCE_BASE = 'http://localhost:8080'
+import { BACKEND_BASE } from './backendBase'
 
 interface StoredResourceResponse extends Omit<ImportedResource, 'objectDef'> {
   objectDef: ImportedResource['objectDef']
@@ -36,7 +35,7 @@ export async function persistImportedResource(
   form.append('project', projectFile, projectFile.name)
   form.append('model', modelFile, modelFile.name)
 
-  const response = await fetch(`${RESOURCE_BASE}/api/resources`, {
+  const response = await fetch(`${BACKEND_BASE}/api/resources`, {
     method: 'POST',
     headers: authHeaders(),
     body: form,
@@ -48,12 +47,12 @@ export async function persistImportedResource(
 }
 
 export async function loadImportedResources(): Promise<ImportedResource[]> {
-  const response = await fetch(`${RESOURCE_BASE}/api/resources`, { headers: authHeaders() })
+  const response = await fetch(`${BACKEND_BASE}/api/resources`, { headers: authHeaders() })
   if (!response.ok) throw new Error(`设备资源加载失败：${await readError(response)}`)
   const resources = await response.json() as StoredResourceResponse[]
   return Promise.all(resources.map(async (resource) => {
     const modelUrl = resource.modelUrl ?? `/api/resources/${encodeURIComponent(resource.id)}/model`
-    const modelResponse = await fetch(`${RESOURCE_BASE}${modelUrl}`, { headers: authHeaders() })
+    const modelResponse = await fetch(`${BACKEND_BASE}${modelUrl}`, { headers: authHeaders() })
     if (!modelResponse.ok) throw new Error(`模型加载失败：${resource.name}`)
     const blob = await modelResponse.blob()
     return withModelUrl(resource, URL.createObjectURL(blob))

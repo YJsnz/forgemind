@@ -1,0 +1,10 @@
+.headline { color: var(--fm-text, #252a28); font-family: var(--fm-font-title, sans-serif); font-size: 52rpx; font-weight: 400; margin-top: 14rpx; }
+.loading { color: #637078; }
+.project { display: flex; align-items: center; padding: 26rpx; border-left: 6rpx solid var(--fm-cyan, #459ba0); }
+.project-main { flex: 1; min-width: 0; }
+.project-name { font-family: var(--fm-font-title, sans-serif); font-size: 34rpx; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-meta { font-size: 23rpx; margin-top: 10rpx; }
+.autosave { color: #7c5a00; background: #f7e8b7; padding: 8rpx 12rpx; font-family: var(--fm-font-mono, monospace); font-size: 18rpx; margin-right: 12rpx; }
+.arrow-icon { width: 30rpx; height: 30rpx; }
+.empty { text-align: center; padding: 52rpx 28rpx; }
+.empty-title { font-family: var(--fm-font-title, sans-serif); font-size: 36rpx; font-weight: 400; margin-bottom: 12rpx; }

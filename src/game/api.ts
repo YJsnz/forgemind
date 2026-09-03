@@ -1,13 +1,13 @@
 import type { FactorySave } from './save'
 import type { AssistantToolCall, AssistantToolCatalog } from './assistantProtocol'
+import { BACKEND_BASE } from '../api/backendBase'
 
 /**
  * 通用服务客户端。/api/factory 是旧版单工厂兼容接口；当前项目库使用
  * src/api/factoryProjects.ts 的 /api/factories 多存档接口。
  */
 
-const SPRING_BASE = 'http://localhost:8080'
-const AI_BASE = (import.meta.env.VITE_AI_BASE_URL as string | undefined) ?? 'http://localhost:8000'
+export const AI_BASE = (import.meta.env.VITE_AI_BASE_URL as string | undefined) ?? 'http://localhost:8000'
 export const AI_SERVICE_ENABLED = import.meta.env.VITE_AI_ENABLED === 'true'
 
 function backendHeaders(): Record<string, string> {
@@ -29,7 +29,7 @@ async function withTimeout<T>(p: Promise<T>, ms = 2500): Promise<T> {
 
 /** 从 Spring Boot 拉取工厂存档 */
 export async function fetchRemoteSave(): Promise<FactorySave> {
-  const res = await withTimeout(fetch(`${SPRING_BASE}/api/factory`, { headers: backendHeaders() }))
+  const res = await withTimeout(fetch(`${BACKEND_BASE}/api/factory`, { headers: backendHeaders() }))
   if (!res.ok) throw new Error(`后端返回 ${res.status}`)
   return (await res.json()) as FactorySave
 }
@@ -37,7 +37,7 @@ export async function fetchRemoteSave(): Promise<FactorySave> {
 /** 推送存档到 Spring Boot */
 export async function pushRemoteSave(save: FactorySave): Promise<void> {
   const res = await withTimeout(
-    fetch(`${SPRING_BASE}/api/factory`, {
+    fetch(`${BACKEND_BASE}/api/factory`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...backendHeaders() },
       body: JSON.stringify(save),
@@ -49,7 +49,7 @@ export async function pushRemoteSave(save: FactorySave): Promise<void> {
 /** 探测 Spring Boot 是否在线 */
 export async function isBackendOnline(): Promise<boolean> {
   try {
-    const res = await withTimeout(fetch(`${SPRING_BASE}/api/factory/health`), 1500)
+    const res = await withTimeout(fetch(`${BACKEND_BASE}/api/factory/health`), 1500)
     return res.ok
   } catch {
     return false
