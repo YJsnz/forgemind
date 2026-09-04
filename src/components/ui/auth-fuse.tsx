@@ -182,7 +182,7 @@ PasswordInput.displayName = "PasswordInput";
 function SignInForm() {
   const handleSignIn = (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); console.log("UI: Sign In form submitted"); };
   return (
-    <form onSubmit={handleSignIn} autoComplete="on" className="flex flex-col gap-8">
+    <form data-auth-mode="password" onSubmit={handleSignIn} autoComplete="on" className="flex flex-col gap-8">
       <div className="flex flex-col items-center gap-2 text-center">
         <h1 className="text-2xl font-bold">Sign in to your account</h1>
         <p className="text-balance text-sm text-muted-foreground">Enter your email below to sign in</p>
@@ -199,7 +199,7 @@ function SignInForm() {
 function SignUpForm() {
   const handleSignUp = (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); console.log("UI: Sign Up form submitted"); };
   return (
-    <form onSubmit={handleSignUp} autoComplete="on" className="flex flex-col gap-8">
+    <form data-auth-mode="password" onSubmit={handleSignUp} autoComplete="on" className="flex flex-col gap-8">
       <div className="flex flex-col items-center gap-2 text-center">
         <h1 className="text-2xl font-bold">Create an account</h1>
         <p className="text-balance text-sm text-muted-foreground">Enter your details below to sign up</p>
@@ -224,13 +224,6 @@ function AuthFormContainer({ isSignIn, onToggle }: { isSignIn: boolean; onToggle
                     {isSignIn ? "Sign up" : "Sign in"}
                 </Button>
             </div>
-            <div className="relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t after:border-border">
-                <span className="relative z-10 bg-background px-2 text-muted-foreground">Or continue with</span>
-            </div>
-            <Button variant="outline" type="button" onClick={() => console.log("UI: Google button clicked")}>
-                <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google icon" className="mr-2 h-4 w-4" />
-                Continue with Google
-            </Button>
         </div>
     )
 }
@@ -249,11 +242,12 @@ interface AuthContentProps {
 interface AuthUIProps {
     signInContent?: AuthContentProps;
     signUpContent?: AuthContentProps;
+    extraContent?: React.ReactNode;
 }
 
 const defaultSignInContent = {
     image: {
-        src: "https://i.ibb.co/XrkdGrrv/original-ccdd6d6195fff2386a31b684b7abdd2e-removebg-preview.png",
+        src: "/images/forgepass-signin.png",
         alt: "A beautiful interior design for sign-in"
     },
     quote: {
@@ -264,7 +258,7 @@ const defaultSignInContent = {
 
 const defaultSignUpContent = {
     image: {
-        src: "https://i.ibb.co/HTZ6DPsS/original-33b8479c324a5448d6145b3cad7c51e7-removebg-preview.png",
+        src: "/images/forgepass-signup.png",
         alt: "A vibrant, modern space for new beginnings"
     },
     quote: {
@@ -273,7 +267,7 @@ const defaultSignUpContent = {
     }
 };
 
-export function AuthUI({ signInContent = {}, signUpContent = {} }: AuthUIProps) {
+export function AuthUI({ signInContent = {}, signUpContent = {}, extraContent }: AuthUIProps) {
   const [isSignIn, setIsSignIn] = useState(true);
   const toggleForm = () => setIsSignIn((prev) => !prev);
 
@@ -297,7 +291,10 @@ export function AuthUI({ signInContent = {}, signUpContent = {} }: AuthUIProps) 
         }
       `}</style>
       <div className="flex h-screen items-center justify-center p-6 md:h-auto md:p-0 md:py-12">
-        <AuthFormContainer isSignIn={isSignIn} onToggle={toggleForm} />
+        <div className="grid gap-7">
+          <AuthFormContainer isSignIn={isSignIn} onToggle={toggleForm} />
+          {extraContent}
+        </div>
       </div>
 
       <div
@@ -326,4 +323,3 @@ export function AuthUI({ signInContent = {}, signUpContent = {} }: AuthUIProps) 
     </div>
   );
 }
-

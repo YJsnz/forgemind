@@ -43,10 +43,31 @@ public class AuthService {
         String username = normalizeUsername(rawUsername);
         User user = users.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("用户名或密码错误"));
-        if (!encoder.matches(password == null ? "" : password, user.passwordHash())) {
+        if (user.passwordHash() == null || !encoder.matches(password == null ? "" : password, user.passwordHash())) {
             throw new IllegalArgumentException("用户名或密码错误");
         }
         return new AuthResult(issue(user), user.username());
+    }
+
+    public AuthResult loginWithVerifiedIdentity(User user) {
+        return new AuthResult(issue(user), user.username());
+    }
+
+    public User createPhoneUser() {
+        return createExternalUser("phone");
+    }
+
+    public User createEmailUser() {
+        return createExternalUser("email");
+    }
+
+    public User createExternalUser(String provider) {
+        String prefix = provider == null ? "external" : provider.trim().toLowerCase().replaceAll("[^a-z0-9]", "");
+        if (prefix.isBlank()) prefix = "external";
+        User user = new User(UUID.randomUUID().toString(), prefix + "_" + UUID.randomUUID().toString().replace("-", ""), encoder.encode(UUID.randomUUID().toString()), Instant.now().toString());
+        users.insert(user);
+        cloud.ensureWorkspace(user.id());
+        return user;
     }
 
     public User currentUser(String authorization) {

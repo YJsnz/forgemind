@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.forgemind.model.User;
 import com.forgemind.service.AgentEventHub;
+import com.forgemind.service.AgentOrchestrationService;
 import com.forgemind.service.AgentRuntimeService;
 import com.forgemind.service.AuthService;
 import org.springframework.http.HttpStatus;
@@ -14,12 +15,13 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
+import java.util.List;
 
 @RestController
 @CrossOrigin(origins="*")
 public class AgentController {
-    private final AgentRuntimeService runtime; private final AuthService auth; private final AgentEventHub events; private final ObjectMapper json;
-    public AgentController(AgentRuntimeService runtime,AuthService auth,AgentEventHub events,ObjectMapper json){this.runtime=runtime;this.auth=auth;this.events=events;this.json=json;}
+    private final AgentRuntimeService runtime; private final AgentOrchestrationService orchestration; private final AuthService auth; private final AgentEventHub events; private final ObjectMapper json;
+    public AgentController(AgentRuntimeService runtime,AgentOrchestrationService orchestration,AuthService auth,AgentEventHub events,ObjectMapper json){this.runtime=runtime;this.orchestration=orchestration;this.auth=auth;this.events=events;this.json=json;}
 
     @GetMapping("/api/agent/tools") public ArrayNode tools(){ArrayNode out=json.createArrayNode();for(String name:AgentRuntimeService.TOOLS)out.addObject().put("name",name).put("read_only",true).put("timeout_ms",5000).put("retry_limit",1);return out;}
 
@@ -34,8 +36,11 @@ public class AgentController {
     public ObjectNode create(@RequestHeader(value="Authorization",defaultValue="")String authorization,@RequestBody JsonNode body){User u=auth.currentUser(authorization);return runtime.create(u.id(),required(body,"factory_id"),required(body,"objective"),body.path("mode").asText("read_only"),body.path("context_snapshot"));}
     @GetMapping("/api/agent/runs") public ArrayNode list(@RequestHeader(value="Authorization",defaultValue="")String authorization,@RequestParam("factory_id")String factory){return runtime.list(auth.currentUser(authorization).id(),factory);}
     @GetMapping("/api/agent/runs/{runId}") public ObjectNode get(@RequestHeader(value="Authorization",defaultValue="")String authorization,@PathVariable String runId){return runtime.get(auth.currentUser(authorization).id(),runId);}
+    @PostMapping("/api/agent/runs/{runId}/orchestrate") @ResponseStatus(HttpStatus.ACCEPTED) public ObjectNode orchestrate(@RequestHeader(value="Authorization",defaultValue="")String authorization,@PathVariable String runId){User u=auth.currentUser(authorization);ObjectNode out=runtime.queueReadOnlyOrchestration(u.id(),runId);if(!List.of("completed","cancelled","rejected","failed").contains(out.path("status").asText()))orchestration.executeReadOnly(u.id(),runId);return out;}
+    @GetMapping("/api/agent/runs/{runId}/report") public ObjectNode report(@RequestHeader(value="Authorization",defaultValue="")String authorization,@PathVariable String runId){return runtime.report(auth.currentUser(authorization).id(),runId);}
     @PostMapping("/api/agent/runs/{runId}/analyze") public ObjectNode analyze(@RequestHeader(value="Authorization",defaultValue="")String authorization,@PathVariable String runId,@RequestBody(required=false)JsonNode body){User u=auth.currentUser(authorization);ObjectNode out=runtime.analyze(u.id(),runId,body==null?null:body.path("result"),body==null?null:body.path("patch"));events.publish(runId,"analysis_completed",out);return out;}
     @PostMapping("/api/agent/runs/{runId}/cancel") public ObjectNode cancel(@RequestHeader(value="Authorization",defaultValue="")String authorization,@PathVariable String runId){ObjectNode out=runtime.cancel(auth.currentUser(authorization).id(),runId);events.publish(runId,"run_cancelled",out);return out;}
+    @PostMapping("/api/agent/runs/{runId}/progress") public ObjectNode progress(@RequestHeader(value="Authorization",defaultValue="")String authorization,@PathVariable String runId,@RequestBody JsonNode body){ObjectNode out=runtime.progress(auth.currentUser(authorization).id(),runId,required(body,"step_key"),required(body,"status"),body.path("detail").asText(""));events.publish(runId,"agent_progress",out);return out;}
     @GetMapping("/api/agent/runs/{runId}/patches") public ArrayNode patches(@RequestHeader(value="Authorization",defaultValue="")String authorization,@PathVariable String runId){return runtime.patches(auth.currentUser(authorization).id(),runId);}
     @GetMapping("/api/agent/patches/{patchId}") public ObjectNode patch(@RequestHeader(value="Authorization",defaultValue="")String authorization,@PathVariable String patchId){return runtime.patch(auth.currentUser(authorization).id(),patchId);}
     @PostMapping("/api/agent/patches/{patchId}/approve") public ObjectNode approve(@RequestHeader(value="Authorization",defaultValue="")String authorization,@PathVariable String patchId,@RequestBody(required=false)JsonNode body){return runtime.approve(auth.currentUser(authorization).id(),patchId,note(body));}

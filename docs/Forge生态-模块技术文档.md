@@ -1,6 +1,6 @@
 # Forge 生态模块技术文档
 
-> 版本：2026-09-02 · 当前实现补充
+> 版本：2026-09-04 · 当前实现补充
 
 本文档补充 ForgeMind 综合技术文档，集中说明 ForgeMind、ForgePass、ForgeCloud、ForgeHub、ForgeLab 和 ForgeMove 的边界、调用关系和当前实现状态。未落地部分明确标记为预留或路线图，不作为已实现能力。
 
@@ -9,7 +9,7 @@
 | 模块 | 当前入口 | 技术职责 | 当前状态 |
 | --- | --- | --- | --- |
 | ForgeMind | React/Vite `/`、工作台 | 三维编辑、资料、确定性仿真、诊断和存档 | 已落地 |
-| ForgePass | `ForgePassPage.tsx` | 注册、登录、会话续登和统一身份入口 | 已落地 |
+| ForgePass | `ForgePassPage.tsx` | 密码/邮箱验证码/GitHub OAuth 登录、注册、会话续登和统一身份入口 | 已落地；邮箱 SMTP 与 GitHub OAuth 需服务端配置，手机号通道保留但默认隐藏 |
 | ForgeCloud | React `/forgecloud` | 工作空间、版本、资源、发布、协作、云端事实摘要 | 已落地；工业生产接入仍受边界约束 |
 | ForgeHub | React `/forgehub` | 3D 资产构建和复用入口 | 接口预留 |
 | ForgeLab | React `/forgelab`、Spring Boot `/api/forgelab/*` | 帖子、附件、回复、点赞和通知 | 已落地 |
@@ -20,13 +20,13 @@
 ```text
 ForgeMind / ForgeCloud / ForgeHub / ForgeLab
        → ForgePassPage
-       → POST /api/auth/login 或 /api/auth/register
+       → POST /api/auth/login、/register、/email/login 或 GitHub OAuth
        → Bearer token
        → GET /api/auth/me
        → 产品自身入口和服务端权限检查
 ```
 
-ForgePass 不拥有独立用户表；Spring Boot 的 `app_user` 是身份事实源。密码由服务端使用 BCrypt 处理，会话数据库只保存 token 摘要。退出时前端清除会话并回到认证入口，产品 API 不应继续复用旧 token。
+ForgePass 不拥有独立用户表；Spring Boot 的 `app_user` 是身份事实源。密码由服务端使用 BCrypt 处理，会话数据库只保存 token 摘要。V33 的 `auth_identity` 保存邮箱和 GitHub 身份绑定，`auth_email_otp` 保存邮箱验证码挑战，均不保存验证码明文；GitHub 回调使用服务端 session 状态和一次性兑换码，不保存 GitHub 访问令牌。手机号绑定表和腾讯云短信实现仍保留，但因当前无合规短信资质默认不展示/不启用。退出时前端清除会话并回到认证入口，产品 API 不应继续复用旧 token。
 
 ## 3. ForgeMind 技术边界
 
@@ -104,4 +104,3 @@ git diff --check
 ```
 
 ForgeLab 后端变更还需要执行 Maven 测试/打包和真实临时账号回归；ForgeHub 当前只能验证入口、身份保护和预览页，不得宣称资产工作区已完成。
-

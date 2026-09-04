@@ -64,6 +64,7 @@ export interface AssistantReply {
   action: AssistantToolCall | null
   validated: boolean
   requiresConfirmation: boolean
+  evidence?: Array<{ source: string; heading: string; excerpt: string; match?: string }>
 }
 
 /** 调 AI 助手（离线编排占位） */

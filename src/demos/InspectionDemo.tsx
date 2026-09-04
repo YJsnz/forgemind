@@ -8,6 +8,7 @@ import { GripperArm } from '../scene/GripperArm'
 import { CameraFeedTarget } from '../scene/CameraFeedTarget'
 import { InspectionPanel } from '../components/InspectionPanel'
 import { INSPECTION_STATION } from '../scene/inspectionRegistry'
+import { writeAssistantVisionFrame, writeAssistantVisionSnapshot } from '../game/assistantVision'
 import '../index.css'
 import './inspection-demo.css'
 
@@ -100,6 +101,7 @@ function InspectionReplay({ onClose }: { onClose: () => void }) {
   const inferenceBusyRef = useRef(false)
   const lastInferenceRef = useRef(0)
   const disposedRef = useRef(false)
+  const lastFrameBridgeRef = useRef(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(4.8)
   const [playing, setPlaying] = useState(true)
@@ -142,14 +144,30 @@ function InspectionReplay({ onClose }: { onClose: () => void }) {
       const payload = await response.json() as { status?: string; detections?: YoloDetection[]; inferenceMs?: number }
       if (!response.ok || payload.status !== 'ready') throw new Error('YOLO 服务不可用')
       if (!disposedRef.current) {
+        const capturedAt = new Date().toISOString()
+        const hasDefects = (payload.detections?.length ?? 0) > 0
+        const frameId = `${capturedAt}:${Math.round(video.currentTime * 1000)}`
+        let frameAvailable = false
+        if (hasDefects && now - lastFrameBridgeRef.current >= 1500) {
+          const preview = document.createElement('canvas')
+          const scale = Math.min(1, 640 / source.width)
+          preview.width = Math.max(1, Math.round(source.width * scale))
+          preview.height = Math.max(1, Math.round(source.height * scale))
+          preview.getContext('2d')?.drawImage(source, 0, 0, preview.width, preview.height)
+          const dataUrl = preview.toDataURL('image/jpeg', 0.48)
+          frameAvailable = writeAssistantVisionFrame({ frameId, dataUrl, capturedAt })
+          lastFrameBridgeRef.current = now
+        }
         setModelState('live')
         setDetections(payload.detections ?? [])
         setInferenceMs(payload.inferenceMs ?? 0)
+        writeAssistantVisionSnapshot({ source: 'yolo', partId: 'pcb-replay', status: 'ready', verdict: hasDefects ? 'fail' : 'pass', detections: payload.detections ?? [], confidence: hasDefects ? Math.max(...(payload.detections ?? []).map((item) => item.confidence)) : 1, inferenceMs: payload.inferenceMs ?? 0, capturedAt, frameId: hasDefects ? frameId : undefined, frameAvailable, frameCapturedAt: frameAvailable ? capturedAt : undefined })
       }
     } catch {
       if (!disposedRef.current) {
         setModelState('offline')
         setDetections([])
+        writeAssistantVisionSnapshot({ source: 'yolo', partId: 'pcb-replay', status: 'offline', verdict: 'unknown', detections: [], confidence: 0, inferenceMs: 0, capturedAt: new Date().toISOString() })
       }
     } finally {
       inferenceBusyRef.current = false

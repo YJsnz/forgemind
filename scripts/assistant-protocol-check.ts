@@ -27,7 +27,31 @@ const fixtureMachine: FactoryObject = { id: 'assistant-machine', type: 'machine'
 const fixtureSource: FactoryObject = { id: 'assistant-source', type: 'source', pos: { x: -4, z: 0 }, rotation: 0, itemId: inputItem.id }
 useForgeMindStore.setState({ objects: [fixtureMachine, fixtureSource], items: [inputItem, outputItem], recipes: [recipe] })
 
-const context = getCurrentFactoryAssistantContext()
+const context = {
+  ...getCurrentFactoryAssistantContext(),
+  taskIds: ['task-check'],
+  vision: {
+    source: 'yolo' as const,
+    partId: 'pcb-replay',
+    status: 'ready' as const,
+    verdict: 'pass' as const,
+    detections: [],
+    confidence: 1,
+    inferenceMs: 18,
+    capturedAt: '2026-09-03T00:00:00Z',
+  },
+  proactiveEvents: [{
+    fingerprint: 'inventory:steel',
+    source: 'inventory',
+    severity: 'warning' as const,
+    message: '原料库存接近安全线。',
+    sources: ['inventory', 'autopilot'],
+    count: 3,
+    firstObservedAt: Date.parse('2026-09-03T00:00:00Z'),
+    lastObservedAt: Date.parse('2026-09-03T00:05:00Z'),
+    status: 'open' as const,
+  }],
+}
 const machine = context.objects.find((object) => object.role === 'machine')
 const source = context.objects.find((object) => object.role === 'source')
 const recipeInContext = context.recipes[0]
@@ -49,6 +73,27 @@ const validCases = [
   call('reset_simulation'),
   call('change_machine_recipe', { objectId: machine.id, recipeId: recipeInContext.id }),
   call('bind_source_item', { objectId: source.id, itemId: item.id }),
+  call('open_panel', { panelId: 'agent-diagnosis' }),
+  call('focus_panel', { panelId: 'simulation' }),
+  call('select_floor', { floorId: 1 }),
+  call('locate_object', { objectId: machine.id }),
+  call('compare_panels', { leftPanelId: 'simulation', rightPanelId: 'agent-diagnosis' }),
+  call('show_task', { taskId: context.taskIds[0] ?? 'missing-task' }),
+  call('open_product', { productId: 'forgelab' }),
+  call('inspect_vision_result'),
+  call('start_agent_task', { objective: '诊断当前工厂的物流瓶颈', mode: 'diagnose' }),
+  call('run_autopilot'),
+  call('retry_agent_task'),
+  call('cancel_agent_task'),
+  call('list_agent_task_history'),
+  call('list_active_reminders'),
+  call('explain_reminder', { dedupeKey: 'inventory:steel' }),
+  call('dismiss_reminder_group', { dedupeKey: 'inventory:steel' }),
+  call('list_user_memory'),
+  call('get_reminder_policy'),
+  call('set_reminder_policy', { enabled: true, minSeverity: 'warning', cooldownMinutes: 10, quietStart: null, quietEnd: null }),
+  call('remember_user_preference', { key: 'preferredMetrics', value: '产能、堵塞和能耗' }),
+  call('forget_user_preference', { key: 'preferredMetrics' }),
 ]
 
 for (const candidate of validCases) {
@@ -64,6 +109,20 @@ const invalidCases = [
   call('inspect_object', { objectId: 'missing-object' }),
   call('change_machine_recipe', { objectId: source.id, recipeId: recipe.id }),
   call('bind_source_item', { objectId: machine.id, itemId: item.id }),
+  call('open_panel', { panelId: 'not-registered' }),
+  call('remember_user_preference', { key: 'current_inventory', value: '库存 12 件' }),
+  call('select_floor', { floorId: 4 }),
+  call('locate_object', { objectId: 'missing-object' }),
+  call('compare_panels', { leftPanelId: 'simulation', rightPanelId: 'simulation' }),
+  call('show_task', { taskId: 'missing-task' }),
+  call('explain_reminder', { dedupeKey: 'missing-reminder' }),
+  call('dismiss_reminder_group', { dedupeKey: 'missing-reminder' }),
+  call('open_product', { productId: 'unknown-product' }),
+  call('start_agent_task', { objective: '', mode: 'diagnose' }),
+  call('start_agent_task', { objective: '生成方案', mode: 'unknown' }),
+  call('remember_user_preference', { key: '', value: 'x' }),
+  call('forget_user_preference', { key: '' }),
+  call('set_reminder_policy', { enabled: true, minSeverity: 'warning', cooldownMinutes: 0, quietStart: null, quietEnd: null }),
   call('query_factory_status', { injected: true }),
 ]
 
@@ -71,6 +130,15 @@ for (const candidate of invalidCases) {
   const result = validateAssistantToolCall(candidate, context)
   assert(!result.ok, `${String(candidate.name)} 应被拒绝`)
 }
+
+const policyValidation = validateAssistantToolCall(call('set_reminder_policy', { enabled: true, minSeverity: 'warning', cooldownMinutes: 10, quietStart: null, quietEnd: null }), context)
+assert(policyValidation.ok && policyValidation.requiresConfirmation, '提醒策略修改必须等待确认')
+const dismissalValidation = validateAssistantToolCall(call('dismiss_reminder_group', { dedupeKey: 'inventory:steel' }), context)
+assert(dismissalValidation.ok && dismissalValidation.requiresConfirmation, '关闭同类提醒必须等待确认')
+const reminderList = executeAssistantToolCall(call('list_active_reminders'))
+assert(reminderList.status === 'executed' && Array.isArray(reminderList.data), '主动提醒列表应可读取')
+const visionWithoutResult = validateAssistantToolCall(call('inspect_vision_result'), { ...context, vision: null })
+assert(!visionWithoutResult.ok, '没有视觉结果时不应执行视觉解释工具')
 
 const oldSpeed = useForgeMindStore.getState().simSpeed
 const speedResult = executeAssistantToolCall(call('set_simulation_speed', { speed: 1.5 }))
@@ -86,6 +154,11 @@ const confirmedReset = executeAssistantToolCall(call('reset_simulation'), { conf
 assert(confirmedReset.status === 'executed', '确认后的重置应执行')
 assert(useForgeMindStore.getState().simResetTick === oldResetTick + 1, '确认后的重置没有真实写入 store')
 useForgeMindStore.setState({ simResetTick: oldResetTick })
+
+const rejectedRetry = executeAssistantToolCall(call('retry_agent_task'))
+assert(rejectedRetry.status === 'rejected', '没有失败任务时重试应被拒绝')
+const rejectedCancel = executeAssistantToolCall(call('cancel_agent_task'))
+assert(rejectedCancel.status === 'rejected', '没有运行任务时取消应被拒绝')
 
 console.log(`✅ 智能管家协议 ${ASSISTANT_PROTOCOL_VERSION}`)
 console.log(`✅ ${ASSISTANT_TOOL_NAMES.length} 个白名单工具全部通过合法调用校验`)

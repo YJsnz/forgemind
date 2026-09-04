@@ -1,8 +1,35 @@
 import { streamAssistant, type AssistantReply } from './api'
 import { executeAssistantToolCall, getCurrentFactoryAssistantContext, type AssistantExecutionResult } from './assistantExecutor'
-import type { AssistantToolCall } from './assistantProtocol'
+import type { AssistantPanelId, AssistantToolCall } from './assistantProtocol'
+import { getAssistantTaskState, hydrateAssistantServerTaskHistory, readAssistantServerTaskHistory, readAssistantTaskHistory } from './assistantTasks'
+import { hydrateAssistantMemory, readAssistantMemory } from './assistantMemory'
+import { readAssistantProjectMemory } from './assistantProjectMemory'
+import { isAssistantReminderQuiet, readAssistantReminderPolicy, reminderSeverityAllowed } from './assistantReminderPolicy'
+import { hydrateAssistantProactiveEvents, recordAssistantProactiveEvent, resolveAssistantProactiveEvent } from './assistantProactiveEvents'
+import { assistantScopedStorageKey } from './assistantStorage'
+import { recordAssistantMetric } from '../api/assistantMetrics'
+import { clearAssistantConversationSummary, readAssistantConversationSummary, writeAssistantConversationSummary, type AssistantConversationTurn } from './assistantConversation'
+import { readAssistantCloudSettings } from './assistantCloudSettings'
+import { hydrateAssistantKnowledge, readAssistantKnowledge } from './assistantKnowledge'
 
 const AI_TTS_URL = 'http://127.0.0.1:8000/api/ai/tts'
+const ASSISTANT_HISTORY_KEY = 'forgemind.assistant-history.v1'
+const ASSISTANT_NOTICE_MEMORY_KEY = 'forgemind.assistant-notices.v1'
+const MAX_HISTORY_TURNS = 12
+
+export interface AssistantUiContext {
+  route?: string
+  view?: string
+  panel?: string | null
+  floorId?: number
+  selectedObjectId?: string | null
+  selectedObjectLabel?: string | null
+  projectId?: string | null
+  projectName?: string | null
+  projectVersion?: number | null
+}
+
+let assistantUiContext: AssistantUiContext = {}
 
 export interface AssistantRequestResult {
   answer: string
@@ -18,13 +45,144 @@ export function dispatchAssistantState(detail: {
   window.dispatchEvent(new CustomEvent('forgemind:assistant-state', { detail }))
 }
 
+export async function dispatchAssistantNotice(detail: {
+  message: string
+  severity?: 'info' | 'warning' | 'critical'
+  openPanel?: AssistantPanelId
+  dedupeKey?: string
+  cooldownMs?: number
+  source?: string
+}) {
+  const severity = detail.severity ?? 'info'
+  const policy = readAssistantReminderPolicy()
+  if (!reminderSeverityAllowed(policy, severity) || (severity !== 'critical' && isAssistantReminderQuiet(policy))) return
+  const dedupeKey = detail.dedupeKey ?? detail.message.trim().slice(0, 160)
+  const cooldownMs = detail.cooldownMs ?? policy.cooldownMinutes * 60 * 1000
+  const aggregate = recordAssistantProactiveEvent({ fingerprint: dedupeKey, source: detail.source ?? 'assistant', severity, message: detail.message })
+  const notice = aggregate && aggregate.sources.length > 1
+    ? { ...detail, message: `多来源信号（${aggregate.sources.join('、')}）：${detail.message}`, speak: severity !== 'info' }
+    : { ...detail, speak: severity !== 'info' }
+  const token = window.localStorage.getItem('forgemind.token')
+  if (token) {
+    try {
+      const remote = await claimRemoteAssistantReminder({ ...detail, severity, dedupeKey, cooldownMs })
+      if (!remote.emit) return
+      markLocalAssistantNotice(dedupeKey, severity, cooldownMs)
+      window.dispatchEvent(new CustomEvent('forgemind:assistant-notice', { detail: notice }))
+      return
+    } catch {
+      // Continue with local/session dedupe when the backend is offline.
+    }
+  }
+  if (!markLocalAssistantNotice(dedupeKey, severity, cooldownMs)) return
+  window.dispatchEvent(new CustomEvent('forgemind:assistant-notice', { detail: notice }))
+}
+
+export async function resolveAssistantNotice(dedupeKey: string): Promise<boolean> {
+  const key = dedupeKey.trim()
+  const localResolved = resolveAssistantProactiveEvent(key)
+  const token = window.localStorage.getItem('forgemind.token')
+  if (!key || !token) return localResolved
+  try {
+    const response = await fetch('http://127.0.0.1:8080/api/assistant/reminders/resolve', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dedupeKey: key }),
+    })
+    if (!response.ok) return false
+    const result = await response.json() as { resolved?: boolean }
+    return result.resolved === true || localResolved
+  } catch {
+    return localResolved
+  }
+}
+
+function markLocalAssistantNotice(dedupeKey: string, severity: 'info' | 'warning' | 'critical', cooldownMs: number): boolean {
+  const now = Date.now()
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_NOTICE_MEMORY_KEY)) ?? '{}') as Record<string, { at?: number; severity?: string }>
+    const previous = parsed[dedupeKey]
+    const rank = { info: 1, warning: 2, critical: 3 } as const
+    const escalated = previous?.severity && rank[severity] > (rank[previous.severity as keyof typeof rank] ?? 0)
+    if (previous?.at && now - previous.at < cooldownMs && !escalated) return false
+    const next = Object.fromEntries(Object.entries(parsed).filter(([, item]) => typeof item?.at === 'number' && now - item.at < 24 * 60 * 60 * 1000))
+    next[dedupeKey] = { at: now, severity }
+    window.sessionStorage.setItem(assistantScopedStorageKey(ASSISTANT_NOTICE_MEMORY_KEY), JSON.stringify(next))
+  } catch {
+    // Storage 不可用时不阻塞主动提醒，允许本次事件继续发送。
+  }
+  return true
+}
+
+async function claimRemoteAssistantReminder(detail: { message: string; severity: 'info' | 'warning' | 'critical'; dedupeKey: string; cooldownMs: number }): Promise<{ emit: boolean }> {
+  const response = await fetch('http://127.0.0.1:8080/api/assistant/reminders/claim', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${window.localStorage.getItem('forgemind.token') ?? ''}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(detail),
+  })
+  if (!response.ok) throw new Error(`提醒去重服务返回 ${response.status}`)
+  return await response.json() as { emit: boolean }
+}
+
+export function clearAssistantConversation() {
+  window.sessionStorage.removeItem(assistantScopedStorageKey(ASSISTANT_HISTORY_KEY))
+  clearAssistantConversationSummary()
+}
+
+export function setAssistantUiContext(next: AssistantUiContext) {
+  assistantUiContext = { ...next }
+}
+
+function readAssistantConversation(): AssistantConversationTurn[] {
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_HISTORY_KEY)) ?? '[]')
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((turn): turn is AssistantConversationTurn =>
+      Boolean(turn)
+      && (turn.role === 'user' || turn.role === 'assistant')
+      && typeof turn.content === 'string'
+      && turn.content.trim().length > 0,
+    ).slice(-MAX_HISTORY_TURNS)
+  } catch {
+    return []
+  }
+}
+
+function writeAssistantConversation(turns: AssistantConversationTurn[]) {
+  const bounded = turns.slice(-MAX_HISTORY_TURNS)
+  window.sessionStorage.setItem(assistantScopedStorageKey(ASSISTANT_HISTORY_KEY), JSON.stringify(bounded))
+  writeAssistantConversationSummary(turns, readAssistantConversationSummary())
+}
+
 export async function requestAssistant(question: string): Promise<AssistantRequestResult> {
   const prompt = question.trim()
   if (!prompt) throw new Error('请输入要交给智能管家的问题。')
 
+  const startedAt = performance.now()
+  let firstTokenAt: number | null = null
+  let serviceFallback = false
   dispatchAssistantState({ phase: 'thinking', message: '正在读取工厂信号' })
   try {
+    const conversation = readAssistantConversation()
+    const cloudSettings = readAssistantCloudSettings()
+    await hydrateAssistantMemory()
+    await hydrateAssistantKnowledge()
+    await hydrateAssistantProactiveEvents()
+    await hydrateAssistantServerTaskHistory(assistantUiContext.projectId)
     const context = getCurrentFactoryAssistantContext()
+    const requestContext = {
+      ...context,
+      conversation: cloudSettings.contextEnabled ? conversation : [],
+      conversationSummary: cloudSettings.contextEnabled ? readAssistantConversationSummary() : '',
+      ui: assistantUiContext,
+      task: cloudSettings.contextEnabled ? getAssistantTaskState() : null,
+      taskHistory: cloudSettings.contextEnabled ? readAssistantTaskHistory() : [],
+      serverTaskHistory: cloudSettings.contextEnabled ? readAssistantServerTaskHistory() : [],
+      projectMemory: cloudSettings.contextEnabled && cloudSettings.projectMemoryEnabled ? readAssistantProjectMemory(assistantUiContext.projectId) : { projectId: assistantUiContext.projectId ?? null, versions: [], runs: [] },
+      userMemory: cloudSettings.contextEnabled && cloudSettings.userMemoryEnabled ? readAssistantMemory() : {},
+      knowledgeDocuments: cloudSettings.ragEnabled ? readAssistantKnowledge() : [],
+      assistantCloudSettings: cloudSettings,
+    }
     const speech = createSpeechQueue()
     let streamedText = ''
     let speechBuffer = ''
@@ -32,8 +190,9 @@ export async function requestAssistant(question: string): Promise<AssistantReque
     try {
       reply = await streamAssistant(
         prompt,
-        context as unknown as Record<string, unknown>,
+        requestContext as unknown as Record<string, unknown>,
         (delta) => {
+          if (firstTokenAt === null) firstTokenAt = performance.now()
           streamedText += delta
           speechBuffer += delta
           dispatchAssistantState({ phase: 'speaking', message: streamedText.trim().slice(-54) })
@@ -43,6 +202,7 @@ export async function requestAssistant(question: string): Promise<AssistantReque
         },
       )
     } catch {
+      serviceFallback = true
       reply = createBuiltInRuleReply(prompt)
       dispatchAssistantState({ phase: 'speaking', message: reply.answer })
     }
@@ -57,6 +217,19 @@ export async function requestAssistant(question: string): Promise<AssistantReque
     }
 
     const answer = execution?.answer ?? reply.answer
+    window.dispatchEvent(new CustomEvent('forgemind:assistant-evidence', {
+      detail: { evidence: reply.evidence ?? [], answer },
+    }))
+    if (execution?.status === 'awaiting_confirmation') {
+      window.dispatchEvent(new CustomEvent('forgemind:assistant-confirmation', {
+        detail: { call: pendingConfirmation, summary: execution.summary },
+      }))
+    }
+    writeAssistantConversation([
+      ...conversation,
+      { role: 'user', content: prompt.slice(0, 700) },
+      { role: 'assistant', content: answer.slice(0, 700) },
+    ])
     if (execution) {
       speechBuffer = ''
       speech.enqueue(answer)
@@ -66,6 +239,14 @@ export async function requestAssistant(question: string): Promise<AssistantReque
     } else {
       speech.enqueue(answer)
     }
+    recordAssistantMetric({
+      provider: reply.source,
+      firstTokenMs: Math.max(0, Math.round((firstTokenAt ?? performance.now()) - startedAt)),
+      completeMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      toolCall: Boolean(reply.action),
+      toolSuccess: execution?.status === 'executed',
+      fallback: serviceFallback || reply.source === 'fallback',
+    })
     await speech.finish()
     return { answer, execution, pendingConfirmation }
   } catch (error) {
@@ -108,11 +289,12 @@ function createBuiltInRuleReply(question: string): AssistantReply {
 
 export async function confirmAssistantAction(call: AssistantToolCall): Promise<AssistantExecutionResult> {
   const execution = executeAssistantToolCall(call, { confirmed: true })
+  window.dispatchEvent(new CustomEvent('forgemind:assistant-confirmation', { detail: { call: null, summary: null } }))
   await speakAssistantText(execution.status === 'executed' ? execution.answer : execution.answer)
   return execution
 }
 
-async function speakAssistantText(text: string) {
+export async function speakAssistantText(text: string) {
   if (!text.trim()) {
     dispatchAssistantState({ phase: 'idle', message: '等待驾驶员指令' })
     return
@@ -153,7 +335,7 @@ function createSpeechQueue() {
           failed = true
           return
         }
-        await playWithMeter(result.audio, fragment)
+        await playSerialized(result.audio, fragment)
       }).catch(() => { failed = true })
     },
     async finish() {
@@ -164,6 +346,15 @@ function createSpeechQueue() {
       })
     },
   }
+}
+
+let serializedSpeech: Promise<void> = Promise.resolve()
+
+/** 所有回答和主动提醒共用播放锁，避免两条 BT 语音同时输出。 */
+function playSerialized(audio: HTMLAudioElement, message: string): Promise<void> {
+  const next = serializedSpeech.then(() => playWithMeter(audio, message))
+  serializedSpeech = next.catch(() => undefined)
+  return next
 }
 
 function extractSpeechFragments(buffer: string): { fragments: string[]; remainder: string } {

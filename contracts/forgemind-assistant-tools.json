@@ -109,6 +109,317 @@
         "required": ["objectId", "itemId"],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "open_panel",
+      "description": "打开 ForgeMind 中已注册的业务面板。只改变界面，不修改工厂数据。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "panelId": {
+            "type": "string",
+            "enum": ["factory-overview", "simulation", "object-detail", "production", "logistics", "warehouse", "agent-diagnosis", "generative-planner", "inspection", "cloud-runtime", "activity-history"]
+          }
+        },
+        "required": ["panelId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "close_panel",
+      "description": "关闭 ForgeMind 中已注册的业务面板。只改变界面，不修改工厂数据。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "panelId": {
+            "type": "string",
+            "enum": ["factory-overview", "simulation", "object-detail", "production", "logistics", "warehouse", "agent-diagnosis", "generative-planner", "inspection", "cloud-runtime", "activity-history"]
+          }
+        },
+        "required": ["panelId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "focus_panel",
+      "description": "将 ForgeMind 视图聚焦到已注册的业务面板。只改变界面，不修改工厂数据。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "panelId": {
+            "type": "string",
+            "enum": ["factory-overview", "simulation", "object-detail", "production", "logistics", "warehouse", "agent-diagnosis", "generative-planner", "inspection", "cloud-runtime", "activity-history"]
+          }
+        },
+        "required": ["panelId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "select_floor",
+      "description": "切换当前可编辑楼层。只改变界面上下文，不修改工厂结构。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "floorId": { "type": "integer", "minimum": 1, "maximum": 3 }
+        },
+        "required": ["floorId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "locate_object",
+      "description": "在三维工厂中选中并定位指定对象，同时打开对象详情上下文。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "objectId": { "type": "string", "minLength": 1 }
+        },
+        "required": ["objectId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "compare_panels",
+      "description": "并排打开两个已注册业务面板，展示同一当前项目上下文下的对照视图。只改变界面，不修改工厂数据。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "leftPanelId": { "type": "string", "enum": ["factory-overview", "simulation", "object-detail", "production", "logistics", "warehouse", "agent-diagnosis", "generative-planner", "inspection", "cloud-runtime", "activity-history"] },
+          "rightPanelId": { "type": "string", "enum": ["factory-overview", "simulation", "object-detail", "production", "logistics", "warehouse", "agent-diagnosis", "generative-planner", "inspection", "cloud-runtime", "activity-history"] }
+        },
+        "required": ["leftPanelId", "rightPanelId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "show_task",
+      "description": "打开当前用户已有的 Agent 任务并显示其步骤、结果或待审批状态。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": { "taskId": { "type": "string", "minLength": 1, "maxLength": 120 } },
+        "required": ["taskId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "inspect_vision_result",
+      "description": "读取最近一帧结构化视觉检测结果，供 BT 解释缺陷类别、置信度和检测来源；不生成新的检测结论。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "open_product",
+      "description": "打开 ForgeMind 生态中的已注册产品入口；只改变页面路由，不绕过认证或修改业务事实。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "productId": { "type": "string", "enum": ["forgemind", "forgehub", "forgelab", "forgecloud"] }
+        },
+        "required": ["productId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "start_agent_task",
+      "description": "启动只读工厂 Agent 任务，可进行诊断或生成待审批方案，不会直接修改当前工厂。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "objective": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "diagnose",
+              "plan_design"
+            ]
+          }
+        },
+        "required": [
+          "objective",
+          "mode"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "run_autopilot",
+      "description": "启动一轮只读自动巡检，记录证据窗口并分析趋势、瓶颈和运行劣化。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "retry_agent_task",
+      "description": "重试最近一次失败或取消的 Agent/自动巡检任务，不会修改当前工厂。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "cancel_agent_task",
+      "description": "取消当前正在排队或运行的 Agent/自动巡检任务。",
+      "risk": "reversible",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_agent_task_history",
+      "description": "查看最近的 Agent/自动巡检任务历史与结果摘要。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_active_reminders",
+      "description": "查看当前仍开放的主动提醒及其来源、严重度、出现次数和最近观测时间。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "explain_reminder",
+      "description": "解释一条主动提醒为什么出现，返回它的来源、时间边界、重复次数和当前状态。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "dedupeKey": { "type": "string", "minLength": 1, "maxLength": 180 }
+        },
+        "required": ["dedupeKey"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "dismiss_reminder_group",
+      "description": "关闭指定去重键的同类主动提醒；仅停止该提醒事件的继续提示，不修改工厂事实。",
+      "risk": "reversible",
+      "requiresConfirmation": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "dedupeKey": { "type": "string", "minLength": 1, "maxLength": 180 }
+        },
+        "required": ["dedupeKey"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_user_memory",
+      "description": "查看当前浏览器会话保存的用户偏好，不读取实时工厂事实。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_reminder_policy",
+      "description": "查看主动提醒的启用状态、最低严重度、冷却时间和免打扰时段。",
+      "risk": "read_only",
+      "requiresConfirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_reminder_policy",
+      "description": "修改主动提醒策略；只影响提醒频率和免打扰规则，不改变工厂事实。",
+      "risk": "reversible",
+      "requiresConfirmation": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "minSeverity": { "type": "string", "enum": ["info", "warning", "critical"] },
+          "cooldownMinutes": { "type": "integer", "minimum": 1, "maximum": 1440 },
+          "quietStart": { "type": ["string", "null"], "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$" },
+          "quietEnd": { "type": ["string", "null"], "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }
+        },
+        "required": ["enabled", "minSeverity", "cooldownMinutes", "quietStart", "quietEnd"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "remember_user_preference",
+      "description": "保存用户明确要求记住的偏好；不会保存实时产量、库存、坐标或仿真指标。",
+      "risk": "reversible",
+      "requiresConfirmation": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "value": { "type": "string", "minLength": 1, "maxLength": 400 }
+        },
+        "required": ["key", "value"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "forget_user_preference",
+      "description": "删除用户明确指定的已保存偏好。",
+      "risk": "reversible",
+      "requiresConfirmation": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "minLength": 1, "maxLength": 80 }
+        },
+        "required": ["key"],
+        "additionalProperties": false
+      }
     }
   ]
 }

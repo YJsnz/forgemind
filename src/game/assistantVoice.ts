@@ -1,10 +1,24 @@
 import { requestAssistant, dispatchAssistantState, type AssistantRequestResult } from './assistantRuntime'
+import { shouldAutoStopAssistantTurn, type AssistantVoiceTurnState } from './assistantVoiceSession'
 
 const AI_ASR_URL = 'http://127.0.0.1:8000/api/ai/asr'
 const TARGET_SAMPLE_RATE = 16000
 
-interface AssistantRecorder {
+export interface AssistantRecorder {
   stop: () => Promise<Blob>
+}
+
+export interface AssistantTurnRecorder extends AssistantRecorder {
+  cancel: () => Promise<void>
+}
+
+export interface AssistantTurnRecorderOptions {
+  maxWaitMs?: number
+  maxTurnMs?: number
+  silenceMs?: number
+  minSpeechMs?: number
+  onState?: (state: AssistantVoiceTurnState) => void
+  onAutoStop?: () => void
 }
 
 export interface KeywordWakeListener {
@@ -39,6 +53,86 @@ export async function startAssistantRecorder(): Promise<AssistantRecorder> {
       await audioContext.close()
       return encodeWav(resample(chunks.flatMap((chunk) => Array.from(chunk)), sourceSampleRate, TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE)
     },
+  }
+}
+
+/**
+ * Starts one hands-free voice turn. Recording begins after BT and ends after
+ * speech plus a short silence, or at a hard upper bound. The microphone is
+ * still stopped by the caller after onAutoStop so the resulting WAV contains
+ * the complete turn.
+ */
+export async function startAssistantTurnRecorder(options: AssistantTurnRecorderOptions = {}): Promise<AssistantTurnRecorder> {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('当前浏览器不支持麦克风访问。')
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
+  const audioContext = new AudioContext()
+  await audioContext.resume()
+  const source = audioContext.createMediaStreamSource(stream)
+  const processor = audioContext.createScriptProcessor(4096, 1, 1)
+  const sink = audioContext.createGain()
+  const chunks: number[] = []
+  const sourceSampleRate = audioContext.sampleRate
+  const maxWaitMs = options.maxWaitMs ?? 9000
+  const maxTurnMs = options.maxTurnMs ?? 9000
+  const silenceMs = options.silenceMs ?? 760
+  const minSpeechMs = options.minSpeechMs ?? 360
+  const startedAt = performance.now()
+  let speechStartedAtMs: number | null = null
+  let lastVoiceAtMs: number | null = null
+  let stopped = false
+  let autoStopRequested = false
+  let timer: number | null = null
+  let stopPromise: Promise<Blob> | null = null
+
+  sink.gain.value = 0
+  processor.onaudioprocess = (event) => {
+    if (stopped) return
+    const input = event.inputBuffer.getChannelData(0)
+    const samples = Array.from(input)
+    chunks.push(...samples)
+    const now = performance.now()
+    if (rootMeanSquare(samples) >= 0.015) {
+      if (speechStartedAtMs === null) {
+        speechStartedAtMs = now
+        options.onState?.('speaking')
+      }
+      lastVoiceAtMs = now
+    }
+  }
+  source.connect(processor)
+  processor.connect(sink)
+  sink.connect(audioContext.destination)
+  options.onState?.('waiting')
+
+  const finalize = async (discard: boolean): Promise<Blob> => {
+    if (stopPromise) return stopPromise
+    stopPromise = (async () => {
+      stopped = true
+      if (timer !== null) window.clearInterval(timer)
+      processor.onaudioprocess = null
+      source.disconnect()
+      processor.disconnect()
+      sink.disconnect()
+      stream.getTracks().forEach((track) => track.stop())
+      await audioContext.close()
+      if (discard) chunks.length = 0
+      return encodeWav(resample(chunks, sourceSampleRate, TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE)
+    })()
+    return stopPromise
+  }
+
+  timer = window.setInterval(() => {
+    if (stopped || autoStopRequested) return
+    const elapsedMs = performance.now() - startedAt
+    if (!shouldAutoStopAssistantTurn({ elapsedMs, speechStartedAtMs, lastVoiceAtMs, maxWaitMs, maxTurnMs, silenceMs, minSpeechMs })) return
+    autoStopRequested = true
+    options.onState?.('finishing')
+    options.onAutoStop?.()
+  }, 80)
+
+  return {
+    stop: () => finalize(false),
+    cancel: async () => { await finalize(true) },
   }
 }
 

@@ -13,7 +13,7 @@
 
 ForgeMind 是一个面向智能工厂设计、生产配置、物流规划、离散仿真和运行诊断的可运行平台。它以浏览器中的 React + Three.js 工作台为核心，把网格建造、物品与配方、仓储与运输、确定性仿真、视觉检测、Agent 诊断和 Forge 生态协作入口连成一条闭环。
 
-项目的关键原则是：**AI 可以缺席，工厂不能停。** 布局坐标、碰撞结论、寻路结果、物料守恒和仿真指标由本地确定性代码负责；AI、语音和远程模型只在被显式启用时承担解释、约束提取或方案辅助，不能直接成为工厂事实源。
+项目的关键原则是：**AI 可以缺席，工厂不能停。** 布局坐标、碰撞结论、寻路结果、物料守恒和仿真指标由本地确定性代码负责；根目录完整启动入口会预热 AI、语音和 TTS，使网站打开即用，但这些服务只承担解释、约束提取或方案辅助，不能直接成为工厂事实源。
 
 > 当前实现、能力状态和未完成边界以 [`docs/ForgeMind-当前实现总览.md`](docs/ForgeMind-当前实现总览.md) 和 [`ForgeMind 项目方案.md`](ForgeMind%20项目方案.md) 为准。本文是面向使用者、开发者、评审者和生态接入方的项目入口。
 
@@ -154,7 +154,7 @@ flowchart LR
     end
 
     mysql[(MySQL 8.4)]
-    flyway[Flyway V1-V25]
+    flyway[Flyway V1-V30]
     spring --> flyway --> mysql
 
     subgraph optional[可选辅助服务 localhost:8000]
@@ -191,7 +191,7 @@ flowchart TB
 | 确定性领域 | `src/game/`、`src/store/` | 工厂状态、坐标、连接、库存、寻路、仿真、诊断、存档 | 不依赖 React、Three.js 或 LLM 才能运行 |
 | 渲染引擎 | `src/engine/daiyu/` | 模型批处理、传送带批处理、DPR、阴影和运行时预算 | 不替代 `simulation.ts` |
 | 服务端持久化 | `backend/` | 用户、结构化存档、资源、云端协作与审计事实 | 不逐 tick 保存浏览器运行态 |
-| 可选智能服务 | `ai-service/`、`voice-chat/` | 规则助手、远程模型、语音、视觉辅助 | 不直接决定坐标、碰撞、数量和指标 |
+| 智能与语音服务 | `ai-service/`、`voice-chat/` | 规则助手、远程模型、语音、视觉辅助 | 根目录完整入口默认启动；不直接决定坐标、碰撞、数量和指标 |
 
 ### 运行时真相源
 
@@ -349,15 +349,19 @@ npm run dev
 | ForgeCloud | <http://127.0.0.1:5173/forgecloud> |
 | ForgeLab | <http://127.0.0.1:5173/forgelab> |
 
-### 方式二：完整本地联调
+### 方式二：单终端一键启动
 
-完整联调会使用 MySQL、Spring Boot，并可接入 FastAPI、语音和本地模型。Windows 推荐入口是 `启动ForgeMind.cmd`；该脚本会尝试启动整套本地依赖，环境不完整时请回到方式一，或使用 `-SkipSpring` / `-SkipMySql` 等参数。
+Windows 推荐双击 `启动ForgeMind.cmd`。启动器只保留一个可见终端，用一个大进度条显示真实启动状态；MySQL、Spring Boot、AI、ASR/TTS、独立语音监听和前端服务均在后台隐藏进程中运行，日志写入 `.forgemind/logs/`。只有前端和所有请求服务都通过健康检查、语音模型预热完成后才显示 `100% / SYSTEM READY`，失败会停在未完成进度并给出日志位置。
+
+根入口和 `start-forgemind.bat` 都默认启动前端、MySQL、Spring Boot、FastAPI AI 网关、ASR/TTS 语音服务和独立语音监听，保证注册、登录、远端存档、AI 助手和语音能力在进度条结束后即可使用；不会启动 Ollama 或本地大语言模型，AI 默认走 `rule`。只需要离线前端时直接运行 `npm run dev`，或直接调用不带服务开关的 `scripts/start-forgemind.ps1`；需要保留 AI/语音但跳过数据库时可传 `-SkipSpring`。
 
 ```powershell
 启动ForgeMind.cmd
 启动ForgeMind.cmd -NoBrowser
 启动ForgeMind.cmd -SkipSpring
 启动ForgeMind.cmd -SkipMySql
+启动ForgeMind.cmd -IncludeAI
+启动ForgeMind.cmd -IncludeSpring -IncludeAI -Port 5174
 stop-forgemind.bat
 ```
 
@@ -366,10 +370,12 @@ stop-forgemind.bat
 | 服务 | 地址 | 是否默认核心依赖 |
 | --- | --- | --- |
 | Vite | `127.0.0.1:5173` | 是 |
-| Spring Boot | `127.0.0.1:8080` | 否；保存、认证和云端能力需要 |
-| FastAPI | `127.0.0.1:8000` | 否；AI、语音和视觉辅助 |
-| BT TTS | `127.0.0.1:8001` | 否；有可选语音回退 |
+| Spring Boot | `127.0.0.1:8080` | 根入口默认启动；保存、认证和云端能力需要 |
+| FastAPI | `127.0.0.1:8000` | 根入口默认启动；规则助手、ASR/TTS 和视觉网关 |
+| BT TTS | `127.0.0.1:8001` | 根入口默认启动；语音 TTS 后端 |
 | Ollama | `127.0.0.1:11434` | 否；远程/本地模型可选 |
+
+`-IncludeAI` 和 `-IncludeVoiceChat` 可用于给直接调用 PowerShell 的轻量入口增加对应服务；两个一键入口已经自动传入这两个开关。`-IncludeAI` 默认仍使用 `rule`，不会自动拉起 Ollama；`-IncludeVoiceChat` 会等待 ASR/TTS 预热、BT TTS 端口和独立语音进程全部就绪后才完成启动。所有启动服务的标准输出和错误输出都在 `.forgemind/logs/` 中，不再打开多个服务终端。
 
 ### 方式三：手动启动后端
 
@@ -387,7 +393,7 @@ cd ..
 npm run dev
 ```
 
-首次启动后端会由 Flyway 自动执行数据库迁移。当前 ForgeCloud 数据库版本为 V25。若只需要浏览器本地编辑和仿真，可不启动后端。
+首次启动后端会由 Flyway 自动执行数据库迁移。当前数据库版本为 V30：ForgeCloud 平台事实推进至 V25，V26–V27 增加 AI 助手提醒策略持久化与跨会话主动提醒 claim 去重，V28 增加用户批准的助手长期偏好记忆，V29 增加主动事件来源集合、累计次数和首次观察时间持久化，V30 增加助手质量指标日聚合。若只需要浏览器本地编辑和仿真，可不启动后端。
 
 ### ForgeMove 微信小程序
 
@@ -439,6 +445,13 @@ flowchart LR
 | --- | --- | --- |
 | `POST` | `/api/auth/register` | 注册并返回 Bearer 会话 |
 | `POST` | `/api/auth/login` | 登录并返回 Bearer 会话 |
+| `POST` | `/api/auth/email/send-code` | 发送邮箱验证码并按邮箱/IP 限流 |
+| `POST` | `/api/auth/email/login` | 邮箱验证码登录/首次创建账户 |
+| `GET` | `/api/auth/github/start` | 开始 GitHub OAuth 登录 |
+| `GET` | `/api/auth/github/callback` | GitHub OAuth 回调 |
+| `POST` | `/api/auth/github/exchange` | 消费一次性 OAuth 兑换码 |
+| `POST` | `/api/auth/phone/send-code` | 发送手机号登录验证码（腾讯云短信） |
+| `POST` | `/api/auth/phone/login` | 手机号验证码登录/首次创建账户 |
 | `GET` | `/api/auth/me` | 查询当前用户 |
 | `POST` | `/api/auth/logout` | 注销当前会话 |
 | `GET / PUT` | `/api/factory` | 读取/保存当前用户工厂结构 |
@@ -525,7 +538,7 @@ git diff --check
 
 - ForgeMind Web 工作台、三维建造、生产资料、仓储、物流、确定性仿真和多楼层。
 - AGV、无人机、真实库存、端口拓扑、背压、诊断、自动巡检和生成式工厂 Worker 化执行。
-- ForgePass 统一身份、ForgeLab 社区、ForgeCloud V13–V25 结构化云能力和 ForgeMove 原生小程序。
+- ForgePass 统一身份、ForgeLab 社区、ForgeCloud V13–V25 结构化云能力、助手提醒/记忆/质量指标 V26–V30 和 ForgeMove 原生小程序。
 - 用户私有 JSON/GLB 资源导入、模型预览、ForgeCore 36 个默认物品和严格模型验证链。
 - 可选视觉检测、ASR/TTS、规则助手和人工审批/应用/回滚链路。
 

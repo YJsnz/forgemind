@@ -5,7 +5,7 @@ const AI_SERVICE_ENABLED = import.meta.env.VITE_AI_ENABLED === 'true'
 
 export interface FactorySpecReply {
   spec: Partial<GenerationSpec>
-  source: 'deepseek' | 'rule' | 'fallback'
+  source: 'deepseek' | 'ollama' | 'rule' | 'fallback'
   note: string | null
 }
 

@@ -1,4 +1,5 @@
 import { BACKEND_BASE } from './backendBase'
+import { AI_BASE } from '../game/api'
 
 export type ForgeCloudWorkspace = {
   id: string
@@ -99,6 +100,27 @@ export type ForgeCloudDataPoint = { id: string; pointKey: string; label: string;
 export type ForgeCloudDataEvent = { id: number; deviceId?: string; device?: string; twinId?: string; twin?: string; pointId?: string; pointKey?: string; type: string; quality: string; value: unknown; occurredAt: string; receivedAt: string }
 export type ForgeCloudAiModel = { id: string; workspaceId?: string; name: string; provider: string; modelKey: string; type: string; status: string; config?: unknown; createdAt: string; updatedAt: string }
 export type ForgeCloudAiTask = { id: string; projectId?: string; project?: string; modelId?: string; model?: string; provider?: string; type: string; status: string; input: unknown; output?: unknown; error?: string; createdAt: string; startedAt?: string; completedAt?: string; updatedAt: string }
+export type ForgeCloudAiControlPlane = {
+  service: string
+  protocolVersion: string
+  provider: string
+  model: string
+  modelStatus: 'ready' | 'unavailable'
+  toolCount: number
+  voice: { enabled: boolean; ready: boolean; ttsBackend: string }
+  rag: {
+    enabled: boolean
+    method: string
+    vectorDimension: number
+    documentBodiesExposed: boolean
+    dynamicFactsPolicy: string
+    groups: Array<{ id: string; label: string; mode: string; documents: string[]; chunkCount: number | null }>
+  }
+  safety: { deterministicFacts: boolean; toolValidation: boolean; patchApprovalRequired: boolean; dynamicFactsPolicy: string }
+}
+export type ForgeCloudAiMetrics = { persisted: boolean; metrics: Array<{ day: string; provider: string; sampleCount: number; firstTokenMs: number; completeMs: number; toolCalls: number; toolSuccesses: number; fallbacks: number; updatedAt: string }> }
+export type ForgeCloudKnowledgeDocument = { id: string; workspaceId?: string; title: string; category: string; source?: string; content: string; status?: string; creator?: string; createdBy?: string; createdAt?: string; updatedAt?: string; readOnly?: boolean; charCount?: number }
+export type ForgeCloudAiKnowledgeSource = Omit<ForgeCloudKnowledgeDocument, 'content'> & { readOnly: true; charCount: number }
 export type ForgeCloudArchiveOutput = { itemId: string; name: string; quantity: number; recipeCount: number }
 export type ForgeCloudArchive = {
   projectId: string
@@ -193,6 +215,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers: { ...headers(typeof init.body === 'string'), ...(init.headers ?? {}) },
   })
   if (!response.ok) throw new Error(await readError(response))
+  if (response.status === 204) return undefined as T
   return await response.json() as T
 }
 
@@ -465,6 +488,44 @@ export function runForgeCloudAiTask(taskId: string) {
   return request<ForgeCloudAiTask>(`/api/v1/ai/tasks/${encodeURIComponent(taskId)}/run`, { method: 'POST' })
 }
 
+export function listForgeCloudKnowledge(workspaceId: string) {
+  return request<ForgeCloudKnowledgeDocument[]>(`/api/v1/ai/knowledge?workspace_id=${encodeURIComponent(workspaceId)}`)
+}
+
+export function createForgeCloudKnowledge(input: { workspaceId: string; title: string; category: string; source?: string; content: string }) {
+  return request<ForgeCloudKnowledgeDocument>(`/api/v1/ai/knowledge?workspace_id=${encodeURIComponent(input.workspaceId)}`, { method: 'POST', body: JSON.stringify({ title: input.title, category: input.category, source: input.source, content: input.content }) })
+}
+
+export function archiveForgeCloudKnowledge(workspaceId: string, documentId: string) {
+  return request<void>(`/api/v1/ai/knowledge/${encodeURIComponent(documentId)}?workspace_id=${encodeURIComponent(workspaceId)}`, { method: 'DELETE' })
+}
+
+export async function loadForgeCloudAiControlPlane(): Promise<ForgeCloudAiControlPlane> {
+  const response = await fetch(`${AI_BASE}/api/ai/control-plane`)
+  if (!response.ok) throw new Error(`AI 服务返回 ${response.status}`)
+  return await response.json() as ForgeCloudAiControlPlane
+}
+
+export async function loadForgeCloudAiKnowledgeIndex(): Promise<ForgeCloudAiKnowledgeSource[]> {
+  const response = await fetch(`${AI_BASE}/api/ai/knowledge`)
+  if (!response.ok) throw new Error(`AI 知识目录返回 ${response.status}`)
+  return await response.json() as ForgeCloudAiKnowledgeSource[]
+}
+
+export async function loadForgeCloudAiKnowledgeContent(source: string): Promise<ForgeCloudKnowledgeDocument> {
+  const response = await fetch(`${AI_BASE}/api/ai/knowledge/content?source=${encodeURIComponent(source)}`)
+  if (!response.ok) throw new Error(`AI 知识内容返回 ${response.status}`)
+  return await response.json() as ForgeCloudKnowledgeDocument
+}
+
+export async function loadForgeCloudAiMetrics(): Promise<ForgeCloudAiMetrics> {
+  const token = localStorage.getItem('forgemind.token')
+  if (!token) return { persisted: false, metrics: [] }
+  const response = await fetch(`${BACKEND_BASE}/api/assistant/metrics`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!response.ok) throw new Error(`AI 指标返回 ${response.status}`)
+  return await response.json() as ForgeCloudAiMetrics
+}
+
 export function listForgeCloudReleases(workspaceId: string) {
   return request<ForgeCloudRelease[]>(`/api/v1/releases?workspace_id=${encodeURIComponent(workspaceId)}`)
 }
@@ -505,7 +566,7 @@ export async function loadForgeCloudSnapshot(requestedWorkspaceId?: string) {
   const workspaces = await listForgeCloudWorkspaces()
   const workspace = workspaces.find((entry) => entry.id === requestedWorkspaceId) ?? workspaces[0]
   if (!workspace) throw new Error('当前账号没有可访问的工作空间')
-  const [overview, database, projects, assets, publications, audit, activity, notifications, members, releases, tasks, approvals, connectors, devices, twins, dataPoints, dataEvents, aiModels, aiTasks, mappings, assetTwins, runtimeEvents, telemetryWindows, workOrders, qualityResults, maintenanceRecords] = await Promise.all([
+  const [overview, database, projects, assets, publications, audit, activity, notifications, members, releases, tasks, approvals, connectors, devices, twins, dataPoints, dataEvents, aiModels, aiTasks, mappings, assetTwins, runtimeEvents, telemetryWindows, workOrders, qualityResults, maintenanceRecords, knowledge] = await Promise.all([
     loadForgeCloudOverview(workspace.id),
     loadForgeCloudDatabaseStatus(workspace.id),
     listForgeCloudProjects(workspace.id),
@@ -532,7 +593,8 @@ export async function loadForgeCloudSnapshot(requestedWorkspaceId?: string) {
     listForgeCloudWorkOrders(workspace.id),
     listForgeCloudQualityResults(workspace.id),
     listForgeCloudMaintenanceRecords(workspace.id),
+    listForgeCloudKnowledge(workspace.id),
   ])
   const syncRuns = (await Promise.all(connectors.map((connector) => listForgeCloudConnectorSyncRuns(workspace.id, connector.id)))).flat()
-  return { workspaces, workspace, overview, database, projects, assets, publications, audit, activity, notifications, members, releases, tasks, approvals, connectors, devices, twins, dataPoints, dataEvents, aiModels, aiTasks, mappings, assetTwins, syncRuns, runtimeEvents, telemetryWindows, workOrders, qualityResults, maintenanceRecords }
+  return { workspaces, workspace, overview, database, projects, assets, publications, audit, activity, notifications, members, releases, tasks, approvals, connectors, devices, twins, dataPoints, dataEvents, aiModels, aiTasks, mappings, assetTwins, syncRuns, runtimeEvents, telemetryWindows, workOrders, qualityResults, maintenanceRecords, knowledge }
 }

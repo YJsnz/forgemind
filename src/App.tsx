@@ -10,11 +10,17 @@ import { SimulationRunner } from './game/SimulationRunner'
 import type { SimulationSnapshot } from './game/simulation'
 import { useForgeMindStore } from './store/forgeMind'
 import { useAuthStore } from './store/auth'
-import { isMachineType, isTransportType, objectRole } from './game/types'
+import { getObjectDef, isMachineType, isTransportType, objectRole } from './game/types'
 import { diagnoseFactory } from './game/factoryDiagnostics'
 import { AssistantOrb } from './components/AssistantOrb'
 import { AssistantRuntime } from './components/AssistantRuntime'
 import { AssistantVoiceButton } from './components/AssistantVoiceButton'
+import { setAssistantUiContext } from './game/assistantRuntime'
+import { rememberAssistantProjectVersion } from './game/assistantProjectMemory'
+import type { AssistantPanelCommand } from './game/assistantPanels'
+import type { AssistantPanelId } from './game/assistantProtocol'
+import { AssistantPanelComparison } from './components/AssistantPanelComparison'
+import type { AssistantAgentTaskCommand } from './game/assistantTasks'
 import { FactoryCatalogWorkspace, type FactoryCatalogSection } from './components/FactoryCatalogWorkspace'
 const ProductionWorkspace = lazy(() => import('./components/ProductionWorkspace').then((m) => ({ default: m.ProductionWorkspace })))
 const ProductionRouteWorkspace = lazy(() => import('./components/ProductionRouteWorkspace').then((m) => ({ default: m.ProductionRouteWorkspace })))
@@ -82,9 +88,12 @@ type LiveKpiData = {
 function App() {
   const [portalOpen, setPortalOpen] = useState(() => window.location.pathname !== '/forgecloud')
   const [cloudOpen, setCloudOpen] = useState(() => window.location.pathname === '/forgecloud')
+  const [cloudInitialSection, setCloudInitialSection] = useState<'overview' | 'audit'>('overview')
   const [view, setView] = useState<FactoryView>('overview')
   const [diagnosticsSurface, setDiagnosticsSurface] = useState<DiagnosticsSurface>('diagnose')
   const [auxPanel, setAuxPanel] = useState<'catalog' | 'productionRoute' | null>(null)
+  const [panelCompare, setPanelCompare] = useState<{ leftPanelId: AssistantPanelId; rightPanelId: AssistantPanelId } | null>(null)
+  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null)
   const [catalogSection, setCatalogSection] = useState<FactoryCatalogSection>('manufacturing')
   const [topMenu, setTopMenu] = useState<'help' | 'settings' | 'user' | null>(null)
   const [showViewportTools, setShowViewportTools] = useState(true)
@@ -108,6 +117,7 @@ function App() {
   const selectedId = useForgeMindStore((s) => s.selectedId)
   const selectedIds = useForgeMindStore((s) => s.selectedIds)
   const selectedObject = objects.find((object) => object.id === selectedId)
+  const selectedObjectLabel = selectedObject ? getObjectDef(selectedObject.type, selectedObject.resourceId).label : null
   const selectedIsVehicle = selectedObject?.type === 'agv' || selectedObject?.type === 'drone'
   const select = useForgeMindStore((s) => s.select)
   const setBuildType = useForgeMindStore((s) => s.setBuildType)
@@ -182,6 +192,7 @@ function App() {
 
   const enterForgeCloud = () => {
     window.history.pushState({}, '', '/forgecloud')
+    setCloudInitialSection('overview')
     setCloudOpen(true)
     setPortalOpen(false)
   }
@@ -212,6 +223,7 @@ function App() {
   useEffect(() => {
     const onPopState = () => {
       if (window.location.pathname === '/forgecloud') {
+        setCloudInitialSection(new URLSearchParams(window.location.search).get('section') === 'audit' ? 'audit' : 'overview')
         setCloudOpen(true)
         setPortalOpen(false)
       } else if (window.location.pathname === '/') {
@@ -222,6 +234,156 @@ function App() {
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
+
+  useEffect(() => {
+    if (currentProject?.id && typeof currentProject.version === 'number') {
+      rememberAssistantProjectVersion({ projectId: currentProject.id, projectName: currentProject.name, version: currentProject.version })
+    }
+    setAssistantUiContext({
+      route: window.location.pathname,
+      view,
+      panel: auxPanel ?? (view === 'diagnostics' ? diagnosticsSurface : null),
+      floorId: activeFloor,
+      selectedObjectId: selectedId,
+      selectedObjectLabel,
+      projectId: currentProject?.id ?? null,
+      projectName: currentProject?.name ?? null,
+      projectVersion: currentProject?.version ?? null,
+    })
+  }, [activeFloor, auxPanel, currentProject?.id, currentProject?.name, currentProject?.version, diagnosticsSurface, selectedId, selectedObjectLabel, view])
+
+  // BT assistant navigation bridge: the assistant may control the visible
+  // workspace, but React remains the single owner of route and panel state.
+  useEffect(() => {
+    const showPanel = (panelId: AssistantPanelId) => {
+      setTopMenu(null)
+      switch (panelId) {
+        case 'factory-overview':
+        case 'simulation':
+        case 'object-detail':
+          setView('overview')
+          setAuxPanel(null)
+          setBuildType(null)
+          return
+        case 'production':
+        case 'logistics':
+          setView('flow')
+          setAuxPanel(null)
+          setBuildType(null)
+          return
+        case 'warehouse':
+          setView('overview')
+          setBuildType(null)
+          setAuxPanel('catalog')
+          setCatalogSection('warehouse')
+          return
+        case 'agent-diagnosis':
+          setView('diagnostics')
+          setDiagnosticsSurface('diagnose')
+          setAuxPanel(null)
+          setBuildType(null)
+          return
+        case 'generative-planner':
+          setView('diagnostics')
+          setDiagnosticsSurface('generate')
+          setAuxPanel(null)
+          setBuildType(null)
+          return
+        case 'inspection':
+          window.open('/inspection.html', '_blank', 'noopener,noreferrer')
+          return
+        case 'cloud-runtime':
+          window.history.pushState({}, '', '/forgecloud')
+          setCloudInitialSection('overview')
+          setCloudOpen(true)
+          setPortalOpen(false)
+          return
+        case 'activity-history':
+          window.history.pushState({}, '', '/forgecloud?section=audit')
+          setCloudInitialSection('audit')
+          setCloudOpen(true)
+          setPortalOpen(false)
+          return
+      }
+    }
+
+    const onAssistantPanel = (event: Event) => {
+      const command = (event as CustomEvent<AssistantPanelCommand>).detail
+      if (!command) return
+      if (command.action === 'select_floor') {
+        if (command.floorId < 1 || command.floorId > floorCount) return
+        setBuildType(null)
+        select(null)
+        setActiveFloor(command.floorId as FactoryFloorId)
+        return
+      }
+      if (command.action === 'locate_object') {
+        select(command.objectId)
+        setView('overview')
+        setAuxPanel(null)
+        setBuildType(null)
+        return
+      }
+      if (command.action === 'compare_panels') {
+        setPanelCompare({ leftPanelId: command.leftPanelId, rightPanelId: command.rightPanelId })
+        return
+      }
+      if (command.action === 'show_task') {
+        setFocusedTaskId(command.taskId)
+        setView('diagnostics')
+        setDiagnosticsSurface('diagnose')
+        setAuxPanel(null)
+        setBuildType(null)
+        return
+      }
+      if (command.action === 'open_product') {
+        setPanelCompare(null)
+        if (command.productId === 'forgecloud') {
+          window.history.pushState({}, '', '/forgecloud')
+          setCloudInitialSection('overview')
+          setCloudOpen(true)
+          setPortalOpen(false)
+        } else {
+          const path = command.productId === 'forgemind' ? '/' : `/${command.productId}`
+          window.history.pushState({}, '', path)
+          setCloudOpen(false)
+          setPortalOpen(true)
+        }
+        return
+      }
+      if (command.action === 'close_panel') {
+        setPanelCompare(null)
+        if (command.panelId === 'cloud-runtime' || command.panelId === 'activity-history') {
+          window.history.pushState({}, '', '/')
+          setCloudOpen(false)
+          setPortalOpen(false)
+        } else {
+          setView('overview')
+          setAuxPanel(null)
+          setDiagnosticsSurface('diagnose')
+          setBuildType(null)
+        }
+        return
+      }
+      showPanel(command.panelId)
+    }
+    window.addEventListener('forgemind:assistant-panel', onAssistantPanel)
+    return () => window.removeEventListener('forgemind:assistant-panel', onAssistantPanel)
+  }, [floorCount, select, setBuildType])
+
+  useEffect(() => {
+    const onAssistantAgentTask = (event: Event) => {
+      const command = (event as CustomEvent<AssistantAgentTaskCommand>).detail
+      if (!command) return
+      setTopMenu(null)
+      setView('diagnostics')
+      setDiagnosticsSurface('diagnose')
+      setAuxPanel(null)
+      setBuildType(null)
+    }
+    window.addEventListener('forgemind:assistant-agent-task', onAssistantAgentTask)
+    return () => window.removeEventListener('forgemind:assistant-agent-task', onAssistantAgentTask)
+  }, [setBuildType])
 
   // 挂载时用本地 token 续登（无 token 则停留在电梯舱）
   useEffect(() => {
@@ -432,7 +594,7 @@ function App() {
 
   if (cloudOpen) {
     return token
-      ? <ForgeCloudConsole onExit={exitForgeCloud} onLogout={handleLogout} onEnterWorkspace={enterWorkspaceFromCloud} onNavigatePortal={navigatePortal} />
+      ? <ForgeCloudConsole initialSection={cloudInitialSection} onExit={exitForgeCloud} onLogout={handleLogout} onEnterWorkspace={enterWorkspaceFromCloud} onNavigatePortal={navigatePortal} />
       : <ForgePassPage onBack={exitForgeCloud} onSuccess={() => undefined} onEnterWorkspace={() => { exitForgeCloud(); window.setTimeout(() => setPortalOpen(false), 0) }} />
   }
 
@@ -628,7 +790,7 @@ function App() {
             </div>}
 
             <Suspense fallback={null}>
-              {view === 'flow' ? <ProductionWorkspace /> : view === 'diagnostics' ? diagnosticsSurface === 'generate' ? <GenerativeFactoryWorkspace onSurfaceChange={setDiagnosticsSurface} /> : <FactoryAgentWorkspace currentProject={currentProject} onLocate={() => setView('overview')} onEnterGenerative={() => setDiagnosticsSurface('generate')} /> : view !== 'overview' && (
+              {view === 'flow' ? <ProductionWorkspace /> : view === 'diagnostics' ? diagnosticsSurface === 'generate' ? <GenerativeFactoryWorkspace onSurfaceChange={setDiagnosticsSurface} /> : <FactoryAgentWorkspace currentProject={currentProject} focusedTaskId={focusedTaskId} onLocate={() => setView('overview')} onEnterGenerative={() => setDiagnosticsSurface('generate')} /> : view !== 'overview' && (
                 <div className={`fm-mode-panel fm-mode-panel-${view} is-open`}>
                   {view === 'build' ? <BuildMenu compact /> : <ViewSummary view={view} counts={counts} />}
                   <div className="fm-mode-shortcuts" aria-label="快捷键">
@@ -644,6 +806,7 @@ function App() {
               {auxPanel === 'productionRoute' && <ProductionRouteWorkspace onClose={() => setAuxPanel(null)} />}
               {auxPanel === 'catalog' && <FactoryCatalogWorkspace activeSection={catalogSection} onSectionChange={setCatalogSection} onClose={() => setAuxPanel(null)} />}
             </Suspense>
+            {panelCompare && <AssistantPanelComparison leftPanelId={panelCompare.leftPanelId} rightPanelId={panelCompare.rightPanelId} onClose={() => setPanelCompare(null)} onOpen={(panelId) => { setPanelCompare(null); window.dispatchEvent(new CustomEvent('forgemind:assistant-panel', { detail: { action: 'open_panel', panelId } })) }} />}
 
           </section>
 

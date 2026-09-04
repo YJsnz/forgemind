@@ -33,8 +33,10 @@
 | 文档 | 定位 | 维护状态 |
 | --- | --- | --- |
 | `ForgeMind-后端数据库设计.md` | Spring Boot/MySQL 数据边界和迁移 | 当前专题 |
+| `ForgeMind-旧版PPT与当前实现差异审计.docx` | 对比 2026-08-22 旧版答辩 PPT 与 2026-09-03 当前实现，提供差异矩阵和可直接粘贴的 PPT 文案 | 当前交付文档 |
 | `ForgeCloud-统一云平台实施文档.md` | ForgeMind、ForgeHub3D、ForgeLab、ForgeMove 共享云底座的职责、架构、数据模型、权限、API、迁移、分期实施与验收 | 实施基线；V13/V14 已落地，后续对象存储、生产连接器与商业治理仍在实施 |
 | `ForgeMind-智能管家工具协议.md` | 助手动作契约与确认门控 | 当前专题 |
+| `ForgeMind-智能助手2.0优化方案.md` | 面板调度、多轮任务、主动巡检、记忆和智能助手演进 | 产品与技术规划，尚未代表全部实现 |
 | `ForgeMind-视觉检测工作台-设计文档.md` | 独立检测页、状态机和接口 | 当前专题，AI/语音部署以权威方案为准 |
 | `ForgeMind-A02与Generative-Factory设计文档.md` | A-02、诊断和候选生成 | 当前专题；候选搜索、副本仿真和 What-if 通过 Web Worker 执行，模型策略以权威方案为准 |
 | `daiyu-render-engine.md` | 宝钗渲染层 | 当前专题 |

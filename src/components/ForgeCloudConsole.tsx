@@ -31,7 +31,9 @@ import {
 } from 'lucide'
 import { MorphingIcon } from './MorphingIcon'
 import { fetchFactoryProject } from '../api/factoryProjects'
- import { addForgeCloudMember, addForgeCloudProjectMember, aggregateForgeCloudTelemetryWindow, createForgeCloudApproval, createForgeCloudAsset, createForgeCloudAssetTwin, createForgeCloudAssetVersion, createForgeCloudComment, createForgeCloudConnector, createForgeCloudDataPoint, createForgeCloudProject, createForgeCloudProjectVersion, createForgeCloudPublication, createForgeCloudRelease, createForgeCloudTagMapping, createForgeCloudTask, createForgeCloudTwin, createForgeCloudWorkspace, createForgeCloudMaintenanceRecord, createForgeCloudQualityResult, createForgeCloudWorkOrder, decideForgeCloudApproval, heartbeatForgeCloudDevice, ingestForgeCloudDataEvent, listForgeCloudAssetVersions, listForgeCloudComments, listForgeCloudProjectMembers, loadForgeCloudSnapshot, markForgeCloudNotificationsRead, queueForgeCloudAiTask, registerForgeCloudDevice, runForgeCloudAiTask, runForgeCloudConnectorSync, updateForgeCloudMemberRole, updateForgeCloudTaskStatus, updateForgeCloudWorkOrderStatus, uploadForgeCloudAssetBlob, type ForgeCloudApproval, type ForgeCloudArchive, type ForgeCloudAsset, type ForgeCloudAssetTwin, type ForgeCloudComment, type ForgeCloudConnector, type ForgeCloudConnectorSyncRun, type ForgeCloudDataPoint, type ForgeCloudDatabaseStatus, type ForgeCloudHealth, type ForgeCloudLayer, type ForgeCloudMaintenanceRecord, type ForgeCloudMember, type ForgeCloudProject, type ForgeCloudProjectMember, type ForgeCloudQualityResult, type ForgeCloudRelease, type ForgeCloudRuntimeEvent, type ForgeCloudTagMapping, type ForgeCloudTask, type ForgeCloudTelemetryWindow, type ForgeCloudTwin, type ForgeCloudWorkOrder } from '../api/forgeCloud'
+import { addForgeCloudMember, addForgeCloudProjectMember, aggregateForgeCloudTelemetryWindow, archiveForgeCloudKnowledge, createForgeCloudApproval, createForgeCloudAsset, createForgeCloudAssetTwin, createForgeCloudAssetVersion, createForgeCloudComment, createForgeCloudConnector, createForgeCloudDataPoint, createForgeCloudKnowledge, createForgeCloudProject, createForgeCloudProjectVersion, createForgeCloudPublication, createForgeCloudRelease, createForgeCloudTagMapping, createForgeCloudTask, createForgeCloudTwin, createForgeCloudWorkspace, createForgeCloudMaintenanceRecord, createForgeCloudQualityResult, createForgeCloudWorkOrder, decideForgeCloudApproval, heartbeatForgeCloudDevice, ingestForgeCloudDataEvent, listForgeCloudAssetVersions, listForgeCloudComments, listForgeCloudProjectMembers, loadForgeCloudAiControlPlane, loadForgeCloudAiKnowledgeContent, loadForgeCloudAiKnowledgeIndex, loadForgeCloudAiMetrics, loadForgeCloudSnapshot, markForgeCloudNotificationsRead, queueForgeCloudAiTask, registerForgeCloudDevice, runForgeCloudAiTask, runForgeCloudConnectorSync, updateForgeCloudMemberRole, updateForgeCloudTaskStatus, updateForgeCloudWorkOrderStatus, uploadForgeCloudAssetBlob, type ForgeCloudAiControlPlane, type ForgeCloudAiKnowledgeSource, type ForgeCloudAiMetrics, type ForgeCloudApproval, type ForgeCloudArchive, type ForgeCloudAsset, type ForgeCloudAssetTwin, type ForgeCloudComment, type ForgeCloudConnector, type ForgeCloudConnectorSyncRun, type ForgeCloudDataPoint, type ForgeCloudDatabaseStatus, type ForgeCloudHealth, type ForgeCloudKnowledgeDocument, type ForgeCloudLayer, type ForgeCloudMaintenanceRecord, type ForgeCloudMember, type ForgeCloudProject, type ForgeCloudProjectMember, type ForgeCloudQualityResult, type ForgeCloudRelease, type ForgeCloudRuntimeEvent, type ForgeCloudTagMapping, type ForgeCloudTask, type ForgeCloudTelemetryWindow, type ForgeCloudTwin, type ForgeCloudWorkOrder } from '../api/forgeCloud'
+import { readAssistantCloudSettings, writeAssistantCloudSettings, type AssistantCloudSettings } from '../game/assistantCloudSettings'
+import { cacheAssistantKnowledge } from '../game/assistantKnowledge'
 
 type CloudSection = 'overview' | 'projects' | 'assets' | 'releases' | 'connections' | 'operations' | 'tasks' | 'members' | 'audit' | 'devices' | 'twins' | 'data' | 'ai'
 
@@ -40,6 +42,7 @@ type ForgeCloudConsoleProps = {
   onLogout: () => void
   onEnterWorkspace: () => void
   onNavigatePortal: (path: string) => void
+  initialSection?: 'overview' | 'audit'
 }
 
 type CloudDialog =
@@ -163,8 +166,8 @@ function workspaceInitials(name?: string) {
   return value.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'FC'
 }
 
-export function ForgeCloudConsole({ onExit, onLogout, onEnterWorkspace, onNavigatePortal }: ForgeCloudConsoleProps) {
-  const [section, setSection] = useState<CloudSection>('overview')
+export function ForgeCloudConsole({ onExit, onLogout, onEnterWorkspace, onNavigatePortal, initialSection = 'overview' }: ForgeCloudConsoleProps) {
+  const [section, setSection] = useState<CloudSection>(initialSection)
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -173,10 +176,17 @@ export function ForgeCloudConsole({ onExit, onLogout, onEnterWorkspace, onNaviga
   const [notice, setNotice] = useState('')
   const [remoteSnapshot, setRemoteSnapshot] = useState<Awaited<ReturnType<typeof loadForgeCloudSnapshot>> | null>(null)
   const [remoteState, setRemoteState] = useState<'loading' | 'online' | 'offline'>('loading')
+  const [aiControlPlane, setAiControlPlane] = useState<ForgeCloudAiControlPlane | null>(null)
+  const [aiMetrics, setAiMetrics] = useState<ForgeCloudAiMetrics | null>(null)
+  const [aiKnowledgeIndex, setAiKnowledgeIndex] = useState<ForgeCloudAiKnowledgeSource[]>([])
   const [dialog, setDialog] = useState<CloudDialog | null>(null)
   const [dialogBusy, setDialogBusy] = useState(false)
   const [dialogError, setDialogError] = useState('')
   const meta = sectionMeta[section]
+
+  useEffect(() => {
+    setSection(initialSection)
+  }, [initialSection])
 
   useEffect(() => {
     let cancelled = false
@@ -189,6 +199,29 @@ export function ForgeCloudConsole({ onExit, onLogout, onEnterWorkspace, onNaviga
       })
       .catch(() => {
         if (!cancelled) setRemoteState('offline')
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (remoteSnapshot) cacheAssistantKnowledge(remoteSnapshot.knowledge)
+  }, [remoteSnapshot])
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([loadForgeCloudAiControlPlane(), loadForgeCloudAiMetrics(), loadForgeCloudAiKnowledgeIndex()])
+      .then(([controlPlane, metrics, knowledgeIndex]) => {
+        if (cancelled) return
+        setAiControlPlane(controlPlane)
+        setAiMetrics(metrics)
+        setAiKnowledgeIndex(knowledgeIndex)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAiControlPlane(null)
+          setAiMetrics(null)
+          setAiKnowledgeIndex([])
+        }
       })
     return () => { cancelled = true }
   }, [])
@@ -533,7 +566,7 @@ export function ForgeCloudConsole({ onExit, onLogout, onEnterWorkspace, onNaviga
           {section === 'devices' && <IntelligencePanel kind="devices" rows={remoteSnapshot?.devices ?? []} onNotice={showNotice} onCreate={() => openDialog({ kind: 'device' })} onHeartbeat={(deviceId) => { void heartbeatForgeCloudDevice(deviceId).then(() => refreshWorkspace()).then(() => showNotice('设备心跳已写入')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : '设备心跳写入失败')) }} />}
           {section === 'twins' && <IntelligencePanel kind="twins" rows={remoteSnapshot?.twins ?? []} onNotice={showNotice} onCreate={() => openDialog({ kind: 'twin' })} />}
           {section === 'data' && <IntelligencePanel kind="data" rows={remoteSnapshot?.dataPoints ?? []} onNotice={showNotice} onCreate={() => openDialog({ kind: 'data-point' })} onDataEvent={(pointId, value) => { if (!remoteSnapshot) return; void ingestForgeCloudDataEvent({ workspaceId: remoteSnapshot.workspace.id, pointId, value }).then(() => refreshWorkspace()).then(() => showNotice('手动遥测事件已写入')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : '遥测事件写入失败')) }} />}
-          {section === 'ai' && <IntelligencePanel kind="ai" rows={remoteSnapshot?.aiTasks ?? []} onNotice={showNotice} onCreate={() => openDialog({ kind: 'ai-task' })} onAiRun={(taskId) => { void runForgeCloudAiTask(taskId).then(() => refreshWorkspace()).then(() => showNotice('规则 AI 任务已完成并写回结果')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : 'AI 任务执行失败')) }} />}
+          {section === 'ai' && <AiControlPanel controlPlane={aiControlPlane} metrics={aiMetrics} builtInKnowledge={aiKnowledgeIndex} workspaceKnowledge={remoteSnapshot?.knowledge ?? []} rows={remoteSnapshot?.aiTasks ?? []} onNotice={showNotice} onCreate={() => openDialog({ kind: 'ai-task' })} onAiRun={(taskId) => { void runForgeCloudAiTask(taskId).then(() => refreshWorkspace()).then(() => showNotice('规则 AI 任务已完成并写回结果')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : 'AI 任务执行失败')) }} onCreateKnowledge={async (input) => { if (!remoteSnapshot) throw new Error('请先连接 ForgeCloud'); await createForgeCloudKnowledge({ workspaceId: remoteSnapshot.workspace.id, ...input }); await refreshWorkspace(remoteSnapshot.workspace.id); showNotice('知识条目已加入当前工作空间') }} onArchiveKnowledge={async (id) => { if (!remoteSnapshot) throw new Error('请先连接 ForgeCloud'); await archiveForgeCloudKnowledge(remoteSnapshot.workspace.id, id); await refreshWorkspace(remoteSnapshot.workspace.id); showNotice('知识条目已归档') }} onLoadBuiltIn={loadForgeCloudAiKnowledgeContent} />}
         </main>
       </div>
 
@@ -878,6 +911,120 @@ function AuditPanel({ rows, onNotice }: { rows: import('../api/forgeCloud').Forg
 
 function ListToolbar({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action: string; onAction: () => void }) {
   return <div className="fc-list-toolbar"><div><span className="fc-eyebrow">{eyebrow}</span><h2>{title}</h2></div><button type="button" className="fc-primary-button" onClick={onAction}>＋ {action}</button></div>
+}
+
+function AiControlPanel({ controlPlane, metrics, builtInKnowledge, workspaceKnowledge, rows, onNotice, onCreate, onAiRun, onCreateKnowledge, onArchiveKnowledge, onLoadBuiltIn }: { controlPlane: ForgeCloudAiControlPlane | null; metrics: ForgeCloudAiMetrics | null; builtInKnowledge: ForgeCloudAiKnowledgeSource[]; workspaceKnowledge: ForgeCloudKnowledgeDocument[]; rows: unknown[]; onNotice: (message: string) => void; onCreate: () => void; onAiRun: (taskId: string) => void; onCreateKnowledge: (input: { title: string; category: string; source?: string; content: string }) => Promise<void>; onArchiveKnowledge: (id: string) => Promise<void>; onLoadBuiltIn: (source: string) => Promise<ForgeCloudKnowledgeDocument> }) {
+  const [settings, setSettings] = useState<AssistantCloudSettings>(() => readAssistantCloudSettings())
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent<AssistantCloudSettings>).detail
+      setSettings(detail ?? readAssistantCloudSettings())
+    }
+    window.addEventListener('forgemind:assistant-cloud-settings', refresh)
+    window.addEventListener('storage', refresh)
+    return () => {
+      window.removeEventListener('forgemind:assistant-cloud-settings', refresh)
+      window.removeEventListener('storage', refresh)
+    }
+  }, [])
+
+  const toggle = (key: keyof AssistantCloudSettings) => {
+    setSettings(writeAssistantCloudSettings({ [key]: !settings[key] }))
+  }
+  const latest = metrics?.metrics[0]
+  const groups = controlPlane?.rag.groups ?? []
+  const statusLabel = controlPlane?.modelStatus === 'ready' ? 'READY' : controlPlane ? 'UNAVAILABLE' : 'CONNECTING'
+  const contextRows: Array<{ key: keyof AssistantCloudSettings; label: string; detail: string; primary?: boolean }> = [
+    { key: 'contextEnabled', label: '对话上下文', detail: '保留多轮对话、摘要、任务状态', primary: true },
+    { key: 'projectMemoryEnabled', label: '项目记忆', detail: '注入当前项目版本、Finding 和方案摘要' },
+    { key: 'userMemoryEnabled', label: '用户偏好', detail: '注入已确认的驾驶员偏好' },
+    { key: 'ragEnabled', label: 'RAG 知识检索', detail: '回答前检索产品文档与运行记忆' },
+  ]
+
+  return <section className="fc-ai-console">
+    <div className="fc-ai-console-head"><div><span className="fc-panel-kicker">AI CONTROL / LOCAL QWEN</span><h2>智能中枢控制面</h2><p>查看模型、上下文、RAG 和质量信号；开关只改变助手编排层，不改变工厂事实。</p></div><span className={`fc-ai-runtime-state ${controlPlane?.modelStatus === 'ready' ? 'is-ready' : ''}`}><i /> {statusLabel}</span></div>
+    <div className="fc-ai-facts">
+      <div><span>PROVIDER</span><strong>{controlPlane?.provider ?? '—'}</strong><small>{controlPlane?.model ?? 'AI 服务未连接'}</small></div>
+      <div><span>TOOLS</span><strong>{controlPlane?.toolCount ?? '—'}</strong><small>版本 {controlPlane?.protocolVersion ?? '—'}</small></div>
+      <div><span>VOICE</span><strong>{controlPlane?.voice.ready ? 'READY' : controlPlane ? 'OFFLINE' : '—'}</strong><small>{controlPlane?.voice.ttsBackend ?? 'ASR / TTS'}</small></div>
+      <div><span>QUALITY / 30D</span><strong>{latest ? `${latest.sampleCount} samples` : '—'}</strong><small>{latest ? `首 token ${latest.firstTokenMs}ms · 降级 ${latest.fallbacks}` : '登录后记录元数据'}</small></div>
+    </div>
+    <div className="fc-ai-control-grid">
+      <section className="fc-subpanel fc-ai-settings"><div className="fc-card-head"><div><span className="fc-panel-kicker">CONTEXT POLICY</span><h2>上下文开关</h2></div><span className="fc-panel-meta">本机策略</span></div><div className="fc-ai-toggle-list">{contextRows.map((row) => <button type="button" key={row.key} className={`fc-ai-toggle ${settings[row.key] ? 'is-on' : ''} ${row.primary ? 'is-primary' : ''}`} onClick={() => toggle(row.key)} aria-pressed={settings[row.key]}><span className="fc-ai-toggle-led"><i /></span><span><strong>{row.label}</strong><small>{row.detail}</small></span><em>{settings[row.key] ? 'ON' : 'OFF'}</em></button>)}</div><p className="fc-ai-note">实时工厂状态、权限、碰撞、库存和仿真指标始终以确定性工具为准。</p></section>
+      <section className="fc-subpanel fc-ai-rag"><div className="fc-card-head"><div><span className="fc-panel-kicker">RAG / KNOWLEDGE BASE</span><h2>RAG 知识库</h2></div><span className={`fc-state-pill ${controlPlane?.rag.enabled ? 'green' : 'muted'}`}>{controlPlane?.rag.enabled ? 'READY' : '未连接'}</span></div><div className="fc-rag-summary"><strong>{controlPlane?.rag.method ?? '—'}</strong><span>{controlPlane ? `${controlPlane.rag.vectorDimension} 维哈希向量` : '等待 AI 服务'}</span><span>{controlPlane?.rag.documentBodiesExposed ? '正文可见' : '只回传来源片段'}</span></div><div className="fc-rag-groups">{groups.length ? groups.map((group) => <div className="fc-rag-group" key={group.id}><span className="fc-rag-icon"><CloudIcon icon={group.mode === 'indexed' ? BookOpenData : CloudCogData} size={15} /></span><span><strong>{group.label}</strong><small>{group.mode === 'indexed' ? `${group.documents.length} 份文档 · ${group.chunkCount ?? 0} 个片段` : '按请求注入，不建立静态副本'}</small></span><em>{group.id}</em></div>) : <div className="fc-ai-empty">AI 服务未返回知识库元数据</div>}</div><p className="fc-ai-note">动态工厂数字不进入 RAG，检索只提供可追溯依据。</p></section>
+    </div>
+    <KnowledgeBasePanel builtInKnowledge={builtInKnowledge} workspaceKnowledge={workspaceKnowledge} onNotice={onNotice} onCreate={onCreateKnowledge} onArchive={onArchiveKnowledge} onLoadBuiltIn={onLoadBuiltIn} />
+    <section className="fc-ai-safety"><div><span className="fc-panel-kicker">GUARDRAILS / FACT BOUNDARY</span><h2>事实与安全边界</h2></div><div className="fc-ai-safety-items"><span><i className={controlPlane?.safety.deterministicFacts ? 'is-good' : ''} />确定性事实优先</span><span><i className={controlPlane?.safety.toolValidation ? 'is-good' : ''} />工具调用二次校验</span><span><i className={controlPlane?.safety.patchApprovalRequired ? 'is-good' : ''} />Patch 人工审批</span><button type="button" onClick={() => onNotice('AI 只负责理解、检索、编排和表达；不会直接改写坐标、库存或仿真指标')}>查看说明 <CloudIcon icon={ArrowRightData} size={14} /></button></div></section>
+    <IntelligencePanel kind="ai" rows={rows} onNotice={onNotice} onCreate={onCreate} onAiRun={onAiRun} />
+  </section>
+}
+
+type KnowledgeRecord = Omit<ForgeCloudKnowledgeDocument, 'content'> & { content?: string; readOnly: boolean }
+
+function KnowledgeBasePanel({ builtInKnowledge, workspaceKnowledge, onNotice, onCreate, onArchive, onLoadBuiltIn }: { builtInKnowledge: ForgeCloudAiKnowledgeSource[]; workspaceKnowledge: ForgeCloudKnowledgeDocument[]; onNotice: (message: string) => void; onCreate: (input: { title: string; category: string; source?: string; content: string }) => Promise<void>; onArchive: (id: string) => Promise<void>; onLoadBuiltIn: (source: string) => Promise<ForgeCloudKnowledgeDocument> }) {
+  const documents = useMemo<KnowledgeRecord[]>(() => [
+    ...workspaceKnowledge.map((document) => ({ ...document, readOnly: false })),
+    ...builtInKnowledge.map((document) => ({ ...document, readOnly: true })),
+  ], [builtInKnowledge, workspaceKnowledge])
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('all')
+  const [selectedId, setSelectedId] = useState<string | null>(documents[0]?.id ?? null)
+  const [loaded, setLoaded] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(false)
+  const [form, setForm] = useState({ title: '', category: 'custom', source: '', content: '' })
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!selectedId || !documents.some((document) => document.id === selectedId)) setSelectedId(documents[0]?.id ?? null)
+  }, [documents, selectedId])
+
+  const categories = useMemo(() => Array.from(new Set(documents.map((document) => document.category))), [documents])
+  const filtered = useMemo(() => {
+    const value = query.trim().toLowerCase()
+    return documents.filter((document) => {
+      if (category !== 'all' && document.category !== category) return false
+      return !value || `${document.title} ${document.category} ${document.source ?? ''} ${document.content ?? ''}`.toLowerCase().includes(value)
+    })
+  }, [category, documents, query])
+  const selected = documents.find((document) => document.id === selectedId)
+  const selectedContent = selected ? (selected.content ?? loaded[selected.id] ?? '') : ''
+
+  useEffect(() => {
+    if (!selected?.readOnly || selected.content || loaded[selected.id]) return
+    const source = selected.source ?? selected.id
+    let cancelled = false
+    setLoading(true)
+    void onLoadBuiltIn(source)
+      .then((document) => { if (!cancelled) setLoaded((current) => ({ ...current, [selected.id]: document.content })) })
+      .catch((error: unknown) => { if (!cancelled) onNotice(error instanceof Error ? error.message : '内置文档读取失败') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [loaded, onLoadBuiltIn, onNotice, selected])
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!form.title.trim() || !form.content.trim()) { onNotice('请填写知识标题和正文'); return }
+    setSaving(true)
+    try {
+      await onCreate({ title: form.title.trim(), category: form.category, source: form.source.trim() || undefined, content: form.content.trim() })
+      setForm({ title: '', category: 'custom', source: '', content: '' })
+    } catch (error: unknown) {
+      onNotice(error instanceof Error ? error.message : '知识条目保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <section className="fc-subpanel fc-knowledge-base">
+    <div className="fc-card-head fc-knowledge-head"><div><span className="fc-panel-kicker">READ / WRITE KNOWLEDGE</span><h2>可读知识库</h2><p>内置文档只读；新增条目归属于当前工作空间，并会参与 BT 的 RAG 检索。</p></div><span className="fc-panel-meta">{documents.length} 条 · {workspaceKnowledge.length} 条自定义</span></div>
+    <div className="fc-knowledge-toolbar"><label><CloudIcon icon={SearchData} size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题、来源或正文" aria-label="搜索知识库" /></label><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="筛选知识分类"><option value="all">全部分类</option>{categories.map((value) => <option key={value} value={value}>{knowledgeCategoryLabel(value)}</option>)}</select></div>
+    <div className="fc-knowledge-layout"><div className="fc-knowledge-list">{filtered.length ? filtered.map((document) => <button type="button" key={document.id} className={`fc-knowledge-item ${document.id === selectedId ? 'is-active' : ''}`} onClick={() => setSelectedId(document.id)}><span className="fc-knowledge-item-icon"><CloudIcon icon={document.readOnly ? BookOpenData : CloudCogData} size={15} /></span><span><strong>{document.title}</strong><small>{knowledgeCategoryLabel(document.category)} · {document.readOnly ? '系统内置' : '工作空间'}</small></span><em>{document.readOnly ? 'READ' : 'EDIT'}</em></button>) : <div className="fc-ai-empty">没有匹配的知识条目</div>}</div><article className="fc-knowledge-reader">{selected ? <><header><div><span className="fc-state-pill muted">{knowledgeCategoryLabel(selected.category)}</span><h3>{selected.title}</h3><small>{selected.source ?? 'ForgeCloud 工作空间知识'} · {selected.readOnly ? '内置文档' : `由 ${selected.creator ?? '当前成员'} 添加`}</small></div>{!selected.readOnly && <button type="button" className="fc-knowledge-archive" onClick={() => { void onArchive(selected.id).catch((error: unknown) => onNotice(error instanceof Error ? error.message : '知识条目归档失败')) }}>归档</button>}</header><div className="fc-knowledge-content">{loading ? '正在读取正文…' : selectedContent || '该文档暂时没有可显示正文。'}</div></> : <div className="fc-ai-empty">从左侧选择一条知识开始阅读</div>}</article></div>
+    <form className="fc-knowledge-compose" onSubmit={submit}><div className="fc-knowledge-compose-head"><div><span className="fc-panel-kicker">ADD ENTRY</span><h3>新增工作空间知识</h3></div><small>支持流程、设备说明、安全规范和经验记录；动态库存/坐标/产量必须走实时工具。</small></div><div className="fc-knowledge-form-grid"><label>标题<input value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} maxLength={180} placeholder="例如：CNC 换型操作规范" /></label><label>分类<select value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}><option value="custom">自定义</option><option value="product">产品说明</option><option value="process">工艺流程</option><option value="operations">运行经验</option><option value="safety">安全规范</option></select></label><label>来源（可选）<input value={form.source} onChange={(event) => setForm((current) => ({ ...current, source: event.target.value }))} maxLength={180} placeholder="例如：现场 SOP / 2026-09" /></label></div><label className="fc-knowledge-content-field">正文<textarea value={form.content} onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))} maxLength={16000} rows={6} placeholder="写入可长期复用的规则、流程或经验……" /></label><div className="fc-knowledge-compose-foot"><span>最多 16,000 字符 · 保存后立即可被 RAG 检索</span><button type="submit" className="fc-primary-button" disabled={saving}>{saving ? '保存中…' : '加入知识库'}</button></div></form>
+  </section>
+}
+
+function knowledgeCategoryLabel(category: string) {
+  return ({ product: '产品说明', process: '工艺流程', operations: '运行经验', safety: '安全规范', custom: '自定义', workspace_knowledge: '工作空间' } as Record<string, string>)[category] ?? category
 }
 
 function IntelligencePanel({ kind, rows, onNotice, onCreate, onHeartbeat, onDataEvent, onAiRun }: { kind: 'devices' | 'twins' | 'data' | 'ai'; rows: unknown[]; onNotice: (message: string) => void; onCreate: () => void; onHeartbeat?: (deviceId: string) => void; onDataEvent?: (pointId: string, value: unknown) => void; onAiRun?: (taskId: string) => void }) {

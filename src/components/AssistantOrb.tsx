@@ -12,6 +12,10 @@ interface AssistantAudioLevelDetail {
   level?: number
 }
 
+interface AssistantEvidenceDetail {
+  evidence?: Array<{ source?: string; heading?: string }>
+}
+
 const PHASE_COPY: Record<AssistantPresencePhase, { label: string; detail: string }> = {
   idle: { label: '待命', detail: '等待驾驶员指令' },
   listening: { label: '聆听中', detail: '正在接收语音输入' },
@@ -43,6 +47,7 @@ export function AssistantOrb({ compact = false }: { compact?: boolean }) {
   const emotionEngineRef = useRef<EmotionBallEngine | null>(null)
   const [phase, setPhase] = useState<AssistantPresencePhase>('idle')
   const [message, setMessage] = useState('等待驾驶员指令')
+  const [evidenceLabel, setEvidenceLabel] = useState('')
   const [targetLevel, setTargetLevel] = useState(0.16)
   const [level, setLevel] = useState(0.16)
   const targetRef = useRef(0.16)
@@ -128,9 +133,21 @@ export function AssistantOrb({ compact = false }: { compact?: boolean }) {
 
     window.addEventListener('forgemind:assistant-state', onState)
     window.addEventListener('forgemind:assistant-audio-level', onLevel)
+    const onEvidence = (event: Event) => {
+      const evidence = (event as CustomEvent<AssistantEvidenceDetail>).detail?.evidence ?? []
+      if (!evidence.length) {
+        setEvidenceLabel('')
+        return
+      }
+      const first = evidence[0]
+      const source = first?.source?.split('/').pop() || '项目文档'
+      setEvidenceLabel(`依据 ${evidence.length} 条 · ${source}`)
+    }
+    window.addEventListener('forgemind:assistant-evidence', onEvidence)
     return () => {
       window.removeEventListener('forgemind:assistant-state', onState)
       window.removeEventListener('forgemind:assistant-audio-level', onLevel)
+      window.removeEventListener('forgemind:assistant-evidence', onEvidence)
     }
   }, [])
 
@@ -174,6 +191,7 @@ export function AssistantOrb({ compact = false }: { compact?: boolean }) {
             </span>
           </div>
           <small>{displayMessage}</small>
+          {evidenceLabel && <em className="fm-assistant-evidence">{evidenceLabel}</em>}
         </div>
       ) : (
         <div className="fm-assistant-orb-head">
@@ -205,7 +223,7 @@ export function AssistantOrb({ compact = false }: { compact?: boolean }) {
         <span className="fm-assistant-orb-meter">{displayPercent.toString().padStart(2, '0')}%</span>
       ) : (
         <div className="fm-assistant-orb-foot">
-          <div><b>{copy.label}</b><span>{displayMessage}</span></div>
+          <div><b>{copy.label}</b><span>{displayMessage}</span>{evidenceLabel && <em className="fm-assistant-evidence">{evidenceLabel}</em>}</div>
           <span className="fm-assistant-orb-meter">{displayPercent.toString().padStart(2, '0')}%</span>
         </div>
       )}

@@ -9,6 +9,7 @@ import {
 } from '../scene/inspectionRegistry'
 import { PART_TYPES } from '../scene/inspectionPart'
 import { runInspection, type VisionResult } from '../scene/inspectionDetect'
+import { readAssistantVisionFrame, VISION_FRAME_KEY } from '../game/assistantVision'
 
 const DEFECT_LABEL: Record<string, string> = { scratch: '划痕', burr: '毛刺', dent: '凹痕' }
 const PHASE_LABEL: Record<string, string> = { idle: '待机', picking: '取件中', inspecting: '检测中', placing: '分拣中' }
@@ -29,6 +30,7 @@ export function InspectionPanel() {
   const [manualArm, setManualArm] = useState<ManualArm | null>(inspectionRegistry.manualArm)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [voiceState, setVoiceState] = useState<'idle' | 'speaking' | 'offline'>('idle')
+  const [assistantFrame, setAssistantFrame] = useState(() => readAssistantVisionFrame())
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -57,6 +59,17 @@ export function InspectionPanel() {
     }
     paint()
     return () => cancelAnimationFrame(raf)
+  }, [])
+
+  useEffect(() => {
+    const refresh = () => setAssistantFrame(readAssistantVisionFrame())
+    const onStorage = (event: StorageEvent) => { if (event.key === VISION_FRAME_KEY) refresh() }
+    window.addEventListener('storage', onStorage)
+    window.addEventListener('forgemind:assistant-vision', refresh)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('forgemind:assistant-vision', refresh)
+    }
   }, [])
 
   useEffect(() => {
@@ -213,6 +226,11 @@ export function InspectionPanel() {
           </>
         ) : <div className="fm-inspection-idle">货物进入视野后自动开始 360° 环绕检测 · 当前零件：{partLabel}</div>}
       </div>
+
+      {assistantFrame && <div className="fm-inspection-assistant-frame">
+        <div><span>BT MULTIMODAL CONTEXT</span><small>最近同步帧 · {new Date(assistantFrame.capturedAt).toLocaleTimeString('zh-CN', { hour12: false })}</small></div>
+        <img src={assistantFrame.dataUrl} alt="最近一次视觉检测帧" />
+      </div>}
 
       <div className="fm-inspection-route"><span>判定路由</span><strong className={result?.verdict === 'pass' ? 'is-pass' : result ? 'is-fail' : ''}>{route}</strong></div>
 

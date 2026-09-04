@@ -1,6 +1,6 @@
 # ForgeMind 当前实现总览
 
-> 更新时间：2026-09-02
+> 更新时间：2026-09-03
 > 本文是当前代码的事实索引。产品方案、演示脚本和研究性文档中的“目标架构”不应覆盖本文对已落地行为的描述。
 > 2026-09-02 审计修复：Agent 服务端已区分机器定义与用户导入资源的归属校验；项目存档 API 执行嵌套结构校验；机器开放输出端保持产物并形成背压；登出清除用户私有机器定义；矩形机器端口按占地深度迁移。
 
@@ -35,7 +35,7 @@ wzh 账号现有一份可直接加载的 `WZH 三层轻量完整产线` 正式�
 
 ### ForgeCloud 统一云平台控制台（2026-09-02）
 
-ForgePass 统一身份入口已接入 ForgeHub、ForgeCloud 和 ForgeLab：三个产品共用 `src/components/ui/auth-fuse.tsx` 提供的登录/注册界面，并由 `src/components/ForgePassPage.tsx` 适配现有 `/api/auth/login`、`/api/auth/register`、`/api/auth/me` 会话。一个 ForgePass 账户认证后按原入口进入对应产品；旧 `/forgelab/login` 仅映射到 ForgeLab 入口，不再渲染独立 ForgeLab 登录页。未登录时不请求 ForgeCloud workspace 快照或数据库状态。
+ForgePass 统一身份入口已接入 ForgeHub、ForgeCloud 和 ForgeLab：三个产品共用 `src/components/ui/auth-fuse.tsx` 提供的密码登录/注册、邮箱验证码登录和 GitHub OAuth 登录界面，并由 `src/components/ForgePassPage.tsx` 适配 `/api/auth/login`、`/api/auth/register`、`/api/auth/email/send-code`、`/api/auth/email/login`、`/api/auth/github/*`、`/api/auth/me` 会话。一个 ForgePass 账户认证后按原入口进入对应产品；首次邮箱验证码或 GitHub 登录会创建账户，已存在的身份则回到原 `user_id`。V33 保存身份绑定、邮箱挑战和一次性 OAuth 兑换码，SMTP/GitHub 未配置时接口明确返回不可用。手机号腾讯云短信通道仍保留在后端，但当前前端默认隐藏。旧 `/forgelab/login` 仅映射到 ForgeLab 入口，不再渲染独立 ForgeLab 登录页。未登录时不请求 ForgeCloud workspace 快照或数据库状态。
 
 > V19 状态：在项目/资源/协作/审批/设备/数据/AI 基础和 V17/V18 交付之外，ForgeCloud 已将审计事实通过 Outbox 幂等消费到统一活动流，记录失败重试与错误摘要，按 workspace 成员过滤查询，并在数据库状态板显示事件队列；生产级工业接入和公共资源治理仍未完成。
 
@@ -58,6 +58,10 @@ ForgePass 统一身份入口已接入 ForgeHub、ForgeCloud 和 ForgeLab：三�
 本轮 F5 追加：ForgeMove 任务页从移动摘要 API 同步审批记录并调用受服务端权限保护的批准接口；Data Cloud 数据点列表读取最近真实遥测事件的值、质量码和发生时间，不再只显示静态数据点定义。
 
 本轮 AI Cloud 追加：`rule` 模型任务支持由服务端显式执行，状态经过 `queued → running → completed/failed`，结果、失败原因和审计事件写回数据库；该执行器只读取已授权工作空间/项目的事实摘要，不替代 ForgeMind 的确定性仿真、碰撞、库存和 Patch 审批。
+
+本轮 ForgeCloud AI 控制面追加：AI 页面新增“上下文开关”区域，可分别控制对话上下文、当前项目记忆、用户偏好和 RAG 检索；开关写入浏览器本机策略并实际影响助手请求，实时工厂事实仍不可关闭。页面同时读取 AI 服务只读控制面，展示 `ollama / qwen2.5:7b` provider/model、模型与语音就绪状态、30 个工具、30 日服务质量指标、product/process/runtime/user_memory 四类 RAG 来源、检索方法/向量维度和确定性事实边界。控制面只返回元数据和来源目录，不返回文档正文、用户问题、业务行或密钥；RAG 关闭时网关不返回文档证据。
+
+本轮 RAG 知识库追加：AI 页面新增可读知识库，系统内置的产品/方案文档通过 AI 服务白名单接口按文档读取正文；当前工作空间可新增标题、分类、来源和正文，支持搜索、分类筛选、阅读和归档。知识条目落库于 V31 的 `assistant_knowledge_document`，按 workspace 成员隔离并写入 AI Cloud 审计；助手请求会同步当前账号可访问的工作空间知识并纳入 RAG，动态库存、坐标、产量和仿真数字仍禁止写入。
 
 本轮 Asset Cloud 追加：资源创建可选上传文件本体；服务端使用默认本地对象存储适配层计算 SHA-256、按资源版本保存 Blob 元数据并提供鉴权下载，重复哈希不会重复登记；MinIO/S3 仍是部署适配项。
 
@@ -149,7 +153,23 @@ Unity 当前已创建 `unity-client/` 工程，并已完成 Tuanjie 项目导入
 | 导入资源用户持久化 | `src/api/resources.ts`、`ImportedResourceController.java` | 已落地 | 资源与用户绑定；同一用户再次登录可恢复，其他用户不可见 |
 | 模型预览 | `src/components/Model3DViewer.tsx`、`src/scene/ImportedFactoryModel.tsx`、`src/components/MachineManufacturingWorkspace.tsx` | 已落地 | GLB 归一化、缩放后刷新世界包络并将底面归零、预览和设备卡片封面；机械制造内置模型库可选择原料药罐、视觉检测 CAD 单元和工业工作站并将真实路径写入机器定义；现有双臂视觉质检设备模型保持不变 |
 | 视觉检测 | `src/demos/InspectionDemo.tsx`、`src/demos/inspection-demo.css`、`src/scene/inspectionDetect.ts`、`ai-service/main.py`、`ai-service/models/pcb_defect_yolov8s.pt`、`public/videos/inspection-pcb-demo.mp4` | 已落地 | 独立工作台、左侧 Demo 入口、PCB 制成品测试视频、AI 服务加载本地 YOLOv8 权重逐帧推理、Canvas 实时检测框/类别/置信度/耗时、模型离线状态、相机演示、检测结果和隔离路由；来源和 GPL-3.0 边界见资产审计 |
-| AI 管家与语音 | `src/game/assistantProtocol.ts`、`ai-service/` | 已落地/可选 | 工具白名单、二次校验、ASR/TTS；服务不可用时前端不阻塞 |
+| AI 管家与语音 | `src/game/assistantProtocol.ts`、`src/game/assistantRuntime.ts`、`src/game/assistantPanels.ts`、`src/game/assistantTasks.ts`、`src/game/assistantTaskPlan.ts`、`src/game/assistantProactiveEvents.ts`、`src/game/assistantStorage.ts`、`src/game/assistantProjectMemory.ts`、`src/game/assistantMemory.ts`、`src/game/assistantReminderPolicy.ts`、`src/components/AssistantRuntime.tsx`、`src/components/AssistantVoiceButton.tsx`、`src/components/AssistantOrb.tsx`、`src/components/AssistantPanelComparison.tsx`、`src/components/FactoryAgentWorkspace.tsx`、`backend/src/main/resources/db/migration/V26__create_assistant_reminder_policies.sql`、`backend/src/main/resources/db/migration/V27__create_assistant_reminder_events.sql`、`backend/src/main/resources/db/migration/V28__create_assistant_user_memory.sql`、`backend/src/main/resources/db/migration/V29__aggregate_assistant_reminder_sources.sql`、`backend/src/main/resources/db/migration/V30__create_assistant_model_metrics.sql`、`backend/src/main/java/com/forgemind/web/AssistantModelMetricController.java`、`voice-chat/voice_chat.py`、`ai-service/`、`ai-service/rag.py` | 已落地（本地 Qwen 需显式启用） | 固定 BT 唤醒词、30 个工具白名单（含面板并排比较、Agent 任务查看、生态产品深链接、视觉结果读取、主动提醒查询/依据解释/同类关闭）、服务端/前端二次校验、面板/楼层/对象调度、Factory Agent 诊断/方案/巡检任务调度、任务状态上下文、前端任务步骤进度与结果摘要回传、服务端 Agent 步骤进度 API/SSE 事件、页面刷新后可显式恢复未结束 run、按用户隔离的任务历史本地持久化与当前项目服务端 Agent run 摘要注入、当前项目最近 Agent Finding/方案摘要的本地记忆、诊断类复杂目标按领域拆成最多 4 个只读子任务并合并 Finding/证据、任务取消/失败重试、主动提醒策略查询/确认修改并作用于巡检通知、用户级 MySQL 提醒策略持久化与离线本地缓存、跨会话主动提醒 claim 去重与严重度升级、云端提醒查询与确认后的同类关闭、本地多来源主动事件聚合与恢复状态、当前页面上下文、会话上下文、按用户隔离的可确认用户偏好记忆并同步至 V28 MySQL、文档轻量 RAG、回答来源片段回传与 BT 来源提示、Ollama `qwen2.5:7b` 可选编排、助手质量指标日聚合、自动巡检劣化主动通知及会话级去重/严重度升级、浏览器/独立语音入口共用 BT 约定、ASR/TTS；服务不可用时前端不阻塞 |
+| 对话上下文压缩 | `src/game/assistantConversation.ts`、`src/game/assistantRuntime.ts`、`ai-service/main.py`、`scripts/assistant-context-regression.ts` | 已落地 | 对话达到 8 轮后保留早期目标/安全约束并压缩为最多 1600 字符摘要注入 Qwen；动态工厂数值、库存、坐标、路线和仿真指标必须通过工具重新读取；10 轮上下文回归通过 |
+| 主动提醒语音播报 | `src/game/assistantRuntime.ts`、`src/components/AssistantRuntime.tsx`、`src/components/AssistantVoiceButton.tsx` | 已落地 | warning/critical 主动事件在策略允许时进入 BT TTS 队列并打开关联面板；主动播报与普通回答共享串行播放锁，TTS 失败仍保留文字提醒，不阻塞助手 |
+| 连续语音会话与多模态联动 | `src/game/assistantVoice.ts`、`src/game/assistantVoiceSession.ts`、`src/components/AssistantVoiceButton.tsx`、`voice-chat/voice_chat.py`、`src/game/assistantVision.ts`、`src/components/AssistantRuntime.tsx`、`src/components/InspectionPanel.tsx`、`src/demos/InspectionDemo.tsx`、`scripts/assistant-voice-session-regression.ts` | 已落地（本地 Qwen 需显式启用） | 浏览器与独立 voice-chat 均支持等待语音、静音自动分轮和硬上限；BT 首轮后进入 30 秒免重复唤醒会话，可手动结束，确认型动作期间暂停收音。YOLO 缺陷结果按节流策略桥接小尺寸同源帧预览，助手运行时监听同页事件与跨页 localStorage，检测缺陷可主动打开面板并播报，检测面板显示最近同步帧；Qwen 仍只读取结构化检测事实，不把图片预览当作模型视觉结论 |
+| Agent 可靠执行 | `src/components/FactoryAgentWorkspace.tsx` | 已落地 | 本地 Agent 工具执行遇到一次可恢复错误会自动重试；停止/语音取消在服务端 run 尚未返回时保留取消意图并在 run 创建后补发取消，失败/取消状态继续回写服务端步骤记录 |
+| Agent 服务端自动续跑与结果回传 | `backend/src/main/java/com/forgemind/service/AgentRuntimeService.java`、`backend/src/main/java/com/forgemind/repository/AgentRuntimeRepository.java`、`src/components/FactoryAgentWorkspace.tsx` | 已落地（只读） | 服务端每 60 秒扫描超过 120 秒未更新的 `read_only` run，重新校验当前项目版本后自动完成确定性结构审计；前端本地确定性结果同步到服务端时允许一次瞬态失败重试；`plan_design` 不自动生成或应用 Patch，仍需前端显式恢复 |
+| 服务端只读编排与统一报告 | `backend/src/main/java/com/forgemind/service/AgentOrchestrationService.java`、`backend/src/main/java/com/forgemind/service/AgentRuntimeService.java`、`backend/src/main/java/com/forgemind/web/AgentController.java`、`src/api/agent.ts`、`src/components/FactoryAgentWorkspace.tsx`、`scripts/agent-server-orchestration-regression.mjs` | 已落地（只读） | 只读 Agent 可进入服务端异步 planning→确定性结构分析→completed/failed，失败写入 run/step/event；`/report` 统一返回步骤、证据来源、结果、Patch 和下一步动作；页面支持将未完成只读 run 交给服务端续跑；方案设计不通过该入口生成或应用 Patch |
+| 方案应用后自动复核 | `src/components/FactoryAgentWorkspace.tsx`、`src/api/agent.ts`、`backend/src/main/java/com/forgemind/web/AgentController.java`、`docs/ForgeMind-智能助手2.0优化方案.md` | 已落地（确定性） | Patch 批准应用后自动对当前新存档重新执行只读 Agent 分析，展示吞吐、利用率、在制品、阻塞、成品、运输和库存的应用前/后差异；复核摘要带来源标识并以 `post_apply_review` 事件写入原 Agent run，失败不伪造“已完成” |
+| 方案设计阶段链 | `src/game/assistantTaskPlan.ts`、`src/game/assistantTasks.ts`、`src/components/FactoryAgentWorkspace.tsx` | 已落地（Patch 待审批） | 方案设计按读取现状基线、整理目标约束、评估候选方向、生成受控 Patch 草案四阶段执行；前 3 阶段不生成 Patch，最后阶段只产生待人工审批草案，阶段状态写入页面任务上下文 |
+| 云端主动事件聚合 | `backend/src/main/resources/db/migration/V29__aggregate_assistant_reminder_sources.sql`、`backend/src/main/java/com/forgemind/repository/AssistantReminderEventRepository.java`、`backend/src/main/java/com/forgemind/web/AssistantReminderEventController.java`、`src/game/assistantProactiveEvents.ts`、`scripts/assistant-proactive-cloud-regression.mjs` | 已落地（按用户隔离） | 主动提醒 claim 按事件指纹持久化来源集合、累计出现次数、首次观察时间、最高严重度和 resolved/open 状态；登录后助手通过 GET 查询开放事件并回灌本地上下文，支持解释来源/时间/次数，确认后关闭同类事件；冷却内信号也会合并计数，恢复后可重新打开，未把事件聚合混入工厂事实 |
+| 助手质量指标 | `backend/src/main/resources/db/migration/V30__create_assistant_model_metrics.sql`、`backend/src/main/java/com/forgemind/repository/AssistantModelMetricRepository.java`、`backend/src/main/java/com/forgemind/web/AssistantModelMetricController.java`、`src/api/assistantMetrics.ts`、`scripts/assistant-metrics-regression.mjs` | 已落地（服务元数据） | 按用户/日期/provider 聚合首 token 延迟、完整响应延迟、工具提议/成功和规则降级；不写入问题文本、对象事实或工厂存档，真实 MySQL 隔离与聚合回归通过 |
+| RAG 可读写知识库 | `backend/src/main/resources/db/migration/V31__create_assistant_knowledge_documents.sql`、`backend/src/main/java/com/forgemind/repository/AssistantKnowledgeRepository.java`、`backend/src/main/java/com/forgemind/web/AssistantKnowledgeController.java`、`ai-service/rag.py`、`ai-service/main.py`、`src/api/forgeCloud.ts`、`src/game/assistantKnowledge.ts`、`src/components/ForgeCloudConsole.tsx` | 已落地（工作空间隔离） | 内置产品/方案文档通过白名单接口按需阅读；当前工作空间知识支持新增、搜索、分类筛选和归档；新增条目写入 V31、记录 AI Cloud 审计并在下一次助手请求进入 RAG；动态库存、产量、坐标和仿真数字拒绝写入 |
+| 面板比较与任务查看 | `contracts/forgemind-assistant-tools.json`、`src/game/assistantProtocol.ts`、`src/game/assistantExecutor.ts`、`src/game/assistantPanels.ts`、`src/components/AssistantPanelComparison.tsx`、`src/App.tsx`、`scripts/assistant-protocol-check.ts`、`scripts/assistant-qwen-eval.mjs` | 已落地 | `compare_panels` 打开两个已注册面板的并排比较浮层，`show_task` 只允许查看当前上下文中的任务 ID 并进入 Agent 任务诊断；服务端/前端均拒绝未知面板、同面板比较和不属于当前用户的任务；真实 Qwen 12/12 评测通过 |
+| 生态产品深链接 | `contracts/forgemind-assistant-tools.json`、`src/game/assistantProtocol.ts`、`src/game/assistantExecutor.ts`、`src/game/assistantPanels.ts`、`src/App.tsx`、`scripts/assistant-protocol-check.ts`、`scripts/assistant-qwen-eval.mjs` | 已落地 | `open_product` 仅允许跳转 ForgeMind、ForgeHub、ForgeLab、ForgeCloud 白名单入口；ForgeCloud 仍经过登录态检查，其他入口按现有 ForgePass 页面处理，不绕过认证、不修改工厂事实 |
+| 视觉结果与助手联动 | `src/game/assistantVision.ts`、`src/demos/InspectionDemo.tsx`、`src/components/AssistantRuntime.tsx`、`src/game/assistantProtocol.ts`、`src/game/assistantExecutor.ts`、`ai-service/main.py`、`contracts/forgemind-assistant-tools.json`、`scripts/assistant-qwen-eval.mjs` | 已落地（结构化结果） | 检测页通过本地同源桥保存最近一帧 YOLO 结果，助手只读取缺陷类别、置信度、框坐标、判定和时间；主工作台跨页面接收缺陷签名并按策略主动提醒；`inspect_vision_result` 无有效结果时拒绝执行，模型不生成新的视觉事实；真实 Qwen 12/12 评测通过 |
+| 助手工具协议当前计数 | `contracts/forgemind-assistant-tools.json`、`src/game/assistantProtocol.ts`、`ai-service/main.py` | 已落地 | 当前版本为 30 个工具；此前总览中的 27 个工具描述由本行和目标方案最新状态覆盖，新增主动提醒查询/依据解释/同类关闭，并由 IntentRouter 对明确提醒、产品入口、面板比较和偏好请求提供低风险修复 |
+| 项目版本记忆 | `src/game/assistantProjectMemory.ts`、`src/App.tsx`、`ai-service/main.py` | 已落地（本地） | 按用户隔离记录当前项目最近 12 个版本摘要并注入 Qwen 上下文，用于“上一版/当前版”解释；不替代实时工厂事实，也不保存完整存档 |
 | 真机硬件套件（DM4310 机械臂） | `hardware/dm4310-arm/`（README.md、firmware/dm4310_protocol.h、dm4310_twai.h、dm4310_motor.h、dm4310_arm_sketch/、test/protocol_test.cpp） | 已落地（未真机验收） | 达妙 DM4310 六轴桌面臂完整套件：MIT 协议层平台无关并经 g++ 主机回归 ALL PASS，ESP32 TWAI 总线层与串口命令台（使能/置零/点动/增益/demo，故障自动全臂失能），BOM/接线/装配/烧录/调试文档齐备；关节命名对应场景 `panda_joint1..6`。固件未经 ESP32 编译烧录与真机验收，量程常量需按批次用达妙上位机核对 |
 
 ## 3. 用户导入资源的真实数据流
@@ -180,6 +200,14 @@ Unity 当前已创建 `unity-client/` 工程，并已完成 Tuanjie 项目导入
 | --- | --- | --- |
 | POST | `/api/auth/register` | 注册用户 |
 | POST | `/api/auth/login` | 登录并返回 bearer token |
+| POST | `/api/auth/email/send-code` | 发送邮箱验证码并按邮箱/IP 限流 |
+| POST | `/api/auth/email/login` | 校验邮箱验证码并登录或首次创建账户 |
+| GET | `/api/auth/github/start` | 开始 GitHub OAuth 登录 |
+| GET | `/api/auth/github/callback` | 接收 GitHub OAuth 回调 |
+| POST | `/api/auth/github/exchange` | 消费一次性 OAuth 兑换码 |
+| POST | `/api/auth/phone/send-code` | 发送腾讯云短信验证码并按手机号/IP 限流 |
+| POST | `/api/auth/phone/login` | 校验验证码并登录或首次创建手机号账户 |
+| POST | `/api/auth/phone/bind` | 为当前账户绑定已验证手机号 |
 | GET | `/api/auth/me` | 查询当前用户 |
 | POST | `/api/auth/logout` | 注销当前会话 |
 
@@ -217,7 +245,7 @@ ForgeCloud 的 V13–V16 接口均按 bearer 会话、工作空间成员和项�
 
 ## 5. 数据库迁移
 
-> 2026-09-02 状态修订：ForgeCloud 数据库已升级至 V25。V17 提供 Asset Blob 本体上传/鉴权下载/软删除，V18 提供已发布 ForgeLab 帖子与不可变项目发布/资源版本关联、许可证快照、Outbox 与审计，V19–V22 补齐统一活动流、可靠幂等写入、manifest 治理和资源版本生命周期，V23 补齐连接器映射、AssetTwin 绑定和已入库运行事件回放，V24–V25 补齐运行事实、遥测窗口、工单/质量/维护台账和外部事件唯一去重；真实工业协议、专业时序引擎、设备控制执行器、MinIO/S3、公共资源治理和远程模型路由仍未完成。
+> 2026-09-03 状态修订：全局数据库已升级至 V30。V17 提供 Asset Blob 本体上传/鉴权下载/软删除，V18 提供已发布 ForgeLab 帖子与不可变项目发布/资源版本关联、许可证快照、Outbox 与审计，V19–V22 补齐统一活动流、可靠幂等写入、manifest 治理和资源版本生命周期，V23 补齐连接器映射、AssetTwin 绑定和已入库运行事件回放，V24–V25 补齐运行事实、遥测窗口、工单/质量/维护台账和外部事件唯一去重，V26–V27 增加 AI 助手提醒策略持久化与跨会话主动提醒 claim 去重，V28 增加用户批准的助手长期记忆，V29 增加主动事件多来源聚合持久化，V30 增加助手质量指标日聚合；真实工业协议、专业时序引擎、设备控制执行器、MinIO/S3、公共资源治理和远程模型路由仍未完成。
 
 Flyway 迁移位于 `backend/src/main/resources/db/migration/`：
 
@@ -267,7 +295,7 @@ cd backend
 mvn test
 ```
 
-完整联调需要 MySQL 8.4、Spring Boot 8080，以及可选的 AI 服务 8000。若数据库或后端未启动，前端仍可使用本地工厂、资源导入预览和本地仿真；资源不会在未登录或后端不可用时伪装成已持久化。
+Windows 一键入口 `启动ForgeMind.cmd` 和 `start-forgemind.bat` 现在都只保留一个可见终端：大进度条按 MySQL、Spring Boot、AI 网关、ASR/TTS、独立语音监听和前端阶段推进，后台服务隐藏运行并把输出写入 `.forgemind/logs/`；只有实际健康检查、语音进程存活检查和 ASR/TTS 预热全部完成才显示 `100% / SYSTEM READY`。两个一键入口默认启动前端、Spring Boot、MySQL、AI 和语音能力，但不启动或探测 Ollama/本地大语言模型，AI 默认使用 `rule`；直接调用不带服务开关的 PowerShell 脚本才是轻量入口，`-IncludeAI` 和 `-IncludeVoiceChat` 可显式增加能力，后者自动启用 AI 网关；追加 `-UseLocalQwen` 才会选择本机 Ollama `qwen2.5:7b` 并校验 provider，已有规则网关占用 8000 时会明确要求先停止旧实例。若数据库或后端未启动，前端仍可使用本地工厂、资源导入预览和本地仿真；资源不会在未登录或后端不可用时伪装成已持久化。
 
 ## 7. 仍然属于边界而非承诺
 

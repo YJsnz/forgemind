@@ -1,10 +1,11 @@
 # ForgeMind 可选智能服务
 
-FastAPI 服务负责受限规则助手、可选远程 DeepSeek、工厂需求约束提取、工具协议、ASR/TTS 网关和视觉检测辅助。它不进入实时仿真 tick，也不是默认启动依赖。
+FastAPI 服务负责受限规则助手、可选本地 Ollama/Qwen、可选远程 DeepSeek、工厂需求约束提取、工具协议、轻量 RAG、ASR/TTS 网关和视觉检测辅助。它不进入实时仿真 tick，也不是默认启动依赖。
 
 ## 默认原则
 
 - 默认 `FORGEMIND_LLM_PROVIDER=rule`，不安装、不启动、不探测本地大语言模型。
+- 已安装的 Ollama `qwen2.5:7b` 可通过显式 provider 启用；模型只做理解、检索和工具选择，不能越过前端/服务端校验修改工厂事实。
 - 前端未启用本服务时，生成式工厂继续使用确定性规则解析，助手使用浏览器内规则降级。
 - 模型不能直接生成布局坐标、碰撞结论、路线或仿真指标。
 - 工具动作必须经过服务端基础校验和前端二次校验；高风险动作仍需确认。
@@ -28,7 +29,18 @@ py -3 -m venv .venv
 
 前端只有在启动时设置 `VITE_AI_ENABLED=true` 才会访问该服务；一键启动器使用 `-IncludeAI` 时会自动设置。
 
-`requirements-core.txt` 只安装规则/远程助手所需的轻量 Web 依赖；需要视觉、ASR 或本地 TTS 时，再安装完整的 `requirements.txt`。两者都不包含本地大语言模型。
+`requirements-core.txt` 只安装规则/模型网关所需的轻量 Web 依赖；Ollama 在服务外独立运行，Python 服务通过本机 HTTP 调用，不把模型权重放进仓库。需要视觉、ASR 或本地 TTS 时，再安装完整的 `requirements.txt`。
+
+## 可选本地 Qwen
+
+```powershell
+$env:FORGEMIND_LLM_PROVIDER = 'ollama'
+$env:FORGEMIND_OLLAMA_MODEL = 'qwen2.5:7b'
+$env:FORGEMIND_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
+.\启动ForgeMind.cmd -UseLocalQwen
+```
+
+也可以使用 `start-forgemind.bat -IncludeAI -UseLocalQwen`。启动器默认不触碰 Ollama；只有显式 `-UseLocalQwen` 才会选择本地模型，并检查已运行的 AI 网关是否确实使用 `ollama` provider。模型调用包含最近 8 轮会话、当前页面/项目/任务状态、任务步骤进度、任务历史、开放主动提醒和文档检索片段，响应可提出工具动作；动作仍由双重协议校验执行。RAG 当前使用零依赖的哈希词元向量与余弦相似度增强关键词排序，并在 `evidence[].match` 标注 `keyword+vector` 或 `vector`；专用 embedding 模型仍是后续替换项。浏览器端的任务历史、用户偏好、项目运行记忆和主动提醒缓存按登录令牌散列到独立命名空间，避免同一浏览器多用户串数据。提醒策略在已登录时通过 `PUT /api/assistant/reminder-policy` 写入用户级 MySQL，主动提醒事件可通过 `GET /api/assistant/reminders?status=open` 回灌助手上下文；BT 可以列出提醒、解释来源/时间/次数，并在确认后关闭同类提醒。后端不可用时继续使用本地缓存；用户偏好、提醒策略和关闭提醒只在明确请求后写入，并且必须经过前端确认。
 
 ## 可选 DeepSeek
 
@@ -50,6 +62,9 @@ ASR/TTS 默认不预热。需要语音时显式设置 `FORGEMIND_VOICE_ENABLED=t
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/ai/health` | 服务、协议、provider 和语音状态 |
+| GET | `/api/ai/control-plane` | ForgeCloud AI 控制面只读元数据：模型/语音状态、工具数量、RAG 来源目录和事实安全策略；不返回文档正文、问题文本或密钥 |
+| GET | `/api/ai/knowledge` | 内置产品/方案文档可读目录；正文通过 `/api/ai/knowledge/content?source=...` 按文档按需读取 |
+| GET | `/api/ai/knowledge/content` | 读取内置白名单文档正文；不接受任意文件路径 |
 | GET | `/api/ai/tools` | `1.0.0` 工具目录 |
 | POST | `/api/ai/assistant` | 规则/远程助手和受限动作信封 |
 | POST | `/api/ai/assistant/stream` | NDJSON 兼容响应 |
@@ -68,4 +83,4 @@ py -3 -m py_compile main.py vision.py
 
 实时 PCB Demo 还需要安装 `requirements.txt` 中的 `ultralytics`，并将 `pcb_defect_yolov8s.pt` 放在 `ai-service/models/`（或通过 `FORGEMIND_YOLO_MODEL` 指定路径）。默认核心服务仍不强制加载 YOLO；只有打开视觉检测 Demo 并启动 AI 服务后才会加载权重。
 
-启动后检查 `http://127.0.0.1:8000/api/ai/health`，应显示 `localModelRequired: false`。规则模式下可用 `/api/ai/assistant` 测试“查询工厂状态”“启动仿真”“暂停仿真”“设置 2 倍速”和“重置仿真”。
+启动后检查 `http://127.0.0.1:8000/api/ai/health`：规则模式显示 `localModelRequired: false`，本地 Qwen 模式显示 `provider: ollama`、`ollamaModel: qwen2.5:7b`。两种模式均可用 `/api/ai/assistant` 测试工厂状态、仿真控制和面板调度；助手响应中的 `evidence` 字段会返回裁剪后的文档来源摘要。

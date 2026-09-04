@@ -58,8 +58,45 @@ public class AgentRuntimeRepository {
 
     public ArrayNode runs(String owner,String factory){ArrayNode out=mapper.createArrayNode();jdbc.query("SELECT id FROM agent_run WHERE owner_user_id=? AND factory_id=? ORDER BY created_at DESC LIMIT 50",(RowCallbackHandler)rs->out.add(run(owner,rs.getString(1))),owner,factory);return out;}
 
+    public List<StaleRun> staleReadOnlyRuns(Instant cutoff) {
+        return jdbc.query("SELECT id,owner_user_id FROM agent_run WHERE mode='read_only' AND status IN('created','planning','contextualizing','executing_tools','synthesizing') AND updated_at < ? ORDER BY updated_at LIMIT 8", (rs, rowNum) -> new StaleRun(rs.getString("id"), rs.getString("owner_user_id")), Timestamp.from(cutoff));
+    }
+
+    @Transactional
+    public void queueOrchestration(String owner, String runId) {
+        ObjectNode run = run(owner, runId);
+        String status = run.path("status").asText();
+        if (List.of("completed", "cancelled", "rejected", "failed").contains(status)) return;
+        jdbc.update("UPDATE agent_run SET status='planning', error_text=NULL WHERE id=? AND owner_user_id=?", runId, owner);
+        event(runId, "orchestration_queued", mapper.createObjectNode().put("mode", "server_read_only").put("status", "planning"));
+    }
+
+    @Transactional
+    public void fail(String owner, String runId, String message) {
+        run(owner, runId);
+        String safe = message == null || message.isBlank() ? "服务端 Agent 编排失败" : message.substring(0, Math.min(2000, message.length()));
+        jdbc.update("UPDATE agent_run SET status='failed', error_text=?, completed_at=CURRENT_TIMESTAMP(6) WHERE id=? AND owner_user_id=?", safe, runId, owner);
+        jdbc.update("UPDATE agent_step SET status='failed', detail_text=?, completed_at=CURRENT_TIMESTAMP(6) WHERE run_id=? AND status IN('pending','running')", safe, runId);
+        event(runId, "orchestration_failed", mapper.createObjectNode().put("error", safe));
+    }
+
     @Transactional
     public void begin(String owner,String runId){run(owner,runId);jdbc.update("UPDATE agent_run SET status='executing_tools',error_text=NULL WHERE id=?",runId);jdbc.update("UPDATE agent_step SET status='running',started_at=CURRENT_TIMESTAMP(6) WHERE run_id=? AND status='pending'",runId);event(runId,"agent_progress",mapper.createObjectNode().put("status","executing_tools"));}
+
+    @Transactional
+    public void progress(String owner,String runId,String stepKey,String status,String detail){
+        run(owner,runId);
+        if(!List.of("pending","running","completed","failed","cancelled").contains(status))throw new IllegalArgumentException("Agent 步骤状态非法");
+        Integer count=jdbc.queryForObject("SELECT COUNT(*) FROM agent_step WHERE run_id=? AND step_key=?",Integer.class,runId,stepKey);
+        if(count==null||count==0)throw new IllegalArgumentException("Agent 步骤不存在："+stepKey);
+        String safeDetail=detail==null?"":detail.length()>1000?detail.substring(0,1000):detail;
+        if("running".equals(status))jdbc.update("UPDATE agent_step SET status=?,detail_text=?,started_at=COALESCE(started_at,CURRENT_TIMESTAMP(6)),completed_at=NULL WHERE run_id=? AND step_key=?",status,safeDetail,runId,stepKey);
+        else if(List.of("completed","failed","cancelled").contains(status))jdbc.update("UPDATE agent_step SET status=?,detail_text=?,completed_at=CURRENT_TIMESTAMP(6) WHERE run_id=? AND step_key=?",status,safeDetail,runId,stepKey);
+        else jdbc.update("UPDATE agent_step SET status=?,detail_text=? WHERE run_id=? AND step_key=?",status,safeDetail,runId,stepKey);
+        String runStatus="failed".equals(status)?"failed":"cancelled".equals(status)?"cancelled":switch(stepKey){case "compile_goal"->"planning";case "load_context"->"contextualizing";case "execute_tools"->"executing_tools";case "synthesize"->"synthesizing";case "validate_patch"->"awaiting_approval";default->"executing_tools";};
+        jdbc.update("UPDATE agent_run SET status=?,error_text=? WHERE id=?",runStatus,"failed".equals(status)?safeDetail:null,runId);
+        event(runId,"agent_progress",mapper.createObjectNode().put("step_key",stepKey).put("status",status).put("detail",safeDetail));
+    }
 
     @Transactional
     public void tool(String runId,String name,JsonNode output,int duration){String step=jdbc.queryForObject("SELECT id FROM agent_step WHERE run_id=? AND step_key='execute_tools'",String.class,runId);jdbc.update("INSERT INTO agent_tool_call(id,run_id,step_id,tool_name,status,attempt,input_json,output_json,duration_ms,completed_at) VALUES(?,?,?,?,'completed',1,'{}',?,?,CURRENT_TIMESTAMP(6))",id("tool"),runId,step,name,raw(output),duration);jdbc.update("UPDATE agent_run SET tool_calls_used=tool_calls_used+1 WHERE id=?",runId);event(runId,"tool_completed",mapper.createObjectNode().put("tool_name",name).put("duration_ms",duration));}
@@ -99,4 +136,5 @@ public class AgentRuntimeRepository {
     private JsonNode parse(String s){if(s==null)return mapper.nullNode();try{return mapper.readTree(s);}catch(JsonProcessingException e){throw new IllegalStateException("Agent JSON 已损坏",e);}}
     private String id(String p){return p+"-"+UUID.randomUUID();} private String time(Timestamp t){return t==null?Instant.now().toString():t.toInstant().toString();} private String timeOrNull(Timestamp t){return t==null?null:t.toInstant().toString();}
     private void nullable(ObjectNode n,String key,String value){if(value==null)n.putNull(key);else n.put(key,value);}
+    public record StaleRun(String id, String owner) {}
 }

@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import {
   login as apiLogin,
   register as apiRegister,
+  loginByPhone as apiLoginByPhone,
+  loginByEmail as apiLoginByEmail,
   fetchMe,
   logout as apiLogout,
 } from '../api/auth'
@@ -23,6 +25,9 @@ interface AuthState {
   token: string | null
   busy: boolean
   login: (username: string, password: string) => Promise<void>
+  loginByPhone: (phone: string, code: string) => Promise<void>
+  loginByEmail: (email: string, code: string) => Promise<void>
+  applyAuthResult: (result: { token: string; username: string }) => void
   register: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
   restoreSession: () => Promise<void>
@@ -45,6 +50,35 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ busy: false })
       throw error
     }
+  },
+
+  loginByPhone: async (phone, code) => {
+    set({ busy: true })
+    try {
+      const res = await apiLoginByPhone(phone, code)
+      localStorage.setItem(TOKEN_KEY, res.token)
+      set({ token: res.token, user: res.username, phase: 'entering', busy: false })
+    } catch (error) {
+      set({ busy: false })
+      throw error
+    }
+  },
+
+  loginByEmail: async (email, code) => {
+    set({ busy: true })
+    try {
+      const res = await apiLoginByEmail(email, code)
+      localStorage.setItem(TOKEN_KEY, res.token)
+      set({ token: res.token, user: res.username, phase: 'entering', busy: false })
+    } catch (error) {
+      set({ busy: false })
+      throw error
+    }
+  },
+
+  applyAuthResult: (res) => {
+    localStorage.setItem(TOKEN_KEY, res.token)
+    set({ token: res.token, user: res.username, phase: 'entering', busy: false })
   },
 
   register: async (username, password) => {

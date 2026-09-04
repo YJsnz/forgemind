@@ -59,7 +59,7 @@ export function GenerativeFactoryWorkspace({ onSurfaceChange }: { onSurfaceChang
   const [generationStep, setGenerationStep] = useState(-1)
   const [isGenerating, setIsGenerating] = useState(false)
   const [notice, setNotice] = useState('A-02 等待设计任务')
-  const [specSource, setSpecSource] = useState<'deepseek' | 'rule' | 'fallback'>('rule')
+  const [specSource, setSpecSource] = useState<'deepseek' | 'ollama' | 'rule' | 'fallback'>('rule')
   const [whatIf, setWhatIf] = useState<WhatIfResult | null>(null)
   const [isWhatIfRunning, setIsWhatIfRunning] = useState(false)
   const [selectedDiagnosticFloor, setSelectedDiagnosticFloor] = useState<FactoryFloorId | 0>(0)

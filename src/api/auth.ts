@@ -14,6 +14,16 @@ export interface MeResult {
   username: string
 }
 
+export interface PhoneCodeResult {
+  status: string
+  cooldownSeconds: number
+}
+
+export interface EmailCodeResult {
+  status: string
+  cooldownSeconds: number
+}
+
 async function withTimeout<T>(p: Promise<T>, ms = 5000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
@@ -26,8 +36,8 @@ async function withTimeout<T>(p: Promise<T>, ms = 5000): Promise<T> {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await withTimeout(fetch(`${BACKEND_BASE}${path}`, init))
+async function request<T>(path: string, init?: RequestInit, timeoutMs = 5000): Promise<T> {
+  const res = await withTimeout(fetch(`${BACKEND_BASE}${path}`, init), timeoutMs)
   if (!res.ok) {
     let message = `后端返回 ${res.status}`
     try {
@@ -53,6 +63,30 @@ export function register(username: string, password: string): Promise<AuthResult
 
 export function login(username: string, password: string): Promise<AuthResult> {
   return request('/api/auth/login', json('POST', { username, password }))
+}
+
+export function sendPhoneCode(phone: string, purpose = 'login'): Promise<PhoneCodeResult> {
+  return request('/api/auth/phone/send-code', json('POST', { phone, purpose }), 12000)
+}
+
+export function loginByPhone(phone: string, code: string): Promise<AuthResult> {
+  return request('/api/auth/phone/login', json('POST', { phone, code }))
+}
+
+export function sendEmailCode(email: string): Promise<EmailCodeResult> {
+  return request('/api/auth/email/send-code', json('POST', { email }), 12000)
+}
+
+export function loginByEmail(email: string, code: string): Promise<AuthResult> {
+  return request('/api/auth/email/login', json('POST', { email, code }))
+}
+
+export function startGithubLogin(): void {
+  window.location.assign(`${BACKEND_BASE}/api/auth/github/start`)
+}
+
+export function exchangeGithubCode(code: string): Promise<AuthResult> {
+  return request('/api/auth/github/exchange', json('POST', { code }))
 }
 
 export function fetchMe(token: string): Promise<MeResult> {

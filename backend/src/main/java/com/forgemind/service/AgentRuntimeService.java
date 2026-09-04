@@ -9,17 +9,20 @@ import com.forgemind.repository.AgentRuntimeRepository;
 import com.forgemind.repository.FactoryProjectDbStore;
 import com.forgemind.repository.ImportedResourceDbStore;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 
 @Service
 public class AgentRuntimeService {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AgentRuntimeService.class);
     public static final String[] TOOLS={"get_factory_snapshot","get_factory_graph","get_simulation_metrics","query_event_timeline","inspect_inventory","inspect_machine","inspect_recipe_chain","inspect_conveyors","inspect_logistics","calculate_capacity","inspect_bottlenecks","explain_constraint"};
     private final AgentRuntimeRepository agents; private final FactoryProjectDbStore projects; private final ImportedResourceDbStore resources; private final ObjectMapper json; private final AgentPatchValidator patchValidator;
     private final boolean llmConfigured; private final String provider;
@@ -33,6 +36,31 @@ public class AgentRuntimeService {
     @Transactional
     public ObjectNode analyze(String owner,String runId,JsonNode suppliedResult,JsonNode suppliedPatch){ObjectNode run=agents.run(owner,runId);if(run.path("result").isObject())return run;if(List.of("cancelled","completed","rejected").contains(run.path("status").asText()))throw new IllegalArgumentException("当前 Agent 运行已结束，不能重复分析");FactoryProject project=projects.loadForUser(owner,run.path("factory_id").asText());JsonNode authoritative=project.save().deepCopy();if(!fingerprint(authoritative).equals(run.path("base_factory_updated_at").asText()))throw new IllegalArgumentException("工厂已发生新修改，请重新创建 Agent 运行");List<String> resourceErrors=validateResourceOwnership(owner,authoritative);if(!resourceErrors.isEmpty())throw new IllegalArgumentException("当前工厂资源归属校验失败："+String.join("；",resourceErrors));agents.begin(owner,runId);ObjectNode result=suppliedResult!=null&&suppliedResult.isObject()?(ObjectNode)suppliedResult.deepCopy():fallbackResult(run);result.putObject("server_verification").put("verified_context",true).put("factory_version",fingerprint(authoritative)).put("findings_source","browser_deterministic_evidence").put("structural_tools_source","server_authoritative_save");int budget=Math.max(1,run.path("tool_call_budget").asInt(TOOLS.length));for(int index=0;index<Math.min(TOOLS.length,budget);index++){String tool=TOOLS[index];agents.tool(runId,tool,authoritativeTool(tool,authoritative),1);}boolean plan="plan_design".equals(run.path("mode").asText());boolean hasPatch=suppliedPatch!=null&&suppliedPatch.path("operations").isArray()&&!suppliedPatch.path("operations").isEmpty();if(plan&&hasPatch)createPatch(owner,run,suppliedPatch,authoritative);String summary=result.path("assessment").asText(result.path("headline").asText("工厂诊断完成"));agents.complete(owner,runId,result,summary,plan&&hasPatch?"awaiting_approval":"completed");return agents.run(owner,runId);}
 
+    public ObjectNode progress(String owner,String runId,String stepKey,String status,String detail){if(stepKey==null||stepKey.isBlank())throw new IllegalArgumentException("Agent 步骤不能为空");ObjectNode current=agents.run(owner,runId);if(List.of("completed","cancelled","rejected").contains(current.path("status").asText()))throw new IllegalArgumentException("当前 Agent 运行已结束，不能更新步骤");agents.progress(owner,runId,stepKey,status,detail);return agents.run(owner,runId);}
+    public ObjectNode queueReadOnlyOrchestration(String owner,String runId){ObjectNode run=agents.run(owner,runId);if(!"read_only".equals(run.path("mode").asText()))throw new IllegalArgumentException("服务端异步编排当前只允许只读 Agent 运行");agents.queueOrchestration(owner,runId);return agents.run(owner,runId);}
+    public void failOrchestration(String owner,String runId,String message){agents.fail(owner,runId,message);}
+    public ObjectNode report(String owner,String runId){
+        ObjectNode run=agents.run(owner,runId);ObjectNode out=json.createObjectNode();
+        out.put("report_version",1).put("run_id",run.path("id").asText()).put("factory_id",run.path("factory_id").asText()).put("objective",run.path("objective").asText()).put("mode",run.path("mode").asText()).put("status",run.path("status").asText()).put("summary",run.path("summary").asText());
+        String source=run.path("result").path("server_verification").path("findings_source").asText("server_authoritative_structural_evidence");
+        if(!run.path("result").path("local_result").isObject())source="server_authoritative_structural_evidence";
+        out.put("source",source);
+        out.set("steps",run.path("steps"));out.set("result",run.path("result"));out.set("patches",run.path("patches"));
+        String status=run.path("status").asText();String next= switch(status){case "awaiting_approval"->"review_patch";case "completed"->"inspect_result";case "failed"->"retry";case "cancelled"->"restart";default->"wait";};
+        out.put("next_action",next).put("requires_user_action",List.of("review_patch","retry","restart").contains(next));
+        return out;
+    }
+    @Scheduled(fixedDelayString="${forgemind.agent.recovery-delay-ms:60000}")
+    public void recoverStaleReadOnlyRuns(){
+        for (AgentRuntimeRepository.StaleRun stale : agents.staleReadOnlyRuns(Instant.now().minusSeconds(120))) {
+            try {
+                analyze(stale.owner(), stale.id(), null, null);
+                LOG.info("Auto-resumed stale read-only Agent run {}", stale.id());
+            } catch (Exception error) {
+                LOG.warn("Auto-resume skipped for Agent run {}: {}", stale.id(), error.getMessage());
+            }
+        }
+    }
     public ObjectNode get(String owner,String id){return agents.run(owner,id);} public ArrayNode list(String owner,String factory){projects.loadForUser(owner,factory);return agents.runs(owner,factory);} public ObjectNode cancel(String owner,String id){ObjectNode run=agents.run(owner,id);if(List.of("completed","cancelled","rejected").contains(run.path("status").asText()))return run;agents.cancel(owner,id);return agents.run(owner,id);} public ArrayNode patches(String owner,String run){return agents.patches(owner,run);} public ObjectNode patch(String owner,String id){return agents.patch(owner,id);} public ObjectNode approve(String owner,String id,String note){agents.decide(owner,id,"approved",note);return agents.patch(owner,id);} public ObjectNode reject(String owner,String id,String note){agents.decide(owner,id,"rejected",note);return agents.patch(owner,id);}
     public ObjectNode appendEvent(String owner,String runId,String name,JsonNode data){agents.run(owner,runId);return agents.event(runId,name,data==null?json.createObjectNode():data);}
 

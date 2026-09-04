@@ -1,31 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
 import { animateIfAllowed } from '../utils/animeMotion'
 import { AI_SERVICE_ENABLED } from '../game/api'
-import { dispatchAssistantState, requestAssistant } from '../game/assistantRuntime'
+import { confirmAssistantAction, dispatchAssistantState, requestAssistant } from '../game/assistantRuntime'
+import type { AssistantToolCall } from '../game/assistantProtocol'
 import {
   ASSISTANT_WAKE_WORD,
   removeAssistantWakeWord,
-  startAssistantRecorder,
+  startAssistantTurnRecorder,
   startKeywordWakeListener,
   transcribeAssistantWav,
+  type AssistantTurnRecorder,
   type KeywordWakeListener,
 } from '../game/assistantVoice'
-
-interface RecorderHandle {
-  stop: () => Promise<Blob>
-}
 
 export function AssistantVoiceButton() {
   const [recording, setRecording] = useState(false)
   const [busy, setBusy] = useState(false)
   const [wakeEnabled, setWakeEnabled] = useState(false)
-  const recorderRef = useRef<RecorderHandle | null>(null)
+  const [sessionActive, setSessionActive] = useState(false)
+  const [pendingConfirmation, setPendingConfirmation] = useState<{ call: AssistantToolCall; summary: string } | null>(null)
+  const recorderRef = useRef<AssistantTurnRecorder | null>(null)
   const wakeRef = useRef<KeywordWakeListener | null>(null)
   const recordingRef = useRef(false)
   const busyRef = useRef(false)
   const wakeTriggeredRef = useRef(false)
   const wakeAutoEnabledRef = useRef(true)
-  const autoStopRef = useRef<number | null>(null)
+  const sessionActiveRef = useRef(false)
+  const sessionEndsAtRef = useRef(0)
+  const sessionTimerRef = useRef<number | null>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
 
   const setBusyState = (next: boolean) => {
@@ -40,22 +42,71 @@ export function AssistantVoiceButton() {
     if (listener) await listener.stop()
   }
 
+  const endContinuousSession = async () => {
+    sessionActiveRef.current = false
+    sessionEndsAtRef.current = 0
+    setSessionActive(false)
+    if (sessionTimerRef.current !== null) window.clearTimeout(sessionTimerRef.current)
+    sessionTimerRef.current = null
+    const recorder = recorderRef.current
+    if (recorder && recordingRef.current) {
+      recorderRef.current = null
+      recordingRef.current = false
+      setRecording(false)
+      await recorder.cancel()
+    }
+    await rearmWake()
+  }
+
+  const beginContinuousSession = () => {
+    sessionActiveRef.current = true
+    sessionEndsAtRef.current = Date.now() + 30_000
+    setSessionActive(true)
+    if (sessionTimerRef.current !== null) window.clearTimeout(sessionTimerRef.current)
+    sessionTimerRef.current = window.setTimeout(() => { void endContinuousSession() }, 30_000)
+  }
+
+  const startVoiceTurn = async (message = '连续会话：请继续说话，无需重复唤醒词') => {
+    if (recordingRef.current || busyRef.current) return
+    try {
+      recorderRef.current = await startAssistantTurnRecorder({
+        onState: (state) => {
+          if (state === 'speaking') dispatchAssistantState({ phase: 'listening', message: '已听到语音，继续说完即可' })
+          if (state === 'finishing') dispatchAssistantState({ phase: 'thinking', message: '正在结束本轮语音' })
+        },
+        onAutoStop: () => { void finishRecording() },
+      })
+      recordingRef.current = true
+      setRecording(true)
+      dispatchAssistantState({ phase: 'listening', message })
+    } catch (error) {
+      dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })
+      await endContinuousSession()
+    }
+  }
+
   const finishRecording = async () => {
     if (!recordingRef.current) return
     recordingRef.current = false
     setRecording(false)
     setBusyState(true)
+    let continueSession = false
     try {
       const recorder = recorderRef.current
       recorderRef.current = null
       if (!recorder) return
       const text = await transcribeAssistantWav(await recorder.stop())
-      await requestAssistant(text)
+      const result = await requestAssistant(text)
+      continueSession = !result.pendingConfirmation
     } catch (error) {
       dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })
     } finally {
       setBusyState(false)
-      await rearmWake()
+      if (continueSession && sessionActiveRef.current && Date.now() < sessionEndsAtRef.current) await startVoiceTurn()
+      else {
+        if (sessionActiveRef.current) await endContinuousSession()
+        else await rearmWake()
+      }
     }
   }
 
@@ -63,31 +114,28 @@ export function AssistantVoiceButton() {
     if (wakeTriggeredRef.current || recordingRef.current || busyRef.current) return
     wakeTriggeredRef.current = true
     await stopWake()
+    beginContinuousSession()
     const command = removeAssistantWakeWord(transcript)
     if (command) {
       setBusyState(true)
       dispatchAssistantState({ phase: 'thinking', message: '已唤醒，正在处理指令' })
+      let continueSession = false
       try {
-        await requestAssistant(command)
+        const result = await requestAssistant(command)
+        continueSession = !result.pendingConfirmation
       } catch (error) {
         dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })
       } finally {
         setBusyState(false)
-        await rearmWake()
+        if (continueSession && sessionActiveRef.current) await startVoiceTurn()
+        else if (!continueSession) {
+          dispatchAssistantState({ phase: 'idle', message: '等待确认或继续操作' })
+          if (!sessionActiveRef.current) await rearmWake()
+        }
       }
       return
     }
-
-    try {
-      recorderRef.current = await startAssistantRecorder()
-      recordingRef.current = true
-      setRecording(true)
-      dispatchAssistantState({ phase: 'listening', message: `已唤醒，请说出指令（${ASSISTANT_WAKE_WORD}）` })
-      autoStopRef.current = window.setTimeout(() => { void finishRecording() }, 5000)
-    } catch (error) {
-      dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })
-      await rearmWake()
-    }
+    await startVoiceTurn(`已唤醒，请说出指令；本轮结束后可直接继续追问`)
   }
 
   const enableWake = async () => {
@@ -108,6 +156,7 @@ export function AssistantVoiceButton() {
 
   const toggleWake = async () => {
     if (recording || busy) return
+    if (sessionActive) await endContinuousSession()
     if (wakeEnabled) {
       wakeAutoEnabledRef.current = false
       await stopWake()
@@ -119,25 +168,21 @@ export function AssistantVoiceButton() {
   }
 
   const rearmWake = async () => {
-    if (!wakeAutoEnabledRef.current || wakeRef.current || recordingRef.current || busyRef.current) return
+    if (!wakeAutoEnabledRef.current || wakeRef.current || recordingRef.current || busyRef.current || sessionActiveRef.current) return
     await enableWake()
   }
 
   const toggle = async () => {
     if (busy) return
     if (recording) {
-      if (autoStopRef.current !== null) window.clearTimeout(autoStopRef.current)
-      autoStopRef.current = null
       await finishRecording()
       return
     }
 
     try {
+      beginContinuousSession()
       if (wakeEnabled) await stopWake()
-      recorderRef.current = await startAssistantRecorder()
-      recordingRef.current = true
-      setRecording(true)
-      dispatchAssistantState({ phase: 'listening', message: '正在接收语音输入' })
+      await startVoiceTurn('正在接收语音输入；停顿后自动提交')
     } catch (error) {
       dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })
     }
@@ -151,10 +196,36 @@ export function AssistantVoiceButton() {
     }
     void enableWake()
     return () => {
-      if (autoStopRef.current !== null) window.clearTimeout(autoStopRef.current)
+      if (sessionTimerRef.current !== null) window.clearTimeout(sessionTimerRef.current)
+      void recorderRef.current?.cancel()
       void wakeRef.current?.stop()
     }
   }, [])
+
+  useEffect(() => {
+    const onConfirmation = (event: Event) => {
+      const detail = (event as CustomEvent<{ call?: AssistantToolCall | null; summary?: string | null }>).detail
+      if (detail?.call && detail.summary) setPendingConfirmation({ call: detail.call, summary: detail.summary })
+      else setPendingConfirmation(null)
+    }
+    window.addEventListener('forgemind:assistant-confirmation', onConfirmation)
+    return () => window.removeEventListener('forgemind:assistant-confirmation', onConfirmation)
+  }, [])
+
+  const confirmPending = async () => {
+    if (!pendingConfirmation || busy) return
+    setBusyState(true)
+    try {
+      await confirmAssistantAction(pendingConfirmation.call)
+    } catch (error) {
+      dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })
+    } finally {
+      setBusyState(false)
+      setPendingConfirmation(null)
+      if (sessionActiveRef.current && Date.now() < sessionEndsAtRef.current) await startVoiceTurn()
+      else await rearmWake()
+    }
+  }
 
   useEffect(() => {
     const controls = controlsRef.current
@@ -171,6 +242,12 @@ export function AssistantVoiceButton() {
 
   return (
     <div ref={controlsRef} className="fm-assistant-controls">
+      {pendingConfirmation && <div className="fm-assistant-confirm" role="alertdialog" aria-label="确认助手动作">
+        <span>{pendingConfirmation.summary}</span>
+        <button type="button" onClick={() => void confirmPending()} disabled={busy}>确认</button>
+        <button type="button" onClick={() => setPendingConfirmation(null)} disabled={busy}>取消</button>
+      </div>}
+      {sessionActive && <button className="fm-assistant-session-stop" type="button" onClick={() => void endContinuousSession()} disabled={busy} title="结束本次连续语音会话">结束</button>}
       <button
         className={`fm-assistant-mic ${recording ? 'is-recording' : ''} ${busy ? 'is-busy' : ''}`}
         type="button"
