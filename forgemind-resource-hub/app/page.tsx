@@ -6,7 +6,7 @@ import { ThreeWorkbench, type ParametricPart, type PrimitiveKind, type SketchCon
 import { createParametricPartGeometry } from "./cadGeometry";
 import { LEGACY_SKETCH_CANVAS_SPAN_MM } from "../core/sketch/LegacySketchUnits";
 import { instantiateResourceTemplate, resourceBounds, type ModelingResourceTemplate } from "../core/resource/ResourceModeling";
-import { saveCadDocumentHandoff } from "../core/cad/CadDocumentStore";
+import { loadCadDocumentHandoff, saveCadDocumentHandoff } from "../core/cad/CadDocumentStore";
 import { COMPREHENSIVE_DEMO_RESOURCE_ID, comprehensiveDemoLogicalParts, comprehensiveDemoTemplate } from "../core/demo/ComprehensiveDemoProject";
 
 type ResourceKind = "设备" | "材料" | "产品";
@@ -210,12 +210,30 @@ const resourceModelingTemplates: Record<string, ModelingResourceTemplate> = {
 
 const getResourceModelingTemplate = (resourceId: string) => resourceModelingTemplates[resourceId];
 
+const inferMaintainedResourceId = (name: string, parts: ParametricPart[]): string | undefined => {
+  const explicit = parts.map((part) => part.sourceResourceId).find((id): id is string => Boolean(id && resourceModelingTemplates[id]));
+  if (explicit) return explicit;
+  const normalized = name.toLocaleLowerCase("zh-CN");
+  if (/vmc|数控|加工中心/.test(normalized)) return "cnc";
+  if (/机器人|机械臂/.test(normalized)) return "robot";
+  if (/输送|滚筒|传送/.test(normalized)) return "conveyor";
+  if (/冲压|压力机/.test(normalized)) return "press";
+  if (/缓存|托盘仓/.test(normalized)) return "buffer";
+  if (/伺服电机|电机总成/.test(normalized)) return "motor";
+  if (/机加工壳体|壳体零件/.test(normalized)) return "housing";
+  if (/接口盒|router/.test(normalized)) return "router-box";
+  return undefined;
+};
+
 const resourceTemplateToModeling = (template: ModelingResourceTemplate): ResourceModeling => {
   const instantiated = instantiateResourceTemplate(template, [], { placement: "origin", instanceKey: `resource-${template.resourceId}` });
   const bounds = resourceBounds(instantiated.parts);
   return {
     mode: "parametric",
-    modelView: "editable",
+    // Resource cards with a maintained reference asset must never fall back to
+    // the legacy box/cylinder preview. Editing still opens the matching
+    // feature-driven CadDocument through the Part Studio entry.
+    modelView: template.assetPath ? "reference" : "editable",
     projectName: template.projectName,
     materialSpec: template.materialSpec,
     widthM: Math.max(bounds.width, .001),
@@ -243,7 +261,7 @@ export default function Home() {
   const [modelMode, setModelMode] = useState<"parametric" | "sketch" | "hybrid">("parametric");
   const [modelView, setModelView] = useState<ModelView>("editable");
   const [strokes, setStrokes] = useState<SketchStroke[]>([]);
-  const [parts, setParts] = useState<ParametricPart[]>(() => defaultParts.map((part, index) => ({ ...part, selected: index === 0 })));
+  const [parts, setParts] = useState<ParametricPart[]>([]);
   const [assetPath, setAssetPath] = useState("procedural");
   const [uploadedModel, setUploadedModel] = useState<string | null>(null);
   const [uploadedModelName, setUploadedModelName] = useState("");
@@ -254,7 +272,7 @@ export default function Home() {
   const [nextPocketTargetId, setNextPocketTargetId] = useState("");
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [gridDivisions, setGridDivisions] = useState(20);
-  const [activePartId, setActivePartId] = useState(defaultParts[0].id);
+  const [activePartId, setActivePartId] = useState("");
   const [projectName, setProjectName] = useState("VMC-850 加工单元");
   const [projectMaterial, setProjectMaterial] = useState("焊接钢结构 / Q235");
   const [partEngineering, setPartEngineering] = useState<Record<string, PartEngineering>>({});
@@ -268,7 +286,7 @@ export default function Home() {
   const [agentQuestion, setAgentQuestion] = useState("");
   const [agentPlan, setAgentPlan] = useState<AgentPlan | null>(null);
   const [prototypeMode, setPrototypeMode] = useState(false);
-  const [customModelSnapshot, setCustomModelSnapshot] = useState<CustomModelSnapshot>({ name: "我的初始建模", mode: "parametric", modelView: "editable", parts: defaultParts.map((part, index) => ({ ...part, selected: index === 0 })), strokes: [], material: "焊接钢结构 / Q235", partEngineering: {}, assetPath: "procedural", depth: 1, bevel: .035 });
+  const [customModelSnapshot, setCustomModelSnapshot] = useState<CustomModelSnapshot>({ name: "未命名设计", mode: "parametric", modelView: "editable", parts: [], strokes: [], material: "焊接钢结构 / Q235", partEngineering: {}, assetPath: "procedural", depth: 1, bevel: .035 });
   const [undoStack, setUndoStack] = useState<ProjectSnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<ProjectSnapshot[]>([]);
   const [projectStorageReady, setProjectStorageReady] = useState(false);
@@ -376,9 +394,10 @@ export default function Home() {
         const artifact = raw as ResourcePackArtifact; const errors = validateResourcePack(artifact); if (errors.length) throw new Error(errors[0]);
         const modelingResources = artifact.resources.filter((item) => item.modeling && Array.isArray(item.modeling.parametricParts));
         if (!modelingResources.length) { setNotice("资源包有效，但其中没有可转换为 CAD 的建模定义"); return; }
-        const [{ buildCadDocumentFromResourceTemplate }, { createUnifiedCadDocument, mergeCadDocuments }] = await Promise.all([
+        const [{ buildCadDocumentFromResourceTemplate }, { createUnifiedCadDocument, mergeCadDocuments }, { createHighDetailResourceCadDocument }] = await Promise.all([
           import("../core/resource/ResourceCadBridge"),
           import("../core/authoring/UnifiedCadWorkspace"),
+          import("../core/resource/HighDetailResourceCad"),
         ]);
         let document = createUnifiedCadDocument(`资源包建模 · ${file.name.replace(/\.json$/i, "")}`); let applied = 0;
         modelingResources.forEach((item, index) => {
@@ -389,8 +408,9 @@ export default function Home() {
             tolerance: firstEngineering?.tolerance ?? .1, process: firstEngineering?.process ?? item.process ?? "机加工", assetPath: modeling.assetPath,
             parts: modeling.parametricParts,
           };
-          const built = buildCadDocumentFromResourceTemplate(template, { instanceKey: createLocalId(`pack-${item.id}-${index}`) });
-          document = mergeCadDocuments(document, built.document); applied += 1;
+          const highDetail = createHighDetailResourceCadDocument(item.id);
+          const incoming = highDetail ?? buildCadDocumentFromResourceTemplate(template, { instanceKey: createLocalId(`pack-${item.id}-${index}`) }).document;
+          document = mergeCadDocuments(document, incoming); applied += 1;
         });
         document = { ...document, name: `资源包建模 · ${applied} 项`, updatedAt: Date.now() };
         saveCadDocumentHandoff(window.sessionStorage, document); saveCadDocumentHandoff(window.localStorage, document);
@@ -419,7 +439,7 @@ export default function Home() {
     setSelectedId(COMPREHENSIVE_DEMO_RESOURCE_ID);
     const visiblePartCount = Object.values(document.bodies).filter((body) => body.visible).length;
     setNotice(`智能精密工作站已加载：${visiblePartCount} 个成品零件、${comprehensiveDemoLogicalParts.length} 个一体结构件、${document.featureOrder.length} 项可编辑历史。`);
-    window.location.href = `/cad?mode=part&documentId=${encodeURIComponent(document.id)}`;
+    window.location.assign(`/cad?mode=part&documentId=${encodeURIComponent(document.id)}`);
   };
   const openResourceInWorkbench = (resourceId: string) => { void openResourceInProfessionalCad(resourceId, "detail"); };
   const openResourceInProfessionalCad = async (resourceId: string, view: "free" | "detail" = "free") => {
@@ -428,28 +448,45 @@ export default function Home() {
     const template = getResourceModelingTemplate(resourceId);
     if (!resource || !template) { setNotice("该资源暂未配置可转换为 B-Rep 的建模模板"); return; }
     try {
-      const { buildCadDocumentFromResourceTemplate } = await import("../core/resource/ResourceCadBridge");
-      const built = buildCadDocumentFromResourceTemplate(template, { documentName: `${template.projectName} · B-Rep` });
-      saveCadDocumentHandoff(window.sessionStorage, built.document, { sourceResourceId: resourceId });
-      saveCadDocumentHandoff(window.localStorage, built.document, { sourceResourceId: resourceId });
+      const [{ buildCadDocumentFromResourceTemplate }, { createHighDetailResourceCadDocument }] = await Promise.all([
+        import("../core/resource/ResourceCadBridge"),
+        import("../core/resource/HighDetailResourceCad"),
+      ]);
+      const expectedPrecisionId = `cad-resource-${resourceId}-precision-v2`;
+      const stored = loadCadDocumentHandoff(window.sessionStorage, { resourceId }) ?? loadCadDocumentHandoff(window.localStorage, { resourceId });
+      const document = stored?.document.id === expectedPrecisionId
+        ? stored.document
+        : createHighDetailResourceCadDocument(resourceId)
+          ?? buildCadDocumentFromResourceTemplate(template, { documentName: `${template.projectName} · B-Rep` }).document;
+      saveCadDocumentHandoff(window.sessionStorage, document, { sourceResourceId: resourceId });
+      saveCadDocumentHandoff(window.localStorage, document, { sourceResourceId: resourceId });
       setSelectedId(resourceId);
-      setNotice(`已将资源“${resource.title}”写入专业 CAD 会话：${Object.keys(built.document.bodies).length} 个 Body、${built.document.featureOrder.length} 个 Feature。`);
-      window.location.href = `/cad?mode=part&resourceId=${encodeURIComponent(resourceId)}${view === "detail" ? "&view=detail" : ""}`;
+      setNotice(`已将资源“${resource.title}”写入专业 CAD 会话：${Object.keys(document.bodies).length} 个 Body、${document.featureOrder.length} 个 Feature。`);
+      window.location.assign(`/cad?mode=part&resourceId=${encodeURIComponent(resourceId)}${view === "detail" ? "&view=detail" : ""}`);
     } catch (error) {
       setNotice(`专业 CAD 转换失败：${error instanceof Error ? error.message : String(error)}`);
     }
   };
-  const openProfessionalCad = () => { window.location.href = "/cad?mode=part"; };
+  const openProfessionalCad = () => { void createNewProfessionalCad(); };
   const openAssemblyWorkbench = () => { window.location.href = "/assembly"; };
   const openResourcePackInFreeModeling = async (resourceIds: string[]) => {
-    const templates = resourceIds.map((id) => getResourceModelingTemplate(id)).filter((value): value is ModelingResourceTemplate => Boolean(value));
-    if (!templates.length) { setNotice("请先选择可建模资源"); return; }
+    const entries = resourceIds.map((id) => ({ id, template: getResourceModelingTemplate(id) })).filter((value): value is { id: string; template: ModelingResourceTemplate } => Boolean(value.template));
+    if (!entries.length) { setNotice("请先选择可建模资源"); return; }
     try {
-      const { buildCadDocumentFromResourceTemplates } = await import("../core/resource/ResourceCadBridge");
-      const built = buildCadDocumentFromResourceTemplates(templates, { documentName: `资源组合自由建模 · ${templates.length} 项` });
-      saveCadDocumentHandoff(window.sessionStorage, built.document); saveCadDocumentHandoff(window.localStorage, built.document);
-      setNotice(`已将 ${templates.length} 个资源转换为统一 Multi-body CadDocument；正在进入自由建模 Part Studio。`);
-      window.location.href = `/cad?mode=part&documentId=${encodeURIComponent(built.document.id)}`;
+      const [{ buildCadDocumentFromResourceTemplate }, { createUnifiedCadDocument, mergeCadDocuments }, { createHighDetailResourceCadDocument }] = await Promise.all([
+        import("../core/resource/ResourceCadBridge"),
+        import("../core/authoring/UnifiedCadWorkspace"),
+        import("../core/resource/HighDetailResourceCad"),
+      ]);
+      let document = createUnifiedCadDocument(`资源组合装配项目 · ${entries.length} 项`);
+      entries.forEach(({ id, template }, index) => {
+        const incoming = createHighDetailResourceCadDocument(id)
+          ?? buildCadDocumentFromResourceTemplate(template, { instanceKey: createLocalId(`pack-${id}-${index}`) }).document;
+        document = mergeCadDocuments(document, incoming);
+      });
+      saveCadDocumentHandoff(window.sessionStorage, document); saveCadDocumentHandoff(window.localStorage, document);
+      setNotice(`已将 ${entries.length} 个资源转换为统一 Multi-body CadDocument；正在进入自由建模 Part Studio。`);
+      window.location.href = `/cad?mode=part&documentId=${encodeURIComponent(document.id)}`;
     } catch (error) { setNotice(`资源组合 B-Rep 转换失败：${error instanceof Error ? error.message : String(error)}`); }
   };
   const updatePart = (id: string, key: keyof ParametricPart, value: string | number | boolean) => { setModelView("editable"); setParts((current) => current.map((part) => {
@@ -490,20 +527,46 @@ export default function Home() {
     setParts(nextParts); setActivePartId(nextParts[0]?.id ?? ""); setPartEngineering((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== activePart.id))); setNotice(`已删除部件“${activePart.label}”`);
   };
   const createNewProject = () => {
-    setProjectName("未命名项目"); setModelMode("parametric"); setModelView("editable"); setParts([]); setStrokes([]); strokesRef.current = []; setActivePartId(""); setActiveSketchId(""); setPartEngineering({}); setAssetPath("procedural"); setUploadedModel(null); setUploadedModelName(""); setSketchDepth(1); setSketchBevel(.035); setPrototypeMode(false); setDirectEditOutline(null); setDirectEditDraft(null); directEditDraftRef.current = null; setUndoStack([]); setRedoStack([]); setWorkbenchSessionStarted(true); setScreen("workbench"); setNotice("已新建空白项目；从左侧添加结构部件，或切换到草图开始建模。");
+    void createNewProfessionalCad();
   };
-  const applyPreset = (presetKey: string) => { if (!prototypeMode) setCustomModelSnapshot({ name: projectName, mode: modelMode, modelView, parts, strokes, material: projectMaterial, partEngineering, assetPath, depth: sketchDepth, bevel: sketchBevel }); const preset = modelPresets[presetKey]; const freshParts = preset.parts.map((part, index) => ({ ...part, id: createLocalId(`${presetKey}-${part.id}-${index}`), selected: index === 0 })); setParts(freshParts); setPartEngineering({}); setActivePartId(freshParts[0]?.id ?? ""); setProjectName(preset.label); setModelMode("parametric"); setUploadedModel(null); setUploadedModelName(""); setAssetPath(preset.detailAssetPath ?? "procedural"); setModelView(preset.detailAssetPath ? "reference" : "editable"); setDirectEditOutline(null); setDirectEditDraft(null); directEditDraftRef.current = null; setPrototypeMode(true); if (presetKey === "routerBox") { setSelectedId("router-box"); setTone("#d7ac37"); setPack((current) => current.includes("router-box") ? current : [...current, "router-box"]); } setNotice(preset.detailAssetPath ? `已打开 ${preset.label} 的高精度参考外观；切换到“可编辑结构”后可修改参数部件。` : `已加载 ${preset.label} 的可编辑设备装配原型`); };
+  const applyPreset = async (presetKey: string) => {
+    const resourceId = presetKey === "routerBox" ? "router-box" : presetKey;
+    const { createHighDetailResourceCadDocument } = await import("../core/resource/HighDetailResourceCad");
+    const document = createHighDetailResourceCadDocument(resourceId);
+    if (document) {
+      saveCadDocumentHandoff(window.sessionStorage, document, { sourceResourceId: resourceId });
+      saveCadDocumentHandoff(window.localStorage, document, { sourceResourceId: resourceId });
+      setSelectedId(resourceId);
+      setNotice(`已打开 ${document.name}：参考外观与可编辑结构现在使用同一套精细模型。`);
+      window.location.href = `/cad?mode=part&resourceId=${encodeURIComponent(resourceId)}${modelPresets[presetKey]?.detailAssetPath ? "&view=detail" : ""}`;
+      return;
+    }
+    if (!prototypeMode) setCustomModelSnapshot({ name: projectName, mode: modelMode, modelView, parts, strokes, material: projectMaterial, partEngineering, assetPath, depth: sketchDepth, bevel: sketchBevel });
+    const preset = modelPresets[presetKey]; const freshParts = preset.parts.map((part, index) => ({ ...part, id: createLocalId(`${presetKey}-${part.id}-${index}`), selected: index === 0 }));
+    setParts(freshParts); setPartEngineering({}); setActivePartId(freshParts[0]?.id ?? ""); setProjectName(preset.label); setModelMode("parametric"); setUploadedModel(null); setUploadedModelName(""); setAssetPath(preset.detailAssetPath ?? "procedural"); setModelView(preset.detailAssetPath ? "reference" : "editable"); setDirectEditOutline(null); setDirectEditDraft(null); directEditDraftRef.current = null; setPrototypeMode(true);
+    setNotice(`已加载 ${preset.label} 的可编辑设备装配原型`);
+  };
   const returnToCustomModel = useCallback(() => { setProjectName(customModelSnapshot.name); setModelMode(customModelSnapshot.mode); setModelView(customModelSnapshot.modelView); setParts(customModelSnapshot.parts.map((part, index) => ({ ...part, selected: index === 0 }))); setActivePartId(customModelSnapshot.parts[0]?.id ?? ""); setStrokes(customModelSnapshot.strokes); strokesRef.current = customModelSnapshot.strokes; setProjectMaterial(customModelSnapshot.material); setPartEngineering(customModelSnapshot.partEngineering); setSketchDepth(customModelSnapshot.depth); setSketchBevel(customModelSnapshot.bevel); setAssetPath(customModelSnapshot.assetPath); setUploadedModel(null); setUploadedModelName(""); setDirectEditOutline(null); setDirectEditDraft(null); directEditDraftRef.current = null; setPrototypeMode(false); setNotice("已完整恢复进入工业设备原型前的自定义建模状态"); }, [customModelSnapshot]);
   const enterHybridEditing = () => { setModelMode("hybrid"); setModelView("editable"); setUploadedModel(null); setUploadedModelName(""); setNotice(assetPath === "procedural" ? "已进入融合编辑：草图将修整参数化部件包络。" : "已进入融合编辑并切换到可编辑结构；高精度 GLB 保留为只读参考，可随时切回对照。 "); };
   const saveDesignRecord = (name = projectName) => { const record: DesignRecord = { id: createLocalId("design"), name: name || "未命名设计", mode: modelMode, modelView, savedAt: new Date().toLocaleString("zh-CN"), parts, strokes, assetPath, projectMaterial, partEngineering, sketchDepth, sketchBevel }; setDesignRecords((current) => [record, ...current].slice(0, 30)); setNotice(`已保存“${record.name}”，可在设计历史中随时切换`); };
   const restoreDesignRecord = (record: DesignRecord) => { const normalizedStrokes = normalizeSketchStrokes(record.strokes); setProjectName(record.name); setModelMode(record.mode); setModelView(record.modelView === "reference" && record.assetPath !== "procedural" ? "reference" : "editable"); setParts(record.parts.map((part, index) => ({ ...part, selected: index === 0 }))); setActivePartId(record.parts[0]?.id ?? ""); setStrokes(normalizedStrokes); strokesRef.current = normalizedStrokes; setAssetPath(record.assetPath); setProjectMaterial(record.projectMaterial); setPartEngineering(normalizePartEngineering(record.partEngineering)); setSketchDepth(record.sketchDepth); setSketchBevel(record.sketchBevel); setDirectEditOutline(null); setDirectEditDraft(null); directEditDraftRef.current = null; setHistoryOpen(false); setNotice(`已切换到已保存设计：${record.name}`); };
+  const continueRecentProject = () => {
+    const maintainedResourceId = inferMaintainedResourceId(projectName, parts);
+    if (maintainedResourceId) { void openResourceInProfessionalCad(maintainedResourceId); return; }
+    setWorkbenchSessionStarted(true);
+  };
+  const openSavedDesignRecord = (record: DesignRecord) => {
+    const maintainedResourceId = inferMaintainedResourceId(record.name, record.parts);
+    if (maintainedResourceId) { void openResourceInProfessionalCad(maintainedResourceId); return; }
+    restoreDesignRecord(record); setWorkbenchSessionStarted(true);
+  };
   const createAgentPlan = () => { const prompt = agentQuestion.trim().toLowerCase(); const plan: AgentPlan = prompt.includes("机械臂") || prompt.includes("机器人") ? { kind: "robot", title: "六轴机器人装配方案", summary: "采用底板、机器人本体、夹爪、工装台与安全围栏的标准装配结构，并加载高精度机械臂外观。", steps: ["加载六轴机器人单元原型", "确认工装台与机器人底座的地面位置", "编辑末端夹爪、围栏和安全距离", "补充材料、公差与装配工艺"] } : prompt.includes("输送") || prompt.includes("滚筒") || prompt.includes("传送") ? { kind: "conveyor", title: "模块化输送设备方案", summary: "采用铝型材机架、滚筒床面、驱动电机、护栏和传感器的模块化布局。", steps: ["加载滚筒输送原型", "按产线长度调整机架与床面", "设置驱动、电机和传感器位置", "用线性阵列扩展重复模组"] } : prompt.includes("草图") || prompt.includes("手绘") || prompt.includes("外形") || prompt.includes("壳体") ? { kind: "manual", title: "自定义壳体草图方案", summary: "创建带圆角过渡的多段闭合轮廓，并设置实体厚度和倒角作为概念壳体。", steps: ["切换到约束草图", "启用网格吸附并绘制外形", "设定厚度和倒角", "继续增加孔位或附加轮廓"] } : { kind: "cnc", title: "数控加工单元方案", summary: "采用床身、围护、工作台、主轴、刀库、控制箱与排屑装置的完整加工中心结构。", steps: ["加载 VMC-850 原型", "确认床身与减振基础对齐地面", "编辑主轴、工作台与围护尺寸", "设置材料、公差和机加工工艺"] };
     const specifiedDimensions = [...prompt.matchAll(/(\d+(?:\.\d+)?)\s*(?:m|米)/g)].map((match) => `${match[1]} m`);
     plan.parameters = [`目标工艺：${plan.kind === "robot" ? "装配 / 搬运" : plan.kind === "conveyor" ? "连续输送" : plan.kind === "manual" ? "壳体概念设计" : "精密机加工"}`, `建议材料：${plan.kind === "manual" ? "不锈钢钣金 / 304" : "焊接钢结构 / Q235"}`, specifiedDimensions.length ? `识别到的尺寸意图：${specifiedDimensions.join("、")}` : "未给出尺寸：先采用原型比例，应用后可按米制参数精调"] ;
     plan.checks = ["确认与地面基准 Y=0 的定位关系", "复核相邻部件的包络干涉候选", plan.kind === "conveyor" ? "补充 IN / OUT 接口高度与方向" : "确认安全空间与维护开口"];
     setAgentPlan(plan);
   };
-  const applyAgentPlan = () => { if (!agentPlan) return; if (agentPlan.kind === "manual") { const generated: SketchStroke[] = [{ id: createLocalId("agent-sketch"), plane: "top", kind: "spline", points: [{ x: .22, y: .35 }, { x: .32, y: .22 }, { x: .68, y: .22 }, { x: .78, y: .35 }, { x: .75, y: .72 }, { x: .62, y: .8 }, { x: .36, y: .8 }, { x: .25, y: .72 }, { x: .22, y: .35 }] }]; setModelMode("sketch"); setSketchPlane("top"); setSketchCamera("iso"); setProjectName("Agent 生成的自定义壳体"); setSketchTool("spline"); setStrokes(generated); strokesRef.current = generated; setSketchDepth(.16); setSketchBevel(.012); } else { applyPreset(agentPlan.kind); setModelMode("parametric"); } setAgentOpen(false); setNotice(`Agent 已应用“${agentPlan.title}”，可继续在工作台细化。`); };
+  const applyAgentPlan = async () => { if (!agentPlan) return; if (agentPlan.kind === "manual") { const generated: SketchStroke[] = [{ id: createLocalId("agent-sketch"), plane: "top", kind: "spline", points: [{ x: .22, y: .35 }, { x: .32, y: .22 }, { x: .68, y: .22 }, { x: .78, y: .35 }, { x: .75, y: .72 }, { x: .62, y: .8 }, { x: .36, y: .8 }, { x: .25, y: .72 }, { x: .22, y: .35 }] }]; setModelMode("sketch"); setSketchPlane("top"); setSketchCamera("iso"); setProjectName("Agent 生成的自定义壳体"); setSketchTool("spline"); setStrokes(generated); strokesRef.current = generated; setSketchDepth(.16); setSketchBevel(.012); } else { await applyPreset(agentPlan.kind); setModelMode("parametric"); return; } setAgentOpen(false); setNotice(`Agent 已应用“${agentPlan.title}”，可继续在工作台细化。`); };
   const updateEngineering = (id: string, key: keyof PartEngineering, value: string | number) => setPartEngineering((current) => ({ ...current, [id]: { ...defaultPartEngineering(), ...current[id], [key]: value } }));
   const duplicateActive = (mode: "copy" | "mirror" | "pattern") => { if (!activePart) return; setModelView("editable"); const amount = mode === "pattern" ? Math.min(40, Math.max(1, Math.floor(patternCount))) : 1; const fresh = Array.from({ length: amount }, (_, index) => { const ordinal = index + 1; const id = createLocalId(`${activePart.id}-${mode}-${ordinal}`); return { ...activePart, id, selected: ordinal === amount, label: `${activePart.label} ${mode === "mirror" ? "镜像" : mode === "pattern" ? `阵列 ${ordinal}` : "副本"}`, x: mode === "mirror" ? -activePart.x : activePart.x + patternSpacing * ordinal, rotationY: mode === "mirror" ? -(activePart.rotationY ?? 0) : activePart.rotationY }; }); setParts((current) => [...current.map((part) => ({ ...part, selected: false })), ...fresh]); setActivePartId(fresh[fresh.length - 1].id); setNotice(mode === "pattern" ? `已沿 X 轴生成 ${amount} 个阵列实例` : mode === "mirror" ? "已生成 XZ 基准面的镜像部件" : "已生成可独立编辑的部件副本"); };
   const handleModelUpload = (file: File | undefined) => {
@@ -717,11 +780,36 @@ export default function Home() {
   useEffect(() => { if (modelMode !== "parametric" && modelView === "reference") setModelView("editable"); if (modelMode !== "hybrid") { setDirectEditOutline(null); setDirectEditDraft(null); directEditDraftRef.current = null; } }, [modelMode, modelView]);
   // Local storage is an external source and is intentionally hydrated once.
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { try { const saved = window.localStorage.getItem("forgemind-design-history"); if (saved) setDesignRecords(JSON.parse(saved)); } catch { /* local history is optional */ } finally { setHistoryReady(true); } }, []);
+  useEffect(() => { try { const saved = window.localStorage.getItem("forgemind-design-history"); if (saved) { const records = JSON.parse(saved) as DesignRecord[]; setDesignRecords(Array.isArray(records) ? records.filter((record) => !inferMaintainedResourceId(record.name, record.parts ?? [])) : []); } } catch { /* local history is optional */ } finally { setHistoryReady(true); } }, []);
   useEffect(() => { if (!historyReady) return; try { window.localStorage.setItem("forgemind-design-history", JSON.stringify(designRecords)); } catch { /* local history is optional */ } }, [designRecords, historyReady]);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const preparePrecisionCopies = async () => {
+      const { createHighDetailResourceCadDocument, highDetailResourceIds } = await import("../core/resource/HighDetailResourceCad");
+      const pending = [...highDetailResourceIds];
+      const prepareNext = () => {
+        if (cancelled) return;
+        const resourceId = pending.shift();
+        if (!resourceId) return;
+        try {
+          const expectedId = `cad-resource-${resourceId}-precision-v2`;
+          const stored = loadCadDocumentHandoff(window.localStorage, { resourceId });
+          if (stored?.document.id !== expectedId) {
+            const document = createHighDetailResourceCadDocument(resourceId);
+            if (document) saveCadDocumentHandoff(window.localStorage, document, { sourceResourceId: resourceId, markLatest: false });
+          }
+        } catch { /* A failed optional pre-copy must not delay the Resource Hub. */ }
+        if (pending.length) timer = window.setTimeout(prepareNext, 60);
+      };
+      timer = window.setTimeout(prepareNext, 700);
+    };
+    void preparePrecisionCopies();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
+  }, []);
   // Project recovery synchronizes the component with browser storage once.
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { try { const saved = window.localStorage.getItem("forgemind-active-project"); if (saved) { const snapshot = JSON.parse(saved) as ProjectSnapshot; if (snapshot.format === "forgemind-project" && [1, 2].includes(snapshot.version) && Array.isArray(snapshot.parts) && Array.isArray(snapshot.strokes)) applyProjectSnapshot(snapshot, "已恢复本机自动保存的项目草稿"); else snapshotRef.current = null; } else snapshotRef.current = null; } catch { snapshotRef.current = null; } finally { setProjectStorageReady(true); } }, [applyProjectSnapshot]);
+  useEffect(() => { try { const saved = window.localStorage.getItem("forgemind-active-project"); if (saved) { const snapshot = JSON.parse(saved) as ProjectSnapshot; if (snapshot.format === "forgemind-project" && [1, 2].includes(snapshot.version) && Array.isArray(snapshot.parts) && Array.isArray(snapshot.strokes)) { if (inferMaintainedResourceId(snapshot.name, snapshot.parts)) { window.localStorage.removeItem("forgemind-active-project"); snapshotRef.current = null; } else applyProjectSnapshot(snapshot, "已恢复本机自动保存的项目草稿"); } else snapshotRef.current = null; } else snapshotRef.current = null; } catch { snapshotRef.current = null; } finally { setProjectStorageReady(true); } }, [applyProjectSnapshot]);
   useEffect(() => {
     if (!projectStorageReady) return;
     const next = makeProjectSnapshot(); const previous = snapshotRef.current;
@@ -913,7 +1001,7 @@ export default function Home() {
   </div> : null;
   const workbenchWelcome = screen === "workbench" && !workbenchSessionStarted ? <section className="workbench-welcome">
     <aside className="welcome-rail"><div className="welcome-mark">FM</div><div><strong>ForgeMind</strong><small>LEGACY PROJECT COMPATIBILITY</small></div><nav aria-label="欢迎页导航"><button className="active">项目</button><button onClick={() => setScreen("library")}>资源库</button><button onClick={openProfessionalCad}>自由建模</button><button onClick={openAssemblyWorkbench}>装配</button><button onClick={() => setScreen("contract")}>导入规范</button></nav><small className="welcome-version">LOCAL CAD / v0.1</small></aside>
-    <div className="welcome-main"><div className="welcome-copy"><p>FORGEMIND / START</p><h1>开始一个新的<br />工业设计项目。</h1><span>从空白参数化模型、资源库模板，或已有的 ForgeMind 项目文件开始。</span></div><div className="welcome-actions"><button className="welcome-action primary" onClick={createNewProfessionalCad}><b>＋</b><span>新建自由建模项目<small>统一 Sketch / Feature / B-Rep Part Studio</small></span></button><button className="welcome-action" onClick={openComprehensiveDemoProject}><b>◈</b><span>加载全功能精细建模演示<small>参数化实体 / 光顺曲面 / 机械细节 / 装配</small></span></button><button className="welcome-action" onClick={createNewProject}><b>▣</b><span>新建设备建模项目<small>快速添加部件、草图、复制与阵列</small></span></button><button className="welcome-action" onClick={() => setScreen("library")}><b>▤</b><span>从资源库开始<small>设备 / 产品 / 材料直接建模</small></span></button><button className="welcome-action" onClick={openProfessionalCad}><b>◈</b><span>自由建模 Part Studio<small>Sketch / Feature / Direct Edit / STEP</small></span></button><button className="welcome-action" onClick={openAssemblyWorkbench}><b>⌘</b><span>装配工作台<small>Mate Connector / DOF / 实时求解</small></span></button><button className="welcome-action" onClick={() => projectImportInput.current?.click()}><b>▰</b><span>打开项目<small>导入 .forgemind-project.json</small></span></button><button className="welcome-action" onClick={() => setWorkbenchSessionStarted(true)}><b>↻</b><span>继续最近项目<small>{projectStorageReady ? projectName : "读取本机草稿…"}</small></span></button><input ref={projectImportInput} className="visually-hidden" type="file" accept=".json,.forgemind-project.json" onChange={(event) => { importProject(event.target.files?.[0]); event.currentTarget.value = ""; }} /></div>{designRecords.length > 0 && <div className="welcome-recent"><div><p>RECENT DESIGNS</p><strong>最近保存的设计</strong></div>{designRecords.slice(0, 3).map((record) => <button key={record.id} onClick={() => { restoreDesignRecord(record); setWorkbenchSessionStarted(true); }}><i>⌁</i><span><b>{record.name}</b><small>{record.mode === "parametric" ? `${record.parts.length} 个部件` : `${record.strokes.length} 条草图`} · {record.savedAt}</small></span><em>→</em></button>)}</div>}</div>
+    <div className="welcome-main"><div className="welcome-copy"><p>FORGEMIND / START</p><h1>开始一个新的<br />工业设计项目。</h1><span>从空白参数化模型、资源库模板，或已有的 ForgeMind 项目文件开始。</span></div><div className="welcome-actions"><button className="welcome-action primary" onClick={createNewProfessionalCad}><b>＋</b><span>新建自由建模项目<small>统一 Sketch / Feature / B-Rep Part Studio</small></span></button><button className="welcome-action" onClick={openComprehensiveDemoProject}><b>◈</b><span>加载全功能精细建模演示<small>参数化实体 / 光顺曲面 / 机械细节 / 装配</small></span></button><button className="welcome-action" onClick={() => setScreen("library")}><b>▤</b><span>从资源库开始<small>设备 / 产品 / 材料直接建模</small></span></button><button className="welcome-action" onClick={openAssemblyWorkbench}><b>⌘</b><span>装配工作台<small>Mate Connector / DOF / 实时求解</small></span></button><button className="welcome-action" onClick={() => projectImportInput.current?.click()}><b>▰</b><span>打开项目<small>导入 .forgemind-project.json</small></span></button><button className="welcome-action" onClick={continueRecentProject}><b>↻</b><span>继续最近项目<small>{projectStorageReady ? projectName : "读取本机草稿…"}</small></span></button><input ref={projectImportInput} className="visually-hidden" type="file" accept=".json,.forgemind-project.json" onChange={(event) => { importProject(event.target.files?.[0]); event.currentTarget.value = ""; }} /></div>{designRecords.length > 0 && <div className="welcome-recent"><div><p>RECENT DESIGNS</p><strong>最近保存的设计</strong></div>{designRecords.slice(0, 3).map((record) => <button key={record.id} onClick={() => openSavedDesignRecord(record)}><i>⌁</i><span><b>{record.name}</b><small>{record.mode === "parametric" ? `${record.parts.length} 个部件` : `${record.strokes.length} 条草图`} · {record.savedAt}</small></span><em>→</em></button>)}</div>}</div>
   </section> : null;
   return <main className="app-shell">
     <header className="topbar"><button className="brand brand-button" onClick={() => setScreen("overview")} aria-label="ForgeMind Resource Hub 首页"><span>FM</span><div><strong>FORGEMIND</strong><small>RESOURCE HUB / v0.1</small></div></button><nav aria-label="主导航"><button className={screen === "library" ? "active" : ""} onClick={() => setScreen("library")}>资源库</button><button onClick={openProfessionalCad}>自由建模</button><button onClick={openAssemblyWorkbench}>装配</button><button className={screen === "contract" ? "active" : ""} onClick={() => setScreen("contract")}>导入规范</button></nav><div className="top-status"><i /> LOCAL DESIGN MODE</div></header>

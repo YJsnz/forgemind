@@ -463,11 +463,21 @@ export function OcctKernelDebug({ embedded = false, initialDocument, initialNoti
     controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
     controls.rotateSpeed = .58; controls.panSpeed = .78; controls.zoomSpeed = .9;
     controls.minPolarAngle = .02; controls.maxPolarAngle = Math.PI - .02;
+    const visibleBodyCount = Object.values(document.bodies).filter((body) => body.visible !== false).length;
+    const preserveDemoQuality = document.id === "forgemind-smart-precision-cell-demo";
     const fineSurfaceDisplay = /机器人|机械臂|精细/.test(document.name) || Object.values(document.bodies).some((body) => /机器人|机械臂/.test(body.sourceResource?.resourceTitle ?? ""));
-    // 0.3 mm / 4° keeps the fine robot near the reference asset's visual
-    // surface density without turning its many toroidal seals into an
-    // unnecessarily heavy million-triangle viewport.
-    const surfaceTessellation = fineSurfaceDisplay ? { linearDeflectionMm: .3, angularDeflectionDeg: 4 } : { linearDeflectionMm: .5, angularDeflectionDeg: 5 };
+    // Keep the purpose-built comprehensive demo at presentation quality. For
+    // large editable resource models use a balanced interactive mesh; the
+    // original GLB remains available from the high-detail display switch.
+    const surfaceTessellation = preserveDemoQuality
+      ? { linearDeflectionMm: .3, angularDeflectionDeg: 4 }
+      : visibleBodyCount > 60
+        ? { linearDeflectionMm: .9, angularDeflectionDeg: 9 }
+        : visibleBodyCount > 30
+          ? { linearDeflectionMm: .65, angularDeflectionDeg: 7 }
+          : fineSurfaceDisplay
+            ? { linearDeflectionMm: .3, angularDeflectionDeg: 4 }
+            : { linearDeflectionMm: .5, angularDeflectionDeg: 5 };
     const sectionPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), -mmToWorld(sectionOffsetMm));
     const meshes: THREE.Mesh[] = []; const materials: THREE.Material[] = []; const geometries: THREE.BufferGeometry[] = [];
     const edgeLines: THREE.Line[] = []; const edgeGeometries: THREE.BufferGeometry[] = [];
@@ -511,10 +521,27 @@ export function OcctKernelDebug({ embedded = false, initialDocument, initialNoti
     // Register disposal before tessellation starts so a newer rebuild can
     // invalidate this viewport even while kernel work is still in flight.
     renderStateRef.current = { dispose: disposeViewport };
+    const deferEdgePolylines = displayMode === "brep" && visibleBodyCount > 30;
+    const deferredEdgeBodies: Array<{ bodyId: string; shape: KernelShapeRef; sourceFeatureId?: string }> = [];
+    const appendEdgePolylines = (bodyId: string, sourceFeatureId: string | undefined, polylines: KernelEdgePolyline[]) => {
+      for (const polyline of polylines) {
+        const positions = new Float32Array(polyline.positions.length);
+        for (let index = 0; index < positions.length; index += 1) positions[index] = mmToWorld(polyline.positions[index]);
+        const lineGeometry = new THREE.BufferGeometry();
+        lineGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        const line = new THREE.Line(lineGeometry, edgeMaterial);
+        line.visible = displayMode === "brep";
+        line.userData.bodyId = bodyId; line.userData.polyline = polyline; line.userData.sourceFeatureId = sourceFeatureId;
+        scene.add(line); edgeLines.push(line); edgeGeometries.push(lineGeometry);
+      }
+    };
+    let renderedBodyCount = 0;
     for (const [bodyId, body] of Object.entries(document.bodies)) {
       const shape = runtime.bodyShapes.get(bodyId);
       if (!body.visible || !shape) continue;
-      const [tessellation, polylines] = await Promise.all([kernel.tessellate(shape, surfaceTessellation), kernel.getEdgePolylines(shape)]);
+      const [tessellation, polylines] = deferEdgePolylines
+        ? [await kernel.tessellate(shape, surfaceTessellation), [] as KernelEdgePolyline[]]
+        : await Promise.all([kernel.tessellate(shape, surfaceTessellation), kernel.getEdgePolylines(shape)]);
       if (disposed || viewportBuildId !== viewportBuildIdRef.current) { disposeViewport(); return; }
       const geometry = kernelTessellationToBufferGeometry(tessellation);
       geometry.computeBoundingBox(); geometry.computeBoundingSphere();
@@ -526,7 +553,12 @@ export function OcctKernelDebug({ embedded = false, initialDocument, initialNoti
       geometry.addGroup(0, tessellation.indices.length, 0);
       const tipFeatureId = deriveBodyTipFeatureId(document, bodyId) ?? body.tipFeatureId;
       const mesh = new THREE.Mesh(geometry, [material, selectedFaceMaterial]); mesh.visible = displayMode === "brep"; mesh.userData.bodyId = bodyId; mesh.userData.tessellation = tessellation; mesh.userData.sourceFeatureId = tipFeatureId; mesh.userData.baseMaterial = material; mesh.userData.selectedFaceMaterial = selectedFaceMaterial; mesh.userData.zebraMaterial = zebraMaterial; scene.add(mesh); meshes.push(mesh); geometries.push(geometry); materials.push(material, selectedFaceMaterial, zebraMaterial);
-      for (const polyline of polylines) { const positions = new Float32Array(polyline.positions.length); for (let index = 0; index < positions.length; index += 1) positions[index] = mmToWorld(polyline.positions[index]); const lineGeometry = new THREE.BufferGeometry(); lineGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3)); const line = new THREE.Line(lineGeometry, edgeMaterial); line.visible = displayMode === "brep"; line.userData.bodyId = bodyId; line.userData.polyline = polyline; line.userData.sourceFeatureId = tipFeatureId; scene.add(line); edgeLines.push(line); edgeGeometries.push(lineGeometry); }
+      appendEdgePolylines(bodyId, tipFeatureId, polylines);
+      if (deferEdgePolylines) deferredEdgeBodies.push({ bodyId, shape, sourceFeatureId: tipFeatureId });
+      renderedBodyCount += 1;
+      // Let React paint status/progress and keep input responsive while a
+      // resource with many independent parts is being tessellated.
+      if (renderedBodyCount % 6 === 0) await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     }
     if (disposed || viewportBuildId !== viewportBuildIdRef.current) { disposeViewport(); return; }
     const controlNetOverlay = createCadControlNetOverlay({
@@ -683,6 +715,16 @@ export function OcctKernelDebug({ embedded = false, initialDocument, initialNoti
     setView("iso");
     if (disposed || viewportBuildId !== viewportBuildIdRef.current) { disposeViewport(); return; }
     renderStateRef.current = { dispose: disposeViewport, fit, setView, setSection, highlightFace: highlightTopologyFace, setSurfaceInspection, showSurfaceHeatmap, showCurvatureComb, setControlNetFeature: (featureId) => controlNetOverlay?.setActiveFeature(featureId) };
+    if (deferredEdgeBodies.length) void (async () => {
+      for (let index = 0; index < deferredEdgeBodies.length; index += 1) {
+        const entry = deferredEdgeBodies[index];
+        const polylines = await kernel.getEdgePolylines(entry.shape);
+        if (disposed || viewportBuildId !== viewportBuildIdRef.current) return;
+        appendEdgePolylines(entry.bodyId, entry.sourceFeatureId, polylines);
+        if ((index + 1) % 4 === 0) await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      }
+      requestRender();
+    })();
     void loadReferenceAsset();
     setBodyPanel(Object.entries(document.bodies).map(([id, body]) => ({ id, name: body.name, visible: body.visible, active: id === document.activeBodyId, construction: body.name.startsWith("构造体 · "), bodyType: body.bodyType ?? "solid", sourceCode: body.sourceResource?.resourceCode, material: body.engineering?.material })).sort((a, b) => Number(b.visible) - Number(a.visible)));
     const nextFeatures = document.featureOrder.map((id) => document.features[id]).filter((feature): feature is Feature => !!feature).map((feature) => ({ id: feature.id, name: feature.name, type: feature.type, typeLabel: featureTypeLabel(feature.type), enabled: feature.enabled, state: feature.state, stateLabel: featureStateLabel(feature), bodyId: feature.bodyId, summary: featureSummary(feature), dependencyCount:feature.dependencies.length }));
@@ -1747,6 +1789,30 @@ export function OcctKernelDebug({ embedded = false, initialDocument, initialNoti
     return { kernel, runtime, document };
   };
 
+  const startNewCadProject = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const kernel = kernelRef.current ?? new OcctKernel();
+      if (!kernelRef.current) { await kernel.init(); kernelRef.current = kernel; }
+      if (runtimeRef.current) await disposeCadRuntimeState(runtimeRef.current, kernel);
+      const document = createEmptyProfessionalCadDocument(createWorkbenchId("cad"), "未命名自由建模项目");
+      runtimeRef.current = createCadRuntimeState();
+      rebuildStateRef.current = createRebuildRuntimeState();
+      cadDocumentRef.current = document;
+      cadHistoryRef.current = createCadHistory(document);
+      cadAssetsRef.current = createCadAssetStore();
+      currentFeatureIdRef.current = undefined;
+      currentShapeRef.current = undefined;
+      selectedTopologyRef.current = undefined;
+      setSelectedBodyId(""); setSelectedSketchId(""); setSelectedFeatureId(""); setEditingSketchId("");
+      setSelection("未选择"); setBodyPanel([]); setFeaturePanel([]); setHistoryAvailability({ undo: false, redo: false });
+      renderStateRef.current?.dispose(); renderStateRef.current = undefined;
+      setStatus("已新建空白项目：先创建草图或添加实体，再选择成形方式生成特征。");
+    } catch (error) { setStatus(`NEW_PROJECT_FAILED：${error instanceof Error ? error.message : String(error)}`); }
+    finally { setBusy(false); }
+  };
+
   const createUnifiedSketch = async (plane: "XY" | "XZ" | "YZ" | "face") => {
     if (busy) return;
     setBusy(true);
@@ -2543,6 +2609,7 @@ export function OcctKernelDebug({ embedded = false, initialDocument, initialNoti
   const openReadiness = () => { setCadAgentOpen(false); setCommandPaletteOpen(false); setReadinessOpen(true); };
   const commandItems: CadCommandItem[] = [
     { name: "需求建模 Agent", category: "开始", keywords: "智能 自然语言 新手 设备 零件", action: () => { setCadAgentOpen(true); setReadinessOpen(false); setCommandPaletteOpen(false); } },
+    { name: "新建项目", category: "开始", keywords: "空白 项目 重置 new", action: () => { setCommandPaletteOpen(false); void startNewCadProject(); }, disabled: busy },
     { name: "快速新建方块", category: "开始", keywords: "实体 矩形 拉伸 block", action: () => { setCommandPaletteOpen(false); void appendNewPrimitive("rectangle"); }, disabled: busy },
     { name: "快速新建圆柱", category: "开始", keywords: "实体 圆 草图 拉伸 cylinder", action: () => { setCommandPaletteOpen(false); void appendNewPrimitive("circle"); }, disabled: busy },
     { name: "新建 XY 草图", category: "建模", keywords: "二维 轮廓 sketch", action: () => { setCommandPaletteOpen(false); void createUnifiedSketch("XY"); }, disabled: busy },
@@ -2607,6 +2674,7 @@ export function OcctKernelDebug({ embedded = false, initialDocument, initialNoti
           toggleSection: () => { const enabled = !sectionEnabled; setSectionEnabled(enabled); renderStateRef.current?.setSection?.(enabled, sectionOffsetMm); },
           showShortcutHelp: () => setStatus("快捷键：Ctrl / Cmd + K 搜索命令；Ctrl / Cmd + S 保存；Ctrl / Cmd + Z 撤销；Ctrl / Cmd + Shift + Z 或 Ctrl / Cmd + Y 重做；F 适合窗口；0/1/2/3 切换 ISO/前/顶/右；Esc 取消。"),
           openAgent: () => setCadAgentOpen(true),
+          newProject: () => { void startNewCadProject(); },
           openCommandPalette: () => { setCommandQuery(""); setCommandPaletteOpen(true); },
           openReadiness,
           exportCadProject,

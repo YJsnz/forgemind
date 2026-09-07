@@ -155,3 +155,4 @@
 @media(max-width:1500px){.cad-commandbar{grid-template-columns:repeat(4,minmax(0,1fr))}.cad-workspace{grid-template-columns:240px minmax(440px,1fr) 330px}.assembly-workspace{grid-template-columns:260px minmax(460px,1fr) 350px}}
 @media(max-width:1100px){.cad-commandbar{grid-template-columns:repeat(3,minmax(0,1fr))}.cad-workspace{grid-template-columns:220px minmax(380px,1fr) 300px}.assembly-workbench{min-width:1020px}.assembly-workspace{grid-template-columns:250px minmax(430px,1fr) 340px}}
 @media(max-width:900px){.cad-commandbar{grid-template-columns:repeat(2,minmax(0,1fr))}.cad-workspace{grid-template-columns:210px minmax(340px,1fr) 280px}}
+.cad-route-view-switch{display:flex;align-items:center;gap:2px;border:1px solid var(--line);background:#f6f7f1;padding:2px}.cad-route-view-switch button{border:0;background:transparent;color:#62706c;padding:7px 10px;font-size:12px}.cad-route-view-switch button.active{background:#20322f;color:#fff}

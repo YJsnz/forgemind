@@ -3,7 +3,9 @@ param(
   [switch]$Check,
   [switch]$NoBrowser,
   [int]$Port = 3000,
-  [switch]$SkipInstall
+  [switch]$SkipInstall,
+  [ValidateSet("library", "cad")]
+  [string]$Entry = "library"
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,7 +40,7 @@ if (-not $hasDependencies -and -not $SkipInstall) {
 }
 if (-not $hasDependencies) { throw "The vinext dependency is missing. Run npm ci or remove -SkipInstall." }
 
-$url = "http://localhost:$Port/cad?mode=part"
+$url = if ($Entry -eq "cad") { "http://localhost:$Port/cad?mode=part" } else { "http://localhost:$Port/?screen=library" }
 if ($Check) {
   Write-Host "ForgeMind startup environment is ready" -ForegroundColor Green
   Write-Host "Node.js $nodeVersion"
@@ -55,7 +57,7 @@ if (-not $Check) {
   $existingUrl = $null
   $candidatePorts = @($Port, 3000) | Select-Object -Unique
   foreach ($candidatePort in $candidatePorts) {
-    $candidateUrl = "http://localhost:$candidatePort/cad?mode=part"
+    $candidateUrl = if ($Entry -eq "cad") { "http://localhost:$candidatePort/cad?mode=part" } else { "http://localhost:$candidatePort/?screen=library" }
     try {
       $response = Invoke-WebRequest -UseBasicParsing -Uri $candidateUrl -TimeoutSec 2
       if ($response.StatusCode -eq 200 -and $response.Content -match "ForgeMind") {
