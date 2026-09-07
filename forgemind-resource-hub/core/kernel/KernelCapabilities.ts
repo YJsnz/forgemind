@@ -1,0 +1,42 @@
+/** Declares what a runtime kernel can actually execute, not what the UI offers. */
+export interface KernelCapabilities {
+  backend: string;
+  version?: string;
+  brep: boolean;
+  extrude: boolean;
+  revolve: boolean;
+  sweep: boolean;
+  loft: boolean;
+  mechanicalDetail?: boolean;
+  booleanUnion: boolean;
+  booleanCut: boolean;
+  booleanIntersect: boolean;
+  fillet: boolean;
+  variableFillet?: boolean;
+  chamfer: boolean;
+  shell: boolean;
+  surfacePatch?: boolean;
+  surfaceExtrude?: boolean;
+  surfaceRevolve?: boolean;
+  surfaceSweep?: boolean;
+  surfaceLoft?: boolean;
+  surfaceExtract?: boolean;
+  surfaceOffset?: boolean;
+  surfaceSew?: boolean;
+  surfaceThicken?: boolean;
+  surfaceEnclose?: boolean;
+  surfaceFill?: boolean;
+  surfaceTrim?: boolean;
+  surfaceBSpline?: boolean;
+  surfaceCurvature?: boolean;
+  surfaceBoundary?: boolean;
+  surfaceContinuityAnalysis?: boolean;
+  surfaceSplit?: boolean;
+  surfaceReplaceFace?: boolean;
+  surfaceIntersection?: boolean;
+  validation: boolean;
+  healing: boolean;
+  tessellation: boolean;
+  stepImport?: boolean;
+  stepExport?: boolean;
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forgemind.local/schemas/resource-pack/v1",
+  "title": "ForgeMind Resource Pack v1",
+  "type": "object",
+  "required": ["format", "schema", "schemaVersion", "exportedAt", "resources"],
+  "properties": {
+    "format": { "const": "forgemind-resource-pack" },
+    "schema": { "const": "https://forgemind.local/schemas/resource-pack/v1" },
+    "schemaVersion": { "const": "1.0.0" },
+    "exportedAt": { "type": "string", "format": "date-time" },
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/resource" }
+    }
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "required": ["id", "kind", "title", "code"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["设备", "材料", "产品"] },
+        "title": { "type": "string", "minLength": 1 },
+        "code": { "type": "string", "minLength": 1 },
+        "modeling": { "$ref": "#/$defs/modeling" }
+      }
+    },
+    "modeling": {
+      "type": "object",
+      "required": ["mode", "projectName", "widthM", "depthM", "heightM", "modelReference"],
+      "properties": {
+        "mode": { "enum": ["parametric", "sketch", "hybrid"] },
+        "projectName": { "type": "string", "minLength": 1 },
+        "widthM": { "type": "number", "exclusiveMinimum": 0 },
+        "depthM": { "type": "number", "exclusiveMinimum": 0 },
+        "heightM": { "type": "number", "exclusiveMinimum": 0 },
+        "modelReference": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": { "kind": { "enum": ["asset-path", "local-glb"] } }
+        },
+        "parametricParts": { "type": "array" },
+        "manualSketch": { "type": "array" }
+      }
+    }
+  }
+}
