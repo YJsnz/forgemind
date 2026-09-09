@@ -31,9 +31,12 @@ import {
 } from 'lucide'
 import { MorphingIcon } from './MorphingIcon'
 import { fetchFactoryProject } from '../api/factoryProjects'
+import type { FactorySave } from '../game/save'
+import { getFactoryObjectDisplayName } from '../game/types'
 import { addForgeCloudMember, addForgeCloudProjectMember, aggregateForgeCloudTelemetryWindow, archiveForgeCloudKnowledge, createForgeCloudApproval, createForgeCloudAsset, createForgeCloudAssetTwin, createForgeCloudAssetVersion, createForgeCloudComment, createForgeCloudConnector, createForgeCloudDataPoint, createForgeCloudKnowledge, createForgeCloudProject, createForgeCloudProjectVersion, createForgeCloudPublication, createForgeCloudRelease, createForgeCloudTagMapping, createForgeCloudTask, createForgeCloudTwin, createForgeCloudWorkspace, createForgeCloudMaintenanceRecord, createForgeCloudQualityResult, createForgeCloudWorkOrder, decideForgeCloudApproval, heartbeatForgeCloudDevice, ingestForgeCloudDataEvent, listForgeCloudAssetVersions, listForgeCloudComments, listForgeCloudProjectMembers, loadForgeCloudAiControlPlane, loadForgeCloudAiKnowledgeContent, loadForgeCloudAiKnowledgeIndex, loadForgeCloudAiMetrics, loadForgeCloudSnapshot, markForgeCloudNotificationsRead, queueForgeCloudAiTask, registerForgeCloudDevice, runForgeCloudAiTask, runForgeCloudConnectorSync, updateForgeCloudMemberRole, updateForgeCloudTaskStatus, updateForgeCloudWorkOrderStatus, uploadForgeCloudAssetBlob, type ForgeCloudAiControlPlane, type ForgeCloudAiKnowledgeSource, type ForgeCloudAiMetrics, type ForgeCloudApproval, type ForgeCloudArchive, type ForgeCloudAsset, type ForgeCloudAssetTwin, type ForgeCloudComment, type ForgeCloudConnector, type ForgeCloudConnectorSyncRun, type ForgeCloudDataPoint, type ForgeCloudDatabaseStatus, type ForgeCloudHealth, type ForgeCloudKnowledgeDocument, type ForgeCloudLayer, type ForgeCloudMaintenanceRecord, type ForgeCloudMember, type ForgeCloudProject, type ForgeCloudProjectMember, type ForgeCloudQualityResult, type ForgeCloudRelease, type ForgeCloudRuntimeEvent, type ForgeCloudTagMapping, type ForgeCloudTask, type ForgeCloudTelemetryWindow, type ForgeCloudTwin, type ForgeCloudWorkOrder } from '../api/forgeCloud'
 import { readAssistantCloudSettings, writeAssistantCloudSettings, type AssistantCloudSettings } from '../game/assistantCloudSettings'
 import { cacheAssistantKnowledge } from '../game/assistantKnowledge'
+import '../forgecloud-intelligence.css'
 
 type CloudSection = 'overview' | 'projects' | 'assets' | 'releases' | 'connections' | 'operations' | 'tasks' | 'members' | 'audit' | 'devices' | 'twins' | 'data' | 'ai'
 
@@ -176,6 +179,7 @@ export function ForgeCloudConsole({ onExit, onLogout, onEnterWorkspace, onNaviga
   const [notice, setNotice] = useState('')
   const [remoteSnapshot, setRemoteSnapshot] = useState<Awaited<ReturnType<typeof loadForgeCloudSnapshot>> | null>(null)
   const [remoteState, setRemoteState] = useState<'loading' | 'online' | 'offline'>('loading')
+  const [archiveSave, setArchiveSave] = useState<FactorySave | null>(null)
   const [aiControlPlane, setAiControlPlane] = useState<ForgeCloudAiControlPlane | null>(null)
   const [aiMetrics, setAiMetrics] = useState<ForgeCloudAiMetrics | null>(null)
   const [aiKnowledgeIndex, setAiKnowledgeIndex] = useState<ForgeCloudAiKnowledgeSource[]>([])
@@ -202,6 +206,24 @@ export function ForgeCloudConsole({ onExit, onLogout, onEnterWorkspace, onNaviga
       })
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    const archive = remoteSnapshot?.overview.archive
+    if (!archive?.projectId) {
+      setArchiveSave(null)
+      return
+    }
+    let cancelled = false
+    setArchiveSave(null)
+    void fetchFactoryProject(archive.projectId)
+      .then((detail) => {
+        if (!cancelled && isFactorySave(detail.save)) setArchiveSave(detail.save)
+      })
+      .catch(() => {
+        if (!cancelled) setArchiveSave(null)
+      })
+    return () => { cancelled = true }
+  }, [remoteSnapshot?.overview.archive?.projectId, remoteSnapshot?.overview.archive?.version])
 
   useEffect(() => {
     if (remoteSnapshot) cacheAssistantKnowledge(remoteSnapshot.knowledge)
@@ -563,9 +585,9 @@ export function ForgeCloudConsole({ onExit, onLogout, onEnterWorkspace, onNaviga
           {section === 'tasks' && <TasksPanel rows={remoteSnapshot?.tasks ?? null} approvals={remoteSnapshot?.approvals ?? null} onNotice={showNotice} onCreate={() => openDialog({ kind: 'task' })} onCreateApproval={() => openDialog({ kind: 'approval' })} onStatus={(taskId, status) => { void updateForgeCloudTaskStatus(taskId, status).then(() => refreshWorkspace()).then(() => showNotice('任务状态已更新')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : '任务状态更新失败')) }} onDecision={(approvalId, status) => { void decideForgeCloudApproval(approvalId, status).then(() => refreshWorkspace()).then(() => showNotice('审批决策已记录')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : '审批决策失败')) }} />}
           {section === 'members' && <MembersPanel rows={remoteSnapshot?.members ?? null} workspaceName={remoteSnapshot?.workspace.name ?? '离线预览'} canManage={remoteSnapshot?.workspace.role === 'owner' || remoteSnapshot?.workspace.role === 'admin'} onInvite={() => openDialog({ kind: 'member' })} onEditRole={(member) => openDialog({ kind: 'role', member })} onNotice={showNotice} />}
           {section === 'audit' && <AuditPanel rows={remoteSnapshot?.audit ?? null} onNotice={showNotice} />}
-          {section === 'devices' && <IntelligencePanel kind="devices" rows={remoteSnapshot?.devices ?? []} onNotice={showNotice} onCreate={() => openDialog({ kind: 'device' })} onHeartbeat={(deviceId) => { void heartbeatForgeCloudDevice(deviceId).then(() => refreshWorkspace()).then(() => showNotice('设备心跳已写入')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : '设备心跳写入失败')) }} />}
-          {section === 'twins' && <IntelligencePanel kind="twins" rows={remoteSnapshot?.twins ?? []} onNotice={showNotice} onCreate={() => openDialog({ kind: 'twin' })} />}
-          {section === 'data' && <IntelligencePanel kind="data" rows={remoteSnapshot?.dataPoints ?? []} onNotice={showNotice} onCreate={() => openDialog({ kind: 'data-point' })} onDataEvent={(pointId, value) => { if (!remoteSnapshot) return; void ingestForgeCloudDataEvent({ workspaceId: remoteSnapshot.workspace.id, pointId, value }).then(() => refreshWorkspace()).then(() => showNotice('手动遥测事件已写入')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : '遥测事件写入失败')) }} />}
+          {section === 'devices' && <IntelligencePanel kind="devices" rows={remoteSnapshot?.devices ?? []} archive={remoteSnapshot?.overview.archive ?? null} archiveSave={archiveSave} onNotice={showNotice} onCreate={() => openDialog({ kind: 'device' })} onHeartbeat={(deviceId) => { void heartbeatForgeCloudDevice(deviceId).then(() => refreshWorkspace()).then(() => showNotice('设备心跳已写入')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : '设备心跳写入失败')) }} />}
+          {section === 'twins' && <IntelligencePanel kind="twins" rows={remoteSnapshot?.twins ?? []} archive={remoteSnapshot?.overview.archive ?? null} archiveSave={archiveSave} onNotice={showNotice} onCreate={() => openDialog({ kind: 'twin' })} />}
+          {section === 'data' && <IntelligencePanel kind="data" rows={remoteSnapshot?.dataPoints ?? []} archive={remoteSnapshot?.overview.archive ?? null} archiveSave={archiveSave} onNotice={showNotice} onCreate={() => openDialog({ kind: 'data-point' })} onDataEvent={(pointId, value) => { if (!remoteSnapshot) return; void ingestForgeCloudDataEvent({ workspaceId: remoteSnapshot.workspace.id, pointId, value }).then(() => refreshWorkspace()).then(() => showNotice('手动遥测事件已写入')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : '遥测事件写入失败')) }} />}
           {section === 'ai' && <AiControlPanel controlPlane={aiControlPlane} metrics={aiMetrics} builtInKnowledge={aiKnowledgeIndex} workspaceKnowledge={remoteSnapshot?.knowledge ?? []} rows={remoteSnapshot?.aiTasks ?? []} onNotice={showNotice} onCreate={() => openDialog({ kind: 'ai-task' })} onAiRun={(taskId) => { void runForgeCloudAiTask(taskId).then(() => refreshWorkspace()).then(() => showNotice('规则 AI 任务已完成并写回结果')).catch((error: unknown) => showNotice(error instanceof Error ? error.message : 'AI 任务执行失败')) }} onCreateKnowledge={async (input) => { if (!remoteSnapshot) throw new Error('请先连接 ForgeCloud'); await createForgeCloudKnowledge({ workspaceId: remoteSnapshot.workspace.id, ...input }); await refreshWorkspace(remoteSnapshot.workspace.id); showNotice('知识条目已加入当前工作空间') }} onArchiveKnowledge={async (id) => { if (!remoteSnapshot) throw new Error('请先连接 ForgeCloud'); await archiveForgeCloudKnowledge(remoteSnapshot.workspace.id, id); await refreshWorkspace(remoteSnapshot.workspace.id); showNotice('知识条目已归档') }} onLoadBuiltIn={loadForgeCloudAiKnowledgeContent} />}
         </main>
       </div>
@@ -909,8 +931,8 @@ function AuditPanel({ rows, onNotice }: { rows: import('../api/forgeCloud').Forg
   return <section className="fc-list-page"><ListToolbar eyebrow="GOVERNANCE / AUDIT TRAIL" title="活动与审计" action="导出审计" onAction={exportAudit} /><div className="fc-audit-filter"><button type="button" className="is-active">全部活动</button><button type="button">ForgeMind</button><button type="button">ForgeHub3D</button><button type="button">ForgeMove</button><button type="button">系统与连接</button><span>{rows?.length ? '云端活动 / 最近记录' : '今天 / 最近 24 小时'}</span></div><div className="fc-table-card"><div className="fc-table-head fc-audit-table"><span>主体</span><span>来源</span><span>动作</span><span>目标</span><span>结果</span><span>时间</span></div>{displayRows.map((row) => <div className="fc-table-row fc-audit-table" key={`${row.actor}-${row.action}-${row.time}`}><span className="fc-audit-actor"><i>{row.actor.slice(0, 1)}</i><strong>{row.actor}</strong></span><span>{row.source}</span><span>{row.action}</span><code>{row.target}</code><span><em className={`fc-state-pill ${row.result === '成功' || row.result === 'success' ? 'green' : 'red'}`}>{row.result}</em></span><time>{row.time}</time></div>)}</div></section>
 }
 
-function ListToolbar({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action: string; onAction: () => void }) {
-  return <div className="fc-list-toolbar"><div><span className="fc-eyebrow">{eyebrow}</span><h2>{title}</h2></div><button type="button" className="fc-primary-button" onClick={onAction}>＋ {action}</button></div>
+function ListToolbar({ eyebrow, title, description, action, onAction }: { eyebrow: string; title: string; description?: string; action: string; onAction: () => void }) {
+  return <div className="fc-list-toolbar"><div><span className="fc-eyebrow">{eyebrow}</span><h2>{title}</h2>{description && <p className="fc-list-description">{description}</p>}</div><button type="button" className="fc-primary-button" onClick={onAction}>＋ {action}</button></div>
 }
 
 function AiControlPanel({ controlPlane, metrics, builtInKnowledge, workspaceKnowledge, rows, onNotice, onCreate, onAiRun, onCreateKnowledge, onArchiveKnowledge, onLoadBuiltIn }: { controlPlane: ForgeCloudAiControlPlane | null; metrics: ForgeCloudAiMetrics | null; builtInKnowledge: ForgeCloudAiKnowledgeSource[]; workspaceKnowledge: ForgeCloudKnowledgeDocument[]; rows: unknown[]; onNotice: (message: string) => void; onCreate: () => void; onAiRun: (taskId: string) => void; onCreateKnowledge: (input: { title: string; category: string; source?: string; content: string }) => Promise<void>; onArchiveKnowledge: (id: string) => Promise<void>; onLoadBuiltIn: (source: string) => Promise<ForgeCloudKnowledgeDocument> }) {
@@ -1027,21 +1049,121 @@ function knowledgeCategoryLabel(category: string) {
   return ({ product: '产品说明', process: '工艺流程', operations: '运行经验', safety: '安全规范', custom: '自定义', workspace_knowledge: '工作空间' } as Record<string, string>)[category] ?? category
 }
 
-function IntelligencePanel({ kind, rows, onNotice, onCreate, onHeartbeat, onDataEvent, onAiRun }: { kind: 'devices' | 'twins' | 'data' | 'ai'; rows: unknown[]; onNotice: (message: string) => void; onCreate: () => void; onHeartbeat?: (deviceId: string) => void; onDataEvent?: (pointId: string, value: unknown) => void; onAiRun?: (taskId: string) => void }) {
+function isFactorySave(value: unknown): value is FactorySave {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<FactorySave>
+  return Array.isArray(candidate.objects) && Array.isArray(candidate.items) && Array.isArray(candidate.recipes) && Array.isArray(candidate.floorNames)
+}
+
+function archiveFloorName(save: FactorySave | null, floorId: unknown) {
+  const index = typeof floorId === 'number' ? floorId - 1 : 0
+  return save?.floorNames[index] ?? `L${typeof floorId === 'number' ? floorId : 1}`
+}
+
+function archiveObjectKind(type: string) {
+  if (['agv', 'drone'].includes(type)) return '物流设备'
+  if (['inboundWarehouse', 'outboundWarehouse', 'storage'].includes(type)) return '仓储设备'
+  if (['conveyor', 'inclineUp', 'inclineDown', 'splitter', 'merger'].includes(type)) return '传送物流'
+  if (type === 'source') return '供料设备'
+  return '生产设备'
+}
+
+function archiveDeviceRows(archive: ForgeCloudArchive, save: FactorySave | null): Array<Record<string, unknown>> {
+  const deviceTypes = new Set(['source', 'inboundWarehouse', 'outboundWarehouse', 'machine', 'oreMiner', 'smelter', 'press', 'assembler', 'inspection', 'washing', 'agv', 'drone', 'storage'])
+  const objects = save?.objects.filter((object) => deviceTypes.has(object.type)) ?? []
+  if (!objects.length) return [{ id: `archive-device-${archive.projectId}`, name: `${archive.projectName} · 存档设备集合`, type: '存档设备', status: '已读取', endpoint: `ForgeMind / v${archive.version} · ${archive.machines} 台生产设备 · ${archive.vehicles} 台车辆`, lastSeenAt: '未接入现场', archiveSource: true }]
+  return objects.map((object) => ({
+    id: `archive-device-${object.id}`,
+    name: getFactoryObjectDisplayName(object),
+    type: archiveObjectKind(object.type),
+    status: '存档对象',
+    endpoint: `ForgeMind / ${archiveFloorName(save, object.floorId)}`,
+    lastSeenAt: '未接入现场',
+    archiveSource: true,
+  }))
+}
+
+function archiveTwinRows(archive: ForgeCloudArchive, save: FactorySave | null): Array<Record<string, unknown>> {
+  const floorCount = Math.max(1, archive.floors)
+  const rows: Array<Record<string, unknown>> = [{
+    id: `archive-twin-${archive.projectId}`,
+    name: archive.projectName,
+    type: '工厂孪生',
+    quality: 'deterministic',
+    sourceDevice: `ForgeMind / v${archive.version}`,
+    lastStateAt: archive.updatedAt ?? '当前存档',
+    status: 'snapshot',
+    state: { source: 'factory_archive', objects: archive.objects, machines: archive.machines, floors: archive.floors },
+    archiveSource: true,
+  }]
+  for (let index = 0; index < floorCount; index += 1) {
+    const floorId = index + 1
+    const objects = save?.objects.filter((object) => (object.floorId ?? 1) === floorId) ?? []
+    rows.push({
+      id: `archive-twin-${archive.projectId}-l${floorId}`,
+      name: `${archiveFloorName(save, floorId)} · 产线孪生`,
+      type: '楼层产线',
+      quality: 'deterministic',
+      sourceDevice: `ForgeMind / L${floorId}`,
+      lastStateAt: archive.updatedAt ?? '当前存档',
+      status: 'snapshot',
+      state: { source: 'factory_archive', floor: floorId, objects: objects.length },
+      archiveSource: true,
+    })
+  }
+  return rows
+}
+
+function archiveDataRows(archive: ForgeCloudArchive, save: FactorySave | null): Array<Record<string, unknown>> {
+  const machineCount = save?.objects.filter((object) => ['machine', 'oreMiner', 'smelter', 'press', 'assembler', 'inspection', 'washing'].includes(object.type)).length ?? archive.machines
+  const conveyorCount = save?.objects.filter((object) => ['conveyor', 'inclineUp', 'inclineDown', 'splitter', 'merger'].includes(object.type)).length ?? archive.conveyors
+  const values = [
+    ['factory.object_count', '对象总数', archive.objects],
+    ['factory.machine_count', '生产设备数', machineCount],
+    ['factory.conveyor_count', '物流段数', conveyorCount],
+    ['factory.vehicle_count', '车辆数', archive.vehicles],
+    ['factory.floor_count', '楼层数', archive.floors],
+    ['factory.recipe_count', '配方数', archive.recipes],
+  ] as const
+  return values.map(([pointKey, label, value]) => ({
+    id: `archive-point-${pointKey}`,
+    pointKey,
+    label,
+    dataType: 'number',
+    unit: 'count',
+    lastValue: value,
+    lastQuality: 'deterministic',
+    device: 'ForgeMind 存档',
+    twin: archive.projectName,
+    lastOccurredAt: archive.updatedAt ?? '当前存档',
+    archiveSource: true,
+  }))
+}
+
+function ArchiveContext({ kind, archive, count, projected }: { kind: 'devices' | 'twins' | 'data' | 'ai'; archive: ForgeCloudArchive | null; count: number; projected: boolean }) {
+  if (!archive) return null
+  const labels = { devices: '设备对象', twins: '孪生视图', data: '结构数据点', ai: 'AI 任务' }
+  const note = kind === 'data' ? '结构计数来自当前存档，不等同于现场实时遥测。' : '当前没有云端登记记录时，先展示 ForgeMind 存档投影。'
+  return <section className="fc-intelligence-context"><div><span className="fc-panel-kicker">CURRENT ARCHIVE / {projected ? 'PROJECTED' : 'CLOUD'}</span><strong>{archive.projectName}</strong><small>v{archive.version} · {archive.objects} 个对象 · {archive.floors} 层 · schema v{archive.schemaVersion}</small></div><div className="fc-intelligence-context-stat"><b>{String(count).padStart(2, '0')}</b><span>{labels[kind]}</span></div><p>{note}</p></section>
+}
+
+function IntelligencePanel({ kind, rows, archive, archiveSave, onNotice, onCreate, onHeartbeat, onDataEvent, onAiRun }: { kind: 'devices' | 'twins' | 'data' | 'ai'; rows: unknown[]; archive?: ForgeCloudArchive | null; archiveSave?: FactorySave | null; onNotice: (message: string) => void; onCreate: () => void; onHeartbeat?: (deviceId: string) => void; onDataEvent?: (pointId: string, value: unknown) => void; onAiRun?: (taskId: string) => void }) {
   const config = {
     devices: { action: '注册设备', empty: '当前工作空间尚未登记设备', icon: RadioData, columns: ['设备', '类型', '状态', '端点', '最后心跳', '操作'] },
     twins: { action: '创建孪生', empty: '当前工作空间尚未创建数字孪生', icon: CloudCogData, columns: ['孪生', '类型', '质量', '来源设备', '最后状态'] },
     data: { action: '新增数据点', empty: '当前工作空间尚未登记数据点', icon: ActivityData, columns: ['数据点', '数据类型', '最新值 / 质量', '设备', '最后事件', '操作'] },
     ai: { action: '提交 AI 任务', empty: '当前工作空间尚未提交 AI 任务', icon: ShieldCheckData, columns: ['任务', '模型', '提供方', '状态', '项目'] },
   }[kind]
-  const records = rows as Array<Record<string, unknown>>
+  const archiveRows = archive ? kind === 'devices' ? archiveDeviceRows(archive, archiveSave ?? null) : kind === 'twins' ? archiveTwinRows(archive, archiveSave ?? null) : kind === 'data' ? archiveDataRows(archive, archiveSave ?? null) : [] : []
+  const projected = rows.length === 0 && archiveRows.length > 0
+  const records = (rows.length ? rows : archiveRows) as Array<Record<string, unknown>>
   const values = (row: Record<string, unknown>) => {
     if (kind === 'devices') return [row.name, row.type, row.status, row.endpoint ?? '服务端托管', row.lastSeenAt ?? '尚未心跳']
     if (kind === 'twins') return [row.name, row.type, row.quality, row.sourceDevice ?? '未绑定设备', row.lastStateAt ?? '尚未同步']
-    if (kind === 'data') return [row.label, row.dataType, row.lastValue ? `${JSON.stringify(row.lastValue)} · ${row.lastQuality ?? 'unknown'}` : '尚无事件', row.device ?? '—', row.lastOccurredAt ?? '尚未采集']
+    if (kind === 'data') return [row.label, `${row.dataType ?? '—'}${row.unit ? ` · ${row.unit}` : ''}`, row.lastValue !== undefined && row.lastValue !== null ? `${JSON.stringify(row.lastValue)} · ${row.lastQuality ?? 'unknown'}` : '尚无事件', row.device ?? '—', row.lastOccurredAt ?? '尚未采集']
     return [row.type, row.model ?? '确定性规则引擎', row.provider ?? 'rule', row.status, row.project ?? '工作空间级']
   }
-  return <section className="fc-list-page"><ListToolbar eyebrow={sectionMeta[kind].eyebrow} title={sectionMeta[kind].title} action={config.action} onAction={onCreate} /><div className="fc-table-card"><div className={`fc-table-head fc-intelligence-table ${kind}`}>{config.columns.map((column) => <span key={column}>{column}</span>)}</div>{records.length ? records.slice(0, 100).map((row, index) => <div className={`fc-table-row fc-intelligence-table ${kind}`} key={String(row.id ?? `${kind}-${index}`)}>{values(row).map((value, valueIndex) => valueIndex === 0 ? <span className="fc-intelligence-name" key={`${valueIndex}-${String(value)}`}><i><CloudIcon icon={config.icon} size={16} /></i><strong>{String(value ?? '—')}</strong><small>{String(row.id ?? '—')}</small></span> : <span key={`${valueIndex}-${String(value)}`}>{String(value ?? '—')}</span>)}{kind === 'devices' && <span className="fc-intelligence-action"><button type="button" onClick={() => onHeartbeat?.(String(row.id))}>接收心跳</button></span>}{kind === 'data' && <span className="fc-intelligence-action"><button type="button" onClick={() => onDataEvent?.(String(row.id), row.dataType === 'boolean' ? true : row.dataType === 'string' ? 'manual' : 0)}>写入事件</button></span>}{kind === 'ai' && <span className="fc-intelligence-action">{row.status === 'queued' || row.status === 'failed' ? <button type="button" onClick={() => onAiRun?.(String(row.id))}>执行规则任务</button> : <span>{row.status === 'completed' ? '已完成' : String(row.status ?? '—')}</span>}</span>}</div>) : <div className="fc-empty-row">{remoteSnapshotHint(rows, config.empty)}</div>}</div><div className="fc-connection-foot"><span><i className="green" /> 数据来自 ForgeCloud V16 API · 默认最少权限</span><button type="button" onClick={() => onNotice(`${sectionMeta[kind].title}数据已按当前工作空间过滤`)}>查看数据边界 <CloudIcon icon={ArrowRightData} size={14} /> </button></div></section>
+  return <section className="fc-list-page"><ListToolbar eyebrow={sectionMeta[kind].eyebrow} title={sectionMeta[kind].title} description={kind === 'data' ? '把当前工厂存档转换成可追溯的结构数据；现场遥测接入后再叠加真实事件。' : `以当前工厂存档为上下文，查看${sectionMeta[kind].title}与云端登记记录。`} action={config.action} onAction={onCreate} /><ArchiveContext kind={kind} archive={archive ?? null} count={records.length} projected={projected} /><div className="fc-table-card"><div className={`fc-table-head fc-intelligence-table ${kind}`}>{config.columns.map((column) => <span key={column}>{column}</span>)}</div>{records.length ? records.slice(0, 100).map((row, index) => <div className={`fc-table-row fc-intelligence-table ${kind}`} key={String(row.id ?? `${kind}-${index}`)}>{values(row).map((value, valueIndex) => valueIndex === 0 ? <span className="fc-intelligence-name" key={`${valueIndex}-${String(value)}`}><i><CloudIcon icon={config.icon} size={16} /></i><strong>{String(value ?? '—')}</strong><small>{String(row.id ?? '—')}</small></span> : <span key={`${valueIndex}-${String(value)}`}>{String(value ?? '—')}</span>)}{kind === 'devices' && <span className="fc-intelligence-action">{row.archiveSource ? <em>存档读取</em> : <button type="button" onClick={() => onHeartbeat?.(String(row.id))}>接收心跳</button>}</span>}{kind === 'data' && <span className="fc-intelligence-action">{row.archiveSource ? <em>仿真快照</em> : <button type="button" onClick={() => onDataEvent?.(String(row.id), row.dataType === 'boolean' ? true : row.dataType === 'string' ? 'manual' : 0)}>写入事件</button>}</span>}{kind === 'ai' && <span className="fc-intelligence-action">{row.status === 'queued' || row.status === 'failed' ? <button type="button" onClick={() => onAiRun?.(String(row.id))}>执行规则任务</button> : <span>{row.status === 'completed' ? '已完成' : String(row.status ?? '—')}</span>}</span>}</div>) : <div className="fc-empty-row">{remoteSnapshotHint(rows, config.empty)}</div>}</div><div className="fc-connection-foot"><span><i className="green" /> {projected ? '当前存档投影 · 未写入云端设备/遥测账本' : '数据来自 ForgeCloud API · 默认最少权限'}</span><button type="button" onClick={() => onNotice(`${sectionMeta[kind].title}数据已按当前工作空间过滤`)}>查看数据边界 <CloudIcon icon={ArrowRightData} size={14} /> </button></div></section>
 }
 
 function remoteSnapshotHint(rows: unknown[], empty: string) {

@@ -1,10 +1,13 @@
 # ForgeMind Resource Hub
 
-ForgeMind Resource Hub 是面向工业数字资产的本地资源库与 Web CAD 工作台。项目将设备、零件、材料、参数、建模历史和工程属性组织为可保存、可恢复、可继续编辑的资源对象，并可以把结果交给 ForgeMind 数字工厂使用。
+ForgeMind Resource Hub（ForgeHub）是面向工业数字资产的本地资源库与 Web CAD 工作台。项目将设备、零件、材料、参数、建模历史和工程属性组织为可保存、可恢复、可继续编辑的资源对象，并可以把结果交给 ForgeMind 数字工厂使用。推荐从 ForgeMind 门户 `/forgehub` 进入：点击 ForgeHub 后先显示 ForgePass 身份页，登录成功才进入独立工作台；ForgeHub 所有路由随后继续通过 `/api/auth/me` 复核。
+
+子项目自带 13 个 GLB，统一位于 `public/models/`，全部可在工作台“外观参考模型”下拉列表选择，并随生产构建复制到 `dist/client/models/`。它们是只读外观参考，不是可直接改写的 OCCT B-Rep。
 
 ## 主要功能
 
 - 工业资源库：浏览设备、材料和产品资源，进入自由建模、精细展示或装配工作台。
+- 高精度资源缓存：八类内置设备/产品按需生成稳定 ID 的 feature-driven CadDocument；内存原型深拷贝，浏览器只保存设计数据，旧版内置 B-Rep/组合文档自动清理而不影响用户项目。
 - 参数化建模：用户可绘制任意线段、圆弧和 B-Spline/NURBS 轮廓，并逐项选择草图中的材料区域；拉伸、旋转、实体放样和实体扫掠均可新建、添加、切除或相交，配合孔、圆角、倒角、抽壳、阵列和直接编辑构造独立零件。
 - 特征历史管理：搜索与状态筛选、直接及完整上下游追踪、重命名、依赖安全排序、级联抑制/恢复、节点回退和级联删除；所有修改都会先重建验证，并可通过撤销恢复。
 - 草图精修：修剪、延伸、偏移、镜像、线性阵列、模型直线/圆/圆弧/NURBS 边投影、开放与封闭 B-Spline、精确 NURBS 次数/节点/权重、首尾切向控制，以及水平、垂直、固定、重合、平行、垂直、相切、同心、相等和中点约束。
@@ -27,7 +30,7 @@ ForgeMind Resource Hub 是面向工业数字资产的本地资源库与 Web CAD 
 也可以在 PowerShell 中运行：
 
 ```powershell
-cd D:\BaiduNetdiskDownload\code\forgemind-resource-hub
+cd D:\Code\factory\forgemind-resource-hub
 .\START_FORGEMIND_DEV.ps1
 ```
 
@@ -47,6 +50,12 @@ START_FORGEMIND.bat --check
 
 ```powershell
 .\START_FORGEMIND_DEV.ps1 -NoBrowser -Port 3001
+```
+
+直接进入 CAD Part Studio：
+
+```powershell
+.\START_FORGEMIND_DEV.ps1 -Entry cad -NoBrowser
 ```
 
 需要清理构建缓存并验证项目时运行：

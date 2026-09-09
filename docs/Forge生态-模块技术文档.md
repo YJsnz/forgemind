@@ -11,7 +11,7 @@
 | ForgeMind | React/Vite `/`、工作台 | 三维编辑、资料、确定性仿真、诊断和存档 | 已落地 |
 | ForgePass | `ForgePassPage.tsx` | 密码/邮箱验证码/GitHub OAuth 登录、注册、会话续登和统一身份入口 | 已落地；邮箱 SMTP 与 GitHub OAuth 需服务端配置，手机号通道保留但默认隐藏 |
 | ForgeCloud | React `/forgecloud` | 工作空间、版本、资源、发布、协作、云端事实摘要 | 已落地；工业生产接入仍受边界约束 |
-| ForgeHub | React `/forgehub` | 3D 资产构建和复用入口 | 接口预留 |
+| ForgeHub | 门户 `/forgehub`、Vinext `forgemind-resource-hub/` | 工业资源、参数化 CAD、STEP/资源包交换、装配和工程检查 | 本地工作台已落地；云端发布仍未接通 |
 | ForgeLab | React `/forgelab`、Spring Boot `/api/forgelab/*` | 帖子、附件、回复、点赞和通知 | 已落地 |
 | ForgeMove | 原生微信小程序 `ForgeMove/` | 移动摘要、任务、库存、监控和社区入口 | 已落地；离线和真机网络需部署配置 |
 
@@ -79,7 +79,11 @@ ForgeMove 使用原生 WXML/WXSS/JavaScript，不直连 MySQL。在线接口包�
 
 ## 7. ForgeHub 技术边界
 
-当前 `/forgehub` 通过 ForgePass 后进入产品预览页，保留 `forgehub-logo.png` 和接口预留状态；尚未建立正式的资产上传、版本、Fork、依赖治理或发布 API。ForgeMind 的 JSON/GLB 资源导入仍是当前可用资产进入工厂的事实入口。
+当前 `/forgehub` 是 ForgeMind 门户内的统一身份入口，实际 CAD 应用位于 `forgemind-resource-hub/`，由 Vinext/React、Three.js 和 `occt-wasm` 组成。门户点击 ForgeHub 后固定先渲染 ForgePass，只有本次登录成功才通过 URL fragment 交接 Bearer token 与身份 API 地址；ForgeHub 立即用 `history.replaceState` 清除 fragment，将会话保存到自身 origin，并对 `/api/auth/me` 重新校验。没有有效会话时，根页、`/cad`、`/assembly` 和调试路由均由根布局身份门禁阻止。
+
+ForgeHub 的 `CadDocument`、Feature Graph、持久拓扑引用和 OCCT B-Rep 是 CAD 数据链路；Three.js 网格只用于显示。子项目 `public/models/` 的 13 个 GLB 全部进入只读参考模型选择器，并在生产构建后逐项检查 `dist/client/models/`，无需复制到 ForgeMind 主站资源目录。`forgemind-resource-pack` v1 与 ForgeMind 当前 JSON/GLB 导入形成显式文件交换，资源包导出不绕过 ForgeMind 的 schema、归属、许可证、模型和仿真门禁。ForgeHub 当前尚未直接调用 ForgeCloud 的 Asset Blob、不可变版本、发布、Fork、依赖或审批 API，因此本地 CAD 保存/导出不得描述为云端发布。
+
+更新分支增加了确定性的高精度资源 CAD 层：`core/resource/HighDetailResourceCad.ts` 为八类内置设备/产品维护 feature-driven `CadDocument` 原型，使用稳定的 `cad-resource-<resourceId>-precision-v2` ID；`CadRoute` 只在用户打开资源时生成 B-Rep 源文档，并通过 `CadDocumentStore` 写入 session/local storage。原型在内存中深度复制，避免跨项目共享可变对象；路由首次加载不预构建全部几何。项目选择器延迟读取并合并两种浏览器存储，`pruneObsoleteResourceCadDocuments` 仅删除旧版内置生成文档及其别名键，保留用户项目。普通 `/cad` 显示空白项目，资源项目可在可编辑 B-Rep 与只读高精细参考显示之间切换；这些缓存仍是浏览器本地 CAD 数据，不等于 ForgeCloud 版本发布。
 
 ## 8. 跨模块黄金路径
 
@@ -100,7 +104,9 @@ ForgeMind 建立工厂
 npm.cmd run build
 npm.cmd run forgecloud:regression
 npm.cmd run forgeweixin:validate
+cd forgemind-resource-hub
+npm.cmd test
 git diff --check
 ```
 
-ForgeLab 后端变更还需要执行 Maven 测试/打包和真实临时账号回归；ForgeHub 当前只能验证入口、身份保护和预览页，不得宣称资产工作区已完成。
+ForgeLab 后端变更还需要执行 Maven 测试/打包和真实临时账号回归；ForgeHub 需要同时验证完整 CAD 回归、ForgePass 无会话拒绝、有效 token 复核和根启动器健康检查。当前不得宣称 ForgeHub 已完成公共市场、多人协作或 ForgeCloud 直接发布。

@@ -11,16 +11,23 @@ import { recordAssistantMetric } from '../api/assistantMetrics'
 import { clearAssistantConversationSummary, readAssistantConversationSummary, writeAssistantConversationSummary, type AssistantConversationTurn } from './assistantConversation'
 import { readAssistantCloudSettings } from './assistantCloudSettings'
 import { hydrateAssistantKnowledge, readAssistantKnowledge } from './assistantKnowledge'
+import { stripEnglishFromSpeech } from './assistantSpeech'
+import { BT_SELF_INTRO_ANSWER, BT_SELF_INTRO_AUDIO_URL, isBtSelfIntroRequest } from './assistantVoicePreset'
 
 const AI_TTS_URL = 'http://127.0.0.1:8000/api/ai/tts'
+// BT-7274 首次推理或服务刚启动时可能需要几十秒；不能用普通 API 请求的短超时
+// 把仍在生成的语音主动取消，否则界面会继续显示文字而没有任何音频。
+const AI_TTS_TIMEOUT_MS = 45_000
 const ASSISTANT_HISTORY_KEY = 'forgemind.assistant-history.v1'
 const ASSISTANT_NOTICE_MEMORY_KEY = 'forgemind.assistant-notices.v1'
 const MAX_HISTORY_TURNS = 12
+let assistantVoicePresetsWarmed = false
 
 export interface AssistantUiContext {
   route?: string
   view?: string
   panel?: string | null
+  workspaceId?: string | null
   floorId?: number
   selectedObjectId?: string | null
   selectedObjectLabel?: string | null
@@ -133,6 +140,14 @@ export function setAssistantUiContext(next: AssistantUiContext) {
   assistantUiContext = { ...next }
 }
 
+/** 页面启动后预加载固定自我介绍文件；不调用 TTS 网关。 */
+export function warmAssistantVoicePresets() {
+  if (assistantVoicePresetsWarmed) return
+  assistantVoicePresetsWarmed = true
+  const preloadAudio = createAudioFromUrl(BT_SELF_INTRO_AUDIO_URL)
+  preloadAudio.load()
+}
+
 function readAssistantConversation(): AssistantConversationTurn[] {
   try {
     const parsed = JSON.parse(window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_HISTORY_KEY)) ?? '[]')
@@ -154,9 +169,31 @@ function writeAssistantConversation(turns: AssistantConversationTurn[]) {
   writeAssistantConversationSummary(turns, readAssistantConversationSummary())
 }
 
+/** 固定自我介绍直接播放静态 WAV，不进入回答生成或 TTS 合成队列。 */
+export async function playBtSelfIntroPreset(question = 'BT，介绍一下你自己'): Promise<AssistantRequestResult> {
+  const conversation = readAssistantConversation()
+  dispatchAssistantState({ phase: 'speaking', message: BT_SELF_INTRO_ANSWER })
+  writeAssistantConversation([
+    ...conversation,
+    { role: 'user', content: question.slice(0, 700) },
+    { role: 'assistant', content: BT_SELF_INTRO_ANSWER },
+  ])
+  window.dispatchEvent(new CustomEvent('forgemind:assistant-evidence', {
+    detail: { evidence: [], answer: BT_SELF_INTRO_ANSWER },
+  }))
+  try {
+    await playSerialized(createAudioFromUrl(BT_SELF_INTRO_AUDIO_URL), BT_SELF_INTRO_ANSWER)
+  } finally {
+    dispatchAssistantState({ phase: 'idle', message: '等待驾驶员指令' })
+  }
+  return { answer: BT_SELF_INTRO_ANSWER, execution: null, pendingConfirmation: null }
+}
+
 export async function requestAssistant(question: string): Promise<AssistantRequestResult> {
   const prompt = question.trim()
   if (!prompt) throw new Error('请输入要交给智能管家的问题。')
+
+  if (isBtSelfIntroRequest(prompt)) return playBtSelfIntroPreset(prompt)
 
   const startedAt = performance.now()
   let firstTokenAt: number | null = null
@@ -305,16 +342,31 @@ export async function speakAssistantText(text: string) {
   await speech.finish()
 }
 
-async function synthesizeAssistantAudio(text: string): Promise<HTMLAudioElement> {
-  const response = await fetch(AI_TTS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  })
-  if (!response.ok) throw new Error(`BT TTS 返回 ${response.status}`)
-  const audio = new Audio(URL.createObjectURL(await response.blob()))
+function createAudioFromUrl(url: string): HTMLAudioElement {
+  const audio = new Audio(url)
   audio.preload = 'auto'
   return audio
+}
+
+async function fetchAssistantAudio(text: string): Promise<HTMLAudioElement> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), AI_TTS_TIMEOUT_MS)
+  try {
+    const response = await fetch(AI_TTS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, length_scale: 0.92 }),
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`BT TTS 返回 ${response.status}`)
+    return createAudioFromUrl(URL.createObjectURL(await response.blob()))
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
+async function synthesizeAssistantAudio(text: string): Promise<HTMLAudioElement> {
+  return fetchAssistantAudio(text)
 }
 
 function createSpeechQueue() {
@@ -322,7 +374,7 @@ function createSpeechQueue() {
   let failed = false
   return {
     enqueue(text: string) {
-      const fragment = text.trim()
+      const fragment = stripEnglishFromSpeech(text)
       if (!fragment) return
       // 合成请求立即发出；播放仍按入队顺序进行，实现 LLM、TTS、播放三段并行。
       const audioResult = synthesizeAssistantAudio(fragment).then(
@@ -360,8 +412,8 @@ function playSerialized(audio: HTMLAudioElement, message: string): Promise<void>
 function extractSpeechFragments(buffer: string): { fragments: string[]; remainder: string } {
   const fragments: string[] = []
   let remainder = buffer
-  const targetLength = 14
-  const maxLength = 18
+  const targetLength = 8
+  const maxLength = 12
   while (true) {
     // 标点优先；没有标点时按短语长度切分，让 TTS 在模型继续生成时立即开始。
     const punctuation = /[，。！？!?；]/.exec(remainder)
@@ -372,7 +424,7 @@ function extractSpeechFragments(buffer: string): { fragments: string[]; remainde
       const window = remainder.slice(0, maxLength)
       const boundaries = [...window.matchAll(/[、，,；;：:]/g)]
       const boundary = boundaries[boundaries.length - 1]
-      end = boundary && boundary.index !== undefined && boundary.index >= 6
+      end = boundary && boundary.index !== undefined && boundary.index >= 4
         ? boundary.index + boundary[0].length
         : targetLength
     }
@@ -388,17 +440,40 @@ async function playWithMeter(audio: HTMLAudioElement, message: string): Promise<
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext
   if (!AudioContextCtor) {
     dispatchAssistantState({ phase: 'speaking', message })
-    await playAudio(audio)
-    URL.revokeObjectURL(audio.src)
+    try {
+      await playAudio(audio)
+    } finally {
+      releaseAssistantAudio(audio)
+    }
     return
   }
 
   const audioContext = new AudioContextCtor()
-  const analyser = audioContext.createAnalyser()
-  analyser.fftSize = 128
-  const source = audioContext.createMediaElementSource(audio)
-  source.connect(analyser)
-  analyser.connect(audioContext.destination)
+  let source: MediaElementAudioSourceNode | null = null
+  let analyser: AnalyserNode | null = null
+
+  // 音频能量动画是可选增强，不能成为真正播放的前置条件。浏览器可能因为
+  // 用户手势已结束而拒绝 resume；此时关闭上下文并退回 HTMLAudioElement，
+  // 避免“文字正常、播放静默”的结果。
+  try {
+    await audioContext.resume()
+    if (audioContext.state !== 'running') throw new Error('AudioContext 未进入播放状态')
+    analyser = audioContext.createAnalyser()
+    analyser.fftSize = 128
+    source = audioContext.createMediaElementSource(audio)
+    source.connect(analyser)
+    analyser.connect(audioContext.destination)
+  } catch {
+    await audioContext.close().catch(() => undefined)
+    dispatchAssistantState({ phase: 'speaking', message })
+    try {
+      await playAudio(audio)
+    } finally {
+      releaseAssistantAudio(audio)
+    }
+    return
+  }
+
   const samples = new Uint8Array(analyser.frequencyBinCount)
   let frame = 0
   const sample = () => {
@@ -418,15 +493,21 @@ async function playWithMeter(audio: HTMLAudioElement, message: string): Promise<
     source.disconnect()
     analyser.disconnect()
     await audioContext.close()
-    URL.revokeObjectURL(audio.src)
+    releaseAssistantAudio(audio)
   }
+}
+
+function releaseAssistantAudio(audio: HTMLAudioElement) {
+  if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src)
 }
 
 function playAudio(audio: HTMLAudioElement): Promise<void> {
   return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => { cleanup(); reject(new Error('BT TTS 音频播放超时')) }, 45_000)
     const onEnded = () => { cleanup(); resolve() }
     const onError = () => { cleanup(); reject(new Error('BT TTS 音频播放失败')) }
     const cleanup = () => {
+      window.clearTimeout(timeout)
       audio.removeEventListener('ended', onEnded)
       audio.removeEventListener('error', onError)
     }

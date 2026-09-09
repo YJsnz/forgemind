@@ -15,6 +15,11 @@ voice-chat/models/**/*.pth
 voice-chat/models/**/*.safetensors
 voice-chat/models/**/*.gguf
 
+# Locally generated YOLO deployment artifacts (rebuild per GPU/CUDA/TensorRT target)
+ai-service/models/*.onnx
+ai-service/models/*.engine
+ai-service/models/.trt-cache/
+
 # build output
 dist/
 dist-ssr/
@@ -51,6 +56,10 @@ pnpm-debug.log*
 
 # local scratch space
 .tmp/
+.codex-finalizer/
+.codex-tmp/
+.ppt-opt-build/
+tmp/
 
 # env
 .env

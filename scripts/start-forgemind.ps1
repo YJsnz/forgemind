@@ -8,6 +8,7 @@ param(
     [switch]$NoBrowser,
     [switch]$ForceRebuild,
     [switch]$SkipMySql,
+    [switch]$SkipForgeHub,
     [ValidateRange(1, 65535)]
     [int]$Port = 5173
 )
@@ -16,15 +17,18 @@ $ErrorActionPreference = 'Stop'
 $rootPath = Split-Path -Parent $PSScriptRoot
 $aiPath = Join-Path $rootPath 'ai-service'
 $voicePath = Join-Path $rootPath 'voice-chat'
+$forgeHubPath = Join-Path $rootPath 'forgemind-resource-hub'
 $btPath = if ($env:FORGEMIND_BT_TTS_ROOT) { $env:FORGEMIND_BT_TTS_ROOT } else { 'D:\local\bt7274-space' }
 $composeFile = Join-Path $rootPath 'docker-compose.yml'
 $logPath = Join-Path $rootPath '.forgemind\logs'
 $startSpring = $IncludeSpring -and -not $SkipSpring
 $startAI = $IncludeAI -or $IncludeVoiceChat
+$startForgeHub = $startSpring -and -not $SkipForgeHub
 
 # The frontend uses the rule path unless AI is explicitly requested.
 $env:VITE_AI_ENABLED = if ($startAI) { 'true' } else { 'false' }
 $env:VITE_AI_BASE_URL = 'http://127.0.0.1:8000'
+$env:VITE_FORGEHUB_URL = 'http://127.0.0.1:3000/'
 $env:FORGEMIND_VOICE_ENABLED = if ($IncludeVoiceChat) { 'true' } else { 'false' }
 if ($UseLocalQwen) {
     $env:FORGEMIND_LLM_PROVIDER = 'ollama'
@@ -34,7 +38,7 @@ if ($UseLocalQwen) {
     $env:FORGEMIND_LLM_PROVIDER = 'rule'
 }
 
-$script:stageTotal = 1 + $(if ($startSpring) { 2 } else { 0 }) + $(if ($startAI) { 1 } else { 0 }) + $(if ($IncludeVoiceChat) { 1 } else { 0 })
+$script:stageTotal = 1 + $(if ($startSpring) { 2 } else { 0 }) + $(if ($startAI) { 1 } else { 0 }) + $(if ($IncludeVoiceChat) { 1 } else { 0 }) + $(if ($startForgeHub) { 1 } else { 0 })
 $script:completedStages = 0
 $script:stageStart = 0
 $script:stageEnd = 100
@@ -126,6 +130,29 @@ function Wait-HttpEndpoint {
         }
         $fraction = [int][math]::Floor(100 * ($index + 1) / $Seconds)
         Set-StageProgress -Fraction $fraction -Stage $Stage -Detail ("Waiting for {0} ({1}/{2}s)" -f $Uri, ($index + 1), $Seconds)
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
+function Test-ForgeHubEndpoint([string]$Uri) {
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $Uri -TimeoutSec 3
+        return ([int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 500 -and $response.Content -match 'FORGEPASS / FORGEHUB')
+    } catch {
+        return $false
+    }
+}
+
+function Wait-ForgeHubEndpoint {
+    param([string]$Uri, [int]$Seconds = 180)
+    for ($index = 0; $index -lt $Seconds; $index++) {
+        if (Test-ForgeHubEndpoint $Uri) {
+            Set-StageProgress -Fraction 100 -Stage 'ForgeHub Web CAD' -Detail 'Authenticated CAD workbench is ready on port 3000'
+            return $true
+        }
+        $fraction = [int][math]::Floor(100 * ($index + 1) / $Seconds)
+        Set-StageProgress -Fraction $fraction -Stage 'ForgeHub Web CAD' -Detail ("Waiting for authenticated workbench ({0}/{1}s)" -f ($index + 1), $Seconds)
         Start-Sleep -Seconds 1
     }
     return $false
@@ -387,6 +414,21 @@ function Invoke-Startup {
         }
     }
 
+    if ($startForgeHub) {
+        Start-Stage -Name 'ForgeHub Web CAD' -Detail 'Starting authenticated resource and CAD workbench'
+        $forgeHubLauncher = Join-Path $forgeHubPath 'START_FORGEMIND_DEV.ps1'
+        if (-not (Test-Path -LiteralPath $forgeHubLauncher)) { throw ("ForgeHub launcher is missing: {0}" -f $forgeHubLauncher) }
+        $forgeHubUri = 'http://127.0.0.1:3000/'
+        if (-not (Test-ForgeHubEndpoint $forgeHubUri)) {
+            $hostPowerShell = (Get-Process -Id $PID).Path
+            $null = Start-BackgroundCommand -Name 'forgehub' -WorkingDirectory $forgeHubPath -Executable $hostPowerShell -Arguments (('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "{0}" -NoBrowser -Port 3000' -f $forgeHubLauncher))
+        }
+        if (-not (Wait-ForgeHubEndpoint -Uri $forgeHubUri -Seconds 180)) {
+            throw 'ForgeHub did not become healthy within 180 seconds. See .forgemind/logs/forgehub.*.log.'
+        }
+        Complete-Stage -Name 'ForgeHub Web CAD' -Detail 'Ready at http://127.0.0.1:3000/'
+    }
+
     Start-Stage -Name 'ForgeMind Frontend' -Detail ("Starting Vite on port {0}" -f $Port)
     $frontendUri = "http://127.0.0.1:{0}/" -f $Port
     if (-not (Test-HttpEndpoint $frontendUri)) {
@@ -410,6 +452,7 @@ try {
     if ($startSpring) { Write-Host '  Spring   : http://127.0.0.1:8080/api/factory/health' -ForegroundColor Green }
     if ($startAI) { Write-Host '  AI       : http://127.0.0.1:8000/api/ai/health' -ForegroundColor Green }
     if ($IncludeVoiceChat) { Write-Host '  BT TTS   : http://127.0.0.1:8001/health' -ForegroundColor Green }
+    if ($startForgeHub) { Write-Host '  ForgeHub : http://127.0.0.1:3000/' -ForegroundColor Green }
     Write-Host ("  Logs     : {0}" -f $logPath) -ForegroundColor DarkGray
     if (-not $NoBrowser) { Start-Process ("http://127.0.0.1:{0}" -f $Port) }
     exit 0

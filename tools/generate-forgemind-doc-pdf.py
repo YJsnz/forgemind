@@ -72,7 +72,7 @@ def draw_page(canvas, doc):
     canvas.line(doc.leftMargin, 14 * mm, width - doc.rightMargin, 14 * mm)
     canvas.setFont("NotoSansSC", 7)
     canvas.setFillColor(colors.HexColor("#858d91"))
-    canvas.drawString(doc.leftMargin, 9 * mm, "ForgeMind Studio · 2026.09.02")
+    canvas.drawString(doc.leftMargin, 9 * mm, "ForgeMind Studio · 2026.09.07")
     canvas.drawRightString(width - doc.rightMargin, 9 * mm, f"{doc.page:02d}")
     canvas.restoreState()
 
@@ -161,7 +161,7 @@ def build():
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     PUBLIC.parent.mkdir(parents=True, exist_ok=True)
     story = [Spacer(1, 32 * mm)]
-    cover = Table([[Paragraph("ForgeMind", title)], [Paragraph("官方产品与技术文档", subtitle)], [Spacer(1, 10 * mm)], [Paragraph("DIGITAL FACTORY OS  ·  BUILD 0.1.0  ·  UPDATED 2026.09.02", subtitle)]], colWidths=[150 * mm], rowHeights=[None, None, None, None])
+    cover = Table([[Paragraph("ForgeMind", title)], [Paragraph("官方产品与技术文档", subtitle)], [Spacer(1, 10 * mm)], [Paragraph("DIGITAL FACTORY OS  ·  BUILD 0.1.0  ·  UPDATED 2026.09.07", subtitle)]], colWidths=[150 * mm], rowHeights=[None, None, None, None])
     cover.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#111518")),
         ("LEFTPADDING", (0, 0), (-1, -1), 16 * mm),

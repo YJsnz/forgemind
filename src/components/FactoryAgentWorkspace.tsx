@@ -10,7 +10,7 @@ import { runAutopilotCycleInWorker, type AutopilotWorkerHandle } from '../game/a
 import type { MetricsSample } from '../game/metricsHistory'
 import { narratePatrolReport } from '../game/patrolNarrative'
 import { askAssistant } from '../game/api'
-import { dispatchAssistantNotice, dispatchAssistantState, resolveAssistantNotice } from '../game/assistantRuntime'
+import { dispatchAssistantNotice, dispatchAssistantState, resolveAssistantNotice, speakAssistantText } from '../game/assistantRuntime'
 import { rememberAssistantProjectRun } from '../game/assistantProjectMemory'
 import { consumeAssistantAgentTask, getAssistantTaskState, isAssistantAgentTaskCancelled, readAssistantTaskHistory, resumeAssistantAgentTask, updateAssistantTaskProgress, updateAssistantTaskState, type AssistantAgentTaskCommand } from '../game/assistantTasks'
 import { mergeAssistantAnalyses, planAssistantSubtasks } from '../game/assistantTaskPlan'
@@ -19,7 +19,7 @@ import { compareAgentBranches } from '../game/agentBranch'
 import type { AgentAnalysisResult, AgentFinding, AgentMetrics, AgentMode, BranchSimulationResult, FactoryPatch } from '../game/agentTypes'
 import { useForgeMindStore } from '../store/forgeMind'
 import { agentApi, remotePatchToLocal, subscribeAgent, type AgentReport, type RemoteRun } from '../api/agent'
-import { fetchFactoryProject, type FactoryProjectSummary } from '../api/factoryProjects'
+import { fetchFactoryProject, updateFactoryProject, type FactoryProjectSummary } from '../api/factoryProjects'
 import type { FactorySave } from '../game/save'
 import '../forgecore-agent.css'
 import '../forgecore-agent-mode.css'
@@ -96,6 +96,21 @@ export function FactoryAgentWorkspace({ onLocate, currentProject, focusedTaskId,
       return next
     })
   }
+  const createAuditedRun = async (activeObjective: string, activeMode: 'read_only' | 'plan_design') => {
+    if (!currentProject) throw new Error('当前项目不存在')
+    const state = useForgeMindStore.getState()
+    const save = state.exportSave()
+    try {
+      return await agentApi.createRun(currentProject.id, activeObjective, activeMode, save)
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : ''
+      if (!message.includes('Agent 上下文与当前工厂存档不一致')) throw reason
+      // 旧存档可能带有当前客户端已淘汰的字段；分析当前工作区前，用经过
+      // 客户端 schema 规范化的快照同步一次，再重新建立服务端审计基线。
+      await updateFactoryProject(currentProject.id, state.factoryName, save)
+      return await agentApi.createRun(currentProject.id, activeObjective, activeMode, save)
+    }
+  }
   const runAnalysis = async (resumeRun?: RemoteRun) => {
     const activeObjective = resumeRun?.objective ?? objective
     const activeMode = resumeRun?.mode === 'plan_design' ? 'plan_design' : mode
@@ -116,7 +131,7 @@ export function FactoryAgentWorkspace({ onLocate, currentProject, focusedTaskId,
     const remoteRunPromise = resumeRun
       ? Promise.resolve(resumeRun)
       : currentProject
-        ? agentApi.createRun(currentProject.id, activeObjective, activeMode === 'plan_design' ? 'plan_design' : 'read_only', useForgeMindStore.getState().exportSave())
+        ? createAuditedRun(activeObjective, activeMode === 'plan_design' ? 'plan_design' : 'read_only')
       : null
     let remoteRunId: string | null = null
     let remoteProgressQueue = Promise.resolve()
@@ -186,7 +201,7 @@ export function FactoryAgentWorkspace({ onLocate, currentProject, focusedTaskId,
       updateAssistantTaskState('completed', `Agent 任务完成：${result.headline}`, result.summary)
       syncRemoteProgress('synthesize', 'completed', '分析结论与证据已汇总')
       if (activeMode === 'plan_design') syncRemoteProgress('validate_patch', 'running', '正在校验方案草案')
-      dispatchAssistantState({ phase: 'speaking', message: `Agent 任务完成：${result.headline}` })
+      void speakAssistantText(`Agent 任务完成：${result.headline}`)
       setBusy(false)
       if (!currentProject) {
         setError('本次已完成浏览器本地诊断，但当前没有正式项目，结果未写入服务端。')
@@ -293,7 +308,7 @@ export function FactoryAgentWorkspace({ onLocate, currentProject, focusedTaskId,
       setAutopilotNote(result.summaryText)
       updateAssistantTaskProgress(0.95, 'report', '正在汇总巡检结论')
       updateAssistantTaskState('completed', `自动巡检完成：${result.summaryText}`, result.summaryText)
-      dispatchAssistantState({ phase: 'speaking', message: `自动巡检完成：${result.summaryText}` })
+      void speakAssistantText(`自动巡检完成：${result.summaryText}`)
       if (!manual && result.degraded) {
         result.analysis.findings.filter((finding) => finding.code.startsWith('autopilot_')).forEach((finding) => {
           recordAssistantProactiveEvent({ fingerprint: 'autopilot:degraded', source: autopilotSource(finding.code), severity: 'warning', message: finding.title })
@@ -385,7 +400,7 @@ export function FactoryAgentWorkspace({ onLocate, currentProject, focusedTaskId,
       const { analysis: result, patch: proposal } = await task.promise
       agentTaskRef.current = null
       if (!proposal) throw new Error('当前结论没有可安全自动执行的修改。')
-      const created = await agentApi.createRun(currentProject.id, objective, 'plan_design', useForgeMindStore.getState().exportSave())
+      const created = await createAuditedRun(objective, 'plan_design')
       const completed = await agentApi.analyzeRun(created.id, result, proposal)
       setRemoteRun(completed); remember(result)
       const persisted = completed.patches[completed.patches.length - 1]
@@ -423,7 +438,7 @@ export function FactoryAgentWorkspace({ onLocate, currentProject, focusedTaskId,
         const review = createPostApplyReview(beforeMetrics, refreshed.metrics)
         setPostApplyReview(review)
         updateAssistantTaskState('completed', `应用后复核完成：${reviewSummary(review)}`, reviewSummary(review))
-        dispatchAssistantState({ phase: 'speaking', message: `应用后复核完成：${reviewSummary(review)}` })
+        void speakAssistantText(`应用后复核完成：${reviewSummary(review)}`)
         if (activeRemoteRun) {
           void agentApi.appendEvent(activeRemoteRun.id, 'post_apply_review', {
             source: 'browser_deterministic_evidence',

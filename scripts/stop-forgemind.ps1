@@ -17,6 +17,7 @@ function Stop-MatchingProcess([string]$pattern) {
 Write-Host '停止 ForgeMind 开发服务...'
 Stop-MatchingProcess 'uvicorn main:app.*--port 8000'
 Stop-MatchingProcess 'vite(\.cmd)?.*--host 127\.0\.0\.1|vite\.js.*--host 127\.0\.0\.1'
+Stop-MatchingProcess 'vinext.*--port 3000'
 Stop-MatchingProcess 'bt_tts_server\.py'
 Stop-MatchingProcess 'voice_chat\.py'
 Stop-MatchingProcess 'forgemind-backend-0\.1\.0\.jar'

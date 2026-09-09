@@ -39,6 +39,29 @@ test("today-mainline Resource Hub persists a B-Rep CadDocument and launches the 
   assert.match(route, /<OcctKernelDebug embedded initialDocument=\{document\}/);
 });
 
+test("plain free-modeling entry opens a blank document without restoring or scanning heavy projects", async () => {
+  const page = await text("../app/page.tsx");
+  const route = await text("../app/cad/CadRoute.tsx");
+  assert.match(page, /openProfessionalCad = \(\) => \{ void createNewProfessionalCad\(\); \}/);
+  assert.match(route, /const hasExplicitProject = Boolean\(resourceId \|\| documentId\)/);
+  assert.doesNotMatch(route, /latest: !resourceId && !documentId/);
+  assert.match(route, /createUnifiedCadDocument\("未命名自由建模项目"\)/);
+  assert.match(route, /onFocus=\{loadAvailableProjects\}/);
+});
+
+test("large editable models use responsive viewport tessellation while the presentation demo keeps full quality", async () => {
+  const source = await text("../app/kernel-debug/OcctKernelDebug.tsx");
+  const rebuild = await text("../core/rebuild/RebuildEngine.ts");
+  assert.match(source, /preserveDemoQuality = document\.id === "forgemind-smart-precision-cell-demo"/);
+  assert.match(source, /visibleBodyCount > 60/);
+  assert.match(source, /renderedBodyCount % 6 === 0/);
+  assert.match(source, /deferEdgePolylines/);
+  assert.match(source, /deferredEdgeBodies/);
+  assert.match(source, /window\.requestAnimationFrame/);
+  assert.match(rebuild, /processedFeatureCount % 4 === 0/);
+  assert.match(rebuild, /yieldToBrowser/);
+});
+
 test("today-mainline professional workspace exposes an Onshape-style Feature List and parameter inspector", async () => {
   const source = await text("../app/kernel-debug/OcctKernelDebug.tsx");
   assert.match(source, /FEATURE LIST/);

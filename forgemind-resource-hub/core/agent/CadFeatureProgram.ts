@@ -12,6 +12,7 @@ import type { Sketch } from "../sketch/Sketch.ts";
 export type AgentDatumPlane = { type: "XY" | "XZ" | "YZ"; offset: number };
 export type AgentProfile =
   | { kind: "circle"; center: Vec2; radiusMm: number }
+  | { kind: "roundedRectangle"; center: Vec2; widthMm: number; heightMm: number; radiusMm: number }
   | { kind: "polygon"; points: Vec2[] };
 
 export type AgentFeatureStep =
@@ -41,13 +42,40 @@ export interface AgentCadFeatureProgram {
 
 const safe = (value: string) => value.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "feature";
 
+// Product-facing XZ coordinates use +Y as "up". The kernel's right-handed XZ
+// frame uses a -Y normal, so feature programs are converted at this boundary
+// instead of forcing every model author to enter inverted heights.
+const kernelPlane = (plane: AgentDatumPlane): AgentDatumPlane => plane.type === "XZ" ? { ...plane, offset: -plane.offset } : plane;
+const kernelExtrudeDirection = (plane: AgentDatumPlane, direction: "positive" | "negative" = "positive") =>
+  plane.type !== "XZ" ? direction : direction === "positive" ? "negative" as const : "positive" as const;
+
 const createProfileSketch = (id: string, name: string, plane: AgentDatumPlane, profile: AgentProfile): Sketch => {
   if (profile.kind === "circle") {
     return {
-      id, name, plane,
+      id, name, plane: kernelPlane(plane),
       entities: { profile: { id: "profile", type: "circle", center: profile.center, radius: profile.radiusMm, construction: false } },
       entityOrder: ["profile"], constraints: {},
       dimensions: { radius: { id: "radius", name: "半径", type: "radius", entityIds: ["profile"], value: profile.radiusMm, driving: true } },
+    };
+  }
+  if (profile.kind === "roundedRectangle") {
+    const { x: cx, y: cy } = profile.center;
+    const halfWidth = profile.widthMm / 2, halfHeight = profile.heightMm / 2;
+    const radius = Math.max(.01, Math.min(profile.radiusMm, halfWidth - .01, halfHeight - .01));
+    const entities: Sketch["entities"] = {
+      bottom: { id: "bottom", type: "line", start: { x: cx - halfWidth + radius, y: cy - halfHeight }, end: { x: cx + halfWidth - radius, y: cy - halfHeight }, construction: false },
+      "bottom-right": { id: "bottom-right", type: "arc", center: { x: cx + halfWidth - radius, y: cy - halfHeight + radius }, radius, startAngle: -Math.PI / 2, endAngle: 0, construction: false },
+      right: { id: "right", type: "line", start: { x: cx + halfWidth, y: cy - halfHeight + radius }, end: { x: cx + halfWidth, y: cy + halfHeight - radius }, construction: false },
+      "top-right": { id: "top-right", type: "arc", center: { x: cx + halfWidth - radius, y: cy + halfHeight - radius }, radius, startAngle: 0, endAngle: Math.PI / 2, construction: false },
+      top: { id: "top", type: "line", start: { x: cx + halfWidth - radius, y: cy + halfHeight }, end: { x: cx - halfWidth + radius, y: cy + halfHeight }, construction: false },
+      "top-left": { id: "top-left", type: "arc", center: { x: cx - halfWidth + radius, y: cy + halfHeight - radius }, radius, startAngle: Math.PI / 2, endAngle: Math.PI, construction: false },
+      left: { id: "left", type: "line", start: { x: cx - halfWidth, y: cy + halfHeight - radius }, end: { x: cx - halfWidth, y: cy - halfHeight + radius }, construction: false },
+      "bottom-left": { id: "bottom-left", type: "arc", center: { x: cx - halfWidth + radius, y: cy - halfHeight + radius }, radius, startAngle: Math.PI, endAngle: Math.PI * 1.5, construction: false },
+    };
+    return {
+      id, name, plane: kernelPlane(plane), entities,
+      entityOrder: ["bottom", "bottom-right", "right", "top-right", "top", "top-left", "left", "bottom-left"],
+      constraints: {}, dimensions: {},
     };
   }
   if (profile.points.length < 3) throw new Error(`${name} 至少需要三个轮廓点。`);
@@ -58,7 +86,7 @@ const createProfileSketch = (id: string, name: string, plane: AgentDatumPlane, p
     entities[entityId] = { id: entityId, type: "line", start: point, end: profile.points[(index + 1) % profile.points.length], construction: false };
     entityOrder.push(entityId);
   });
-  return { id, name, plane, entities, entityOrder, constraints: {}, dimensions: {} };
+  return { id, name, plane: kernelPlane(plane), entities, entityOrder, constraints: {}, dimensions: {} };
 };
 const createPathSketch = (id: string, name: string, plane: AgentDatumPlane, points: Vec2[]): Sketch => {
   if (points.length < 2) throw new Error(`${name} 至少需要两个路径点。`);
@@ -69,7 +97,7 @@ const createPathSketch = (id: string, name: string, plane: AgentDatumPlane, poin
     entities[entityId] = { id: entityId, type: "line", start: points[index], end: points[index + 1], construction: false };
     entityOrder.push(entityId);
   }
-  return { id, name, plane, entities, entityOrder, constraints: {}, dimensions: {} };
+  return { id, name, plane: kernelPlane(plane), entities, entityOrder, constraints: {}, dimensions: {} };
 };
 
 /** Compiles semantic, ordered modeling intent directly into editable CAD
@@ -99,7 +127,7 @@ export const compileAgentCadFeatureProgram = (program: AgentCadFeatureProgram): 
         sketches[sketchId] = createProfileSketch(sketchId, `${step.name} · 草图`, step.plane, step.profile);
         feature = {
           id: stepId, name: step.name, type: "extrude", bodyId, targetBodyId: bodyId, sketchId,
-          distance: step.distanceMm, direction: step.direction ?? "positive", operation: step.operation,
+          distance: step.distanceMm, direction: kernelExtrudeDirection(step.plane, step.direction), operation: step.operation,
           targetFeatureId: step.operation === "new" ? undefined : previousFeatureId,
           enabled: true, state: "clean", dependencies: step.operation === "new" ? [] : [previousFeatureId!],
         } satisfies ExtrudeFeature;

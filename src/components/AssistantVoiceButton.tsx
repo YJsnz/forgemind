@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { animateIfAllowed } from '../utils/animeMotion'
 import { AI_SERVICE_ENABLED } from '../game/api'
-import { confirmAssistantAction, dispatchAssistantState, requestAssistant } from '../game/assistantRuntime'
+import { confirmAssistantAction, dispatchAssistantState, playBtSelfIntroPreset, requestAssistant } from '../game/assistantRuntime'
 import type { AssistantToolCall } from '../game/assistantProtocol'
+import { isBtSelfIntroRequest } from '../game/assistantVoicePreset'
 import {
   ASSISTANT_WAKE_WORD,
   removeAssistantWakeWord,
@@ -96,7 +97,9 @@ export function AssistantVoiceButton() {
       recorderRef.current = null
       if (!recorder) return
       const text = await transcribeAssistantWav(await recorder.stop())
-      const result = await requestAssistant(text)
+      const result = isBtSelfIntroRequest(text)
+        ? await playBtSelfIntroPreset(text)
+        : await requestAssistant(text)
       continueSession = !result.pendingConfirmation
     } catch (error) {
       dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })
@@ -121,7 +124,9 @@ export function AssistantVoiceButton() {
       dispatchAssistantState({ phase: 'thinking', message: '已唤醒，正在处理指令' })
       let continueSession = false
       try {
-        const result = await requestAssistant(command)
+        const result = isBtSelfIntroRequest(command)
+          ? await playBtSelfIntroPreset(transcript)
+          : await requestAssistant(command)
         continueSession = !result.pendingConfirmation
       } catch (error) {
         dispatchAssistantState({ phase: 'error', message: readableVoiceError(error) })

@@ -31,6 +31,7 @@ import { ForgePassPage } from './ForgePassPage'
 import '../forgelab.css'
 import { MorphingIcon } from './MorphingIcon'
 import { useAuthStore } from '../store/auth'
+import { BACKEND_BASE } from '../api/backendBase'
 import userGuideMarkdown from '../../docs/ForgeMind-用户使用手册.md?raw'
 import technicalMarkdown from '../../docs/ForgeMind-功能模块技术文档.md?raw'
 import forgeMindModuleMarkdown from '../../docs/ForgeMind-模块用户文档.md?raw'
@@ -112,7 +113,7 @@ const docs = [
     id: 'forgehub' as DocumentId,
     eyebrow: 'MODULE / FORGEHUB',
     title: 'ForgeHub 用户文档',
-    body: '3D 资产入口、当前预留能力与资产准备规范。',
+    body: '工业资源库、参数化 CAD、STEP、装配与资源包交换。',
     href: '/docs/forgehub',
     icon: BoxesData,
   },
@@ -355,17 +356,11 @@ function PortalRoutePage({ page, postId, isForgeLabAuthenticated, onEnterWorkspa
       : <ForgePassPage onBack={onNavigateHome} onSuccess={() => onNavigatePost(postId ?? '')} onEnterWorkspace={onEnterWorkspace} />
   }
 
-  if (page === 'forgehub' && !isForgeLabAuthenticated) {
+  if (page === 'forgehub') {
     return <ForgePassPage onBack={onNavigateHome} onSuccess={onNavigateForgeHub} onEnterWorkspace={onEnterWorkspace} />
   }
 
-  return (
-    <section className="fmi-route-page fmi-forgehub-page" aria-labelledby="fmi-route-title">
-      <div className="fmi-route-heading fmi-enter"><span className="fmi-route-eyebrow"><PortalMorphIcon icon={BoxesData} activeIcon={ArrowUpRightData} size={15} /> FORGEHUB / CONNECT</span><h1 id="fmi-route-title">ForgeHub<br /><em>即将接入。</em></h1><p>ForgeHub 是 ForgeMind 的配套网页项目。当前导航、入口和产品关系已经预留，正式地址接入后无需调整官网结构。</p></div>
-      <div className="fmi-hub-stage fmi-enter"><img className="fmi-hub-logo" src="/brand/forgehub-logo.png" alt="ForgeHub Custom 3D Model Builder" /><span className="fmi-route-eyebrow">INTERFACE RESERVED</span><strong>接口预留中</strong><small>FORGEHUB / NEXT SPACE</small></div>
-      <button className="fmi-route-back fmi-enter" type="button" onClick={onNavigateHome}>返回官网首页 <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={16} /></button>
-    </section>
-  )
+  return null
 }
 
 export function ForgeMindIntro({ onEnterWorkspace, onOpenForgeCloud }: ForgeMindIntroProps) {
@@ -417,6 +412,20 @@ export function ForgeMindIntro({ onEnterWorkspace, onOpenForgeCloud }: ForgeMind
 
   const navigateToForgeLabAccess = () => navigateToPage('forgelab')
 
+  const navigateToForgeHubAccess = () => navigateToPage('forgehub')
+
+  const enterForgeHub = () => {
+    const token = localStorage.getItem('forgemind.token')
+    if (!token) {
+      navigateToPage('forgehub')
+      return
+    }
+    const configuredUrl = (import.meta.env.VITE_FORGEHUB_URL as string | undefined)?.trim()
+    const target = new URL(configuredUrl || `http://${window.location.hostname || '127.0.0.1'}:3000/`)
+    target.hash = new URLSearchParams({ token, api: BACKEND_BASE }).toString()
+    window.location.assign(target.toString())
+  }
+
   const scrollToHero = () => navigateToPage('home')
 
   return (
@@ -435,7 +444,7 @@ export function ForgeMindIntro({ onEnterWorkspace, onOpenForgeCloud }: ForgeMind
 
         <nav className="fmi-nav-links" aria-label="官网导航">
           {navItems.map(({ id, label, icon: Icon }) => (
-              <button key={id} type="button" className={(currentPage === id || (id === 'forgelab' && currentPage === 'forgelab-post')) ? 'is-active' : ''} onClick={() => id === 'forgecloud' ? onOpenForgeCloud() : id === 'forgelab' ? navigateToForgeLabAccess() : navigateToPage(id)}>
+              <button key={id} type="button" className={(currentPage === id || (id === 'forgelab' && currentPage === 'forgelab-post')) ? 'is-active' : ''} onClick={() => id === 'forgecloud' ? onOpenForgeCloud() : id === 'forgelab' ? navigateToForgeLabAccess() : id === 'forgehub' ? navigateToForgeHubAccess() : navigateToPage(id)}>
               <PortalMorphIcon aria-hidden="true" icon={Icon} activeIcon={ArrowUpRightData} size={15} strokeWidth={1.7} />
               {label}
             </button>
@@ -457,7 +466,7 @@ export function ForgeMindIntro({ onEnterWorkspace, onOpenForgeCloud }: ForgeMind
       {mobileNavOpen && (
         <nav className="fmi-mobile-nav" aria-label="移动端官网导航">
           {navItems.map(({ id, label, icon: Icon }) => (
-            <button key={id} type="button" onClick={() => id === 'forgecloud' ? onOpenForgeCloud() : id === 'forgelab' ? navigateToForgeLabAccess() : navigateToPage(id)}>
+            <button key={id} type="button" onClick={() => id === 'forgecloud' ? onOpenForgeCloud() : id === 'forgelab' ? navigateToForgeLabAccess() : id === 'forgehub' ? navigateToForgeHubAccess() : navigateToPage(id)}>
               <PortalMorphIcon aria-hidden="true" icon={Icon} activeIcon={ArrowUpRightData} size={16} strokeWidth={1.8} />
               <span>{label}</span>
               <PortalMorphIcon aria-hidden="true" icon={ArrowUpRightData} activeIcon={ArrowRightData} size={15} />
@@ -500,7 +509,7 @@ export function ForgeMindIntro({ onEnterWorkspace, onOpenForgeCloud }: ForgeMind
             </div>
             <div className="fmi-visual-caption"><span>INPUT</span><div className="fmi-route-track"><i /><i /><i /><i /><b /></div><span>OUTPUT</span></div>
           </div>
-        </section> : <PortalRoutePage page={currentPage} postId={currentPage === 'forgelab-post' ? postIdFromPath(window.location.pathname) : undefined} isForgeLabAuthenticated={authPhase === 'factory'} onEnterWorkspace={onEnterWorkspace} onNavigateHome={() => navigateToPage('home')} onNavigateDocs={() => navigateToPage('docs')} onNavigatePost={navigateToPost} onNavigateForgeLab={() => navigateToPage('forgelab')} onNavigateForgeHub={() => navigateToPage('forgehub')} />}
+        </section> : <PortalRoutePage page={currentPage} postId={currentPage === 'forgelab-post' ? postIdFromPath(window.location.pathname) : undefined} isForgeLabAuthenticated={authPhase === 'factory'} onEnterWorkspace={onEnterWorkspace} onNavigateHome={() => navigateToPage('home')} onNavigateDocs={() => navigateToPage('docs')} onNavigatePost={navigateToPost} onNavigateForgeLab={() => navigateToPage('forgelab')} onNavigateForgeHub={enterForgeHub} />}
 
         <div className="fmi-hero-rail" aria-label="ForgeMind 产品闭环">
           <span>DESIGN</span><PortalMorphIcon className="fmi-rail-arrow" icon={ArrowRightData} activeIcon={ArrowUpRightData} aria-hidden="true" size={14} /><span>SIMULATE</span><PortalMorphIcon className="fmi-rail-arrow" icon={ArrowRightData} activeIcon={ArrowUpRightData} aria-hidden="true" size={14} /><span>DIAGNOSE</span><PortalMorphIcon className="fmi-rail-arrow" icon={ArrowRightData} activeIcon={ArrowUpRightData} aria-hidden="true" size={14} /><span>IMPROVE</span><i /><small>工厂先于现实开始运行</small>
@@ -508,7 +517,7 @@ export function ForgeMindIntro({ onEnterWorkspace, onOpenForgeCloud }: ForgeMind
       </main>
 
       <footer className="fmi-footer">
-        <div className="fmi-footer-main"><div className="fmi-footer-brand"><div className="fmi-brand-stack" aria-label="ForgeMind 生态产品"><div className="fmi-brand-row fmi-brand-row-primary"><img src="/brand/forgemind-emblem.png" alt="" /><div><strong>ForgeMind</strong><small>DIGITAL FACTORY OS</small></div></div><div className="fmi-brand-row"><img src="/brand/forgecloud-emblem.png" alt="" /><div><strong>ForgeCloud</strong><small>INDUSTRIAL INTELLIGENCE CLOUD</small></div></div><div className="fmi-brand-row"><img src="/brand/forgehub-emblem.png" alt="" /><div><strong>ForgeHub</strong><small>3D ASSET BUILDER</small></div></div><div className="fmi-brand-row"><img src="/brand/forgelab-emblem.png" alt="" /><div><strong>ForgeLab</strong><small>OPEN FACTORY COMMUNITY</small></div></div><div className="fmi-brand-row"><img src="/brand/forgemove-emblem.png" alt="" /><div><strong>ForgeMove</strong><small>MOBILE FIELD APP</small></div></div></div></div><div className="fmi-footer-block"><small>产品入口</small><button type="button" onClick={() => navigateToPage('product')}>产品介绍 <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></button><button type="button" onClick={onEnterWorkspace}>进入数字工厂 <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></button></div><div className="fmi-footer-block"><small>官方文档</small><button type="button" onClick={() => navigateToPage('docs')}>文档中心 <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></button><a href="/docs/ForgeMind-官方文档.pdf" download>下载 PDF <PortalMorphIcon icon={DownloadData} activeIcon={ArrowDownData} size={12} /></a></div><div className="fmi-footer-block"><small>社区与项目</small><button type="button" onClick={() => navigateToPage('forgehub')}>ForgeHub <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></button><button type="button" onClick={onOpenForgeCloud}>ForgeCloud <PortalMorphIcon icon={CloudData} activeIcon={ArrowUpRightData} size={12} /></button><button type="button" onClick={() => navigateToPage('forgelab')}>ForgeLab <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></button><a href="https://github.com/YJsnz/forgemind" target="_blank" rel="noreferrer">GitHub 项目 <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></a></div><div className="fmi-footer-block"><small>联系与合作</small><div className="fmi-footer-contact-item"><PortalMorphIcon icon={MailData} activeIcon={ArrowUpRightData} size={13} /><a href="mailto:1478838114@qq.com">1478838114@qq.com</a></div><div className="fmi-footer-contact-item"><PortalMorphIcon icon={MapPinData} activeIcon={ArrowUpRightData} size={13} /><span>China · Open Factory Community</span></div><span>产品建议 · 资源共建 · 技术交流</span></div></div>
+        <div className="fmi-footer-main"><div className="fmi-footer-brand"><div className="fmi-brand-stack" aria-label="ForgeMind 生态产品"><div className="fmi-brand-row fmi-brand-row-primary"><img src="/brand/forgemind-emblem.png" alt="" /><div><strong>ForgeMind</strong><small>DIGITAL FACTORY OS</small></div></div><div className="fmi-brand-row"><img src="/brand/forgecloud-emblem.png" alt="" /><div><strong>ForgeCloud</strong><small>INDUSTRIAL INTELLIGENCE CLOUD</small></div></div><div className="fmi-brand-row"><img src="/brand/forgehub-emblem.png" alt="" /><div><strong>ForgeHub</strong><small>3D ASSET BUILDER</small></div></div><div className="fmi-brand-row"><img src="/brand/forgelab-emblem.png" alt="" /><div><strong>ForgeLab</strong><small>OPEN FACTORY COMMUNITY</small></div></div><div className="fmi-brand-row"><img src="/brand/forgemove-emblem.png" alt="" /><div><strong>ForgeMove</strong><small>MOBILE FIELD APP</small></div></div></div></div><div className="fmi-footer-block"><small>产品入口</small><button type="button" onClick={() => navigateToPage('product')}>产品介绍 <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></button><button type="button" onClick={onEnterWorkspace}>进入数字工厂 <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></button></div><div className="fmi-footer-block"><small>官方文档</small><button type="button" onClick={() => navigateToPage('docs')}>文档中心 <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></button><a href="/docs/ForgeMind-官方文档.pdf" download>下载 PDF <PortalMorphIcon icon={DownloadData} activeIcon={ArrowDownData} size={12} /></a></div><div className="fmi-footer-block"><small>社区与项目</small><button type="button" onClick={navigateToForgeHubAccess}>ForgeHub <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></button><button type="button" onClick={onOpenForgeCloud}>ForgeCloud <PortalMorphIcon icon={CloudData} activeIcon={ArrowUpRightData} size={12} /></button><button type="button" onClick={() => navigateToPage('forgelab')}>ForgeLab <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></button><a href="https://github.com/YJsnz/forgemind" target="_blank" rel="noreferrer">GitHub 项目 <PortalMorphIcon icon={ArrowUpRightData} activeIcon={ArrowRightData} size={12} /></a></div><div className="fmi-footer-block"><small>联系与合作</small><div className="fmi-footer-contact-item"><PortalMorphIcon icon={MailData} activeIcon={ArrowUpRightData} size={13} /><a href="mailto:1478838114@qq.com">1478838114@qq.com</a></div><div className="fmi-footer-contact-item"><PortalMorphIcon icon={MapPinData} activeIcon={ArrowUpRightData} size={13} /><span>China · Open Factory Community</span></div><span>产品建议 · 资源共建 · 技术交流</span></div></div>
         <div className="fmi-footer-bottom"><span>© 2026 ForgeMind Studio</span><span>MADE FOR FACTORIES THAT MOVE</span><span>BUILD 0.1.0 · A-01 · <a href="/docs/ForgeMind-官方文档.pdf" download>DOCS PDF ↓</a></span></div>
       </footer>
 

@@ -113,7 +113,8 @@
 HTMLVideoElement 当前帧
   → Canvas 离屏绘制并编码为 JPEG base64
   → POST /api/vision/yolo/detect
-  → Ultralytics YOLOv8 加载 pcb_defect_yolov8s.pt 并推理
+  → YOLO 运行时按配置选择 TensorRT FP16 / ONNX Runtime CUDA / Ultralytics PyTorch
+  → 加载 pcb_defect_yolov8s.pt、同名 .onnx 或 .engine 并推理
   → 返回 boxes / className / confidence / inferenceMs
   → 浏览器 Canvas 按原视频尺寸缩放叠加黄色检测框
 ```
@@ -219,9 +220,9 @@ HTMLVideoElement 当前帧
 }
 ```
 
-默认模型路径为 `ai-service/models/pcb_defect_yolov8s.pt`，可通过服务端环境变量 `FORGEMIND_YOLO_MODEL` 覆盖。前端接口地址默认是 `http://127.0.0.1:8000/api/vision/yolo/detect`，开发调试时可通过 `VITE_YOLO_DETECT_ENDPOINT` 覆盖。
+默认模型路径为 `ai-service/models/pcb_defect_yolov8s.pt`，可通过服务端环境变量 `FORGEMIND_YOLO_MODEL` 覆盖。ONNX Runtime CUDA 使用带 NMS 的 `.onnx`；TensorRT 使用无 NMS 的 `.trt.onnx` 和 FP16 `.engine`，运行时会校验实际 Provider，失败不会静默回退成 CPU benchmark；也可通过 `FORGEMIND_YOLO_BACKEND`、`FORGEMIND_YOLO_DEVICE` 显式选择。前端接口地址默认是 `http://127.0.0.1:8000/api/vision/yolo/detect`，开发调试时可通过 `VITE_YOLO_DETECT_ENDPOINT` 覆盖。
 
-依赖写在 `ai-service/requirements.txt` 的 `ultralytics`；轻量核心依赖仍不强制安装 YOLO，只有启用视觉 Demo 并运行 AI 服务时才会加载权重。
+依赖写在 `ai-service/requirements.txt` 的 `ultralytics`；CUDA/ONNX Runtime 依赖写在可选的 `ai-service/requirements-yolo-gpu.txt`，TensorRT 按目标 NVIDIA/CUDA/Python 组合单独安装。轻量核心依赖仍不强制安装 YOLO 或 GPU 运行时，只有启用视觉 Demo 并运行 AI 服务时才会加载权重。
 复用 `infeed` 搬运逻辑 + `RobotTask='sort'`。
 
 ---

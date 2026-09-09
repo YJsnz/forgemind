@@ -16,6 +16,10 @@ import type { CadAssetStore } from "../cad/CadAssets.ts";
 
 const same = (a: KernelShapeRef, b: KernelShapeRef) => a.id === b.id && a.revision === b.revision;
 const now = () => typeof performance !== "undefined" ? performance.now() : Date.now();
+const yieldToBrowser = async (): Promise<void> => {
+  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") return;
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+};
 
 export interface RebuildEngineContext { document: CadDocument<Sketch, Feature>; runtime: CadRuntimeState; rebuildRuntime: RebuildRuntimeState; kernel: CadKernel; tolerance: CadToleranceSettings; buildProfiles: SketchProfileBuilder; assets?: CadAssetStore; }
 
@@ -50,6 +54,7 @@ export const rebuildDocument = async (context: RebuildEngineContext, request: Re
   const started = now(); const result: RebuildResult = { success: false, evaluatedFeatureIds: [], skippedFeatureIds: [], suppressedFeatureIds: [], failedFeatureIds: [], blockedFeatureIds: [], durationMs: 0, errors: [] };
   let graph; try { graph = buildFeatureGraph(context.document); } catch (error) { const issue = error instanceof FeatureGraphError ? error : new FeatureGraphError("FEATURE_DEPENDENCY_MISSING", String(error)); result.errors.push({ featureId: "graph", code: issue.code, message: issue.message }); result.durationMs = now() - started; return result; }
   const needsFull = request.full || context.runtime.featureShapes.size === 0; const dirty = needsFull ? new Set(graph.order) : computeDirtyFeatures(graph, request); const staged = new Map<string, KernelShapeRef>(); const aliases = new Map<string, string>(); const results = new Map<string, FeatureEvaluationResult>(); const failed = new Set<string>();
+  let processedFeatureCount = 0;
   for (const id of graph.order) {
     const feature = context.document.features[id]; if (!dirty.has(id)) { result.skippedFeatureIds.push(id); continue; }
     if ([...graph.dependencies.get(id)!].some((dependency) => failed.has(dependency))) { result.blockedFeatureIds.push(id); context.rebuildRuntime.features.set(id, { featureId: id, status: "blocked" }); failed.add(id); continue; }
@@ -58,6 +63,11 @@ export const rebuildDocument = async (context: RebuildEngineContext, request: Re
     const evaluated = await evaluateFeature(id, { document: context.document, kernel: context.kernel, tolerance: context.tolerance, buildProfiles: context.buildProfiles, assets: context.assets, runtime: stagedRuntime(context.runtime, staged, aliases) }); results.set(id, evaluated);
     if (evaluated.status === "failed") { failed.add(id); result.failedFeatureIds.push(id); result.errors.push({ featureId: id, code: evaluated.error.code, message: evaluated.error.message }); context.rebuildRuntime.features.set(id, { featureId: id, status: "failed", error: evaluated.error, lastDurationMs: now() - featureStarted }); continue; }
     staged.set(id, evaluated.shape); result.evaluatedFeatureIds.push(id); context.rebuildRuntime.features.set(id, { featureId: id, status: "clean", lastDurationMs: now() - featureStarted });
+    processedFeatureCount += 1;
+    // OCCT runs on the browser main thread. Yield between small batches so
+    // toolbars, cancellation and status feedback remain responsive while a
+    // large imported/resource document is rebuilt.
+    if (processedFeatureCount % 4 === 0) await yieldToBrowser();
   }
   if (failed.size) { await rollback(context.kernel, staged); context.rebuildRuntime.documentStatus = "last-good"; result.durationMs = now() - started; return result; }
   try { await commitRebuildBatch(context.runtime, context.kernel, staged, aliases, results); deriveRuntimeBodies(context.document, context.runtime); result.success = true; context.rebuildRuntime.documentStatus = "current"; context.rebuildRuntime.lastSuccessfulDocumentFingerprint = context.rebuildRuntime.currentDocumentFingerprint; } catch (error) { await rollback(context.kernel, staged); context.rebuildRuntime.documentStatus = "last-good"; result.errors.push({ featureId: "commit", code: "REBUILD_COMMIT_FAILED", message: error instanceof Error ? error.message : String(error) }); }

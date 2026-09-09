@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "ForgeMind 工厂运行时数据流",
+    "locale": "zh-CN",
+    "output": "forgemind-atlas-03-factory-runtime-dataflow.html",
+    "viewBox": [1080, 620],
+    "animation": "trace",
+    "quality_profile": "showcase"
+  },
+  "stages": [
+    { "label": "输入与快照" },
+    { "label": "校验" },
+    { "label": "确定性计算" },
+    { "label": "证据" },
+    { "label": "消费" }
+  ],
+  "nodes": [
+    { "id": "project", "type": "frontend", "label": "项目 / 版本", "sublabel": "结构", "stage": 0, "row": 0, "tag": "输入" },
+    { "id": "resources", "type": "cloud", "label": "资源与配方", "sublabel": "模型 / 物料 / 工艺", "stage": 0, "row": 3, "tag": "输入" },
+    { "id": "snapshot", "type": "backend", "label": "工作区快照", "sublabel": "版本指纹 + 资源归属", "stage": 1, "row": 1, "tag": "事实" },
+    { "id": "schema", "type": "security", "label": "结构校验", "sublabel": "端口 / 楼层 / 占用", "stage": 1, "row": 0, "tag": "门禁" },
+    { "id": "runtime", "type": "backend", "label": "确定性仿真", "sublabel": "tick / 物料守恒 / 指标", "stage": 2, "row": 1, "tag": "核心" },
+    { "id": "navigation", "type": "backend", "label": "寻路与调度", "sublabel": "AGV / 无人机 / 避障", "stage": 2, "row": 3, "tag": "核心" },
+    { "id": "metrics", "type": "database", "label": "运行指标", "sublabel": "吞吐 / 利用率 / 在制品", "stage": 3, "row": 1, "tag": "确定性" },
+    { "id": "findings", "type": "security", "label": "诊断与证据", "sublabel": "阻塞 / 风险 / 差异", "stage": 3, "row": 3, "tag": "可审计" },
+    { "id": "workspace", "type": "frontend", "label": "生产工作台", "sublabel": "地图 / 面板 / 时间线", "stage": 4, "row": 0, "tag": "展示" },
+    { "id": "agent", "type": "backend", "label": "Agent 分析", "sublabel": "只读工具 + Patch 候选", "stage": 4, "row": 3, "tag": "需审批" },
+    { "id": "cloud", "type": "cloud", "label": "云端协作", "sublabel": "版本 / 提醒 / 知识", "stage": 4, "row": 2, "tag": "同步" }
+  ],
+  "flows": [
+    { "id": "project-snapshot", "from": "project", "to": "snapshot", "label": "载入", "classification": "结构事实", "variant": "emphasis" },
+    { "id": "resource-snapshot", "from": "resources", "to": "snapshot", "label": "绑定", "classification": "资源事实", "variant": "default" },
+    { "id": "snapshot-schema", "from": "snapshot", "to": "schema", "label": "校验", "classification": "校验输入", "variant": "security", "labelAt": [315, 314] },
+    { "id": "schema-runtime", "from": "schema", "to": "runtime", "label": "通过", "classification": "确定性", "variant": "emphasis" },
+    { "id": "runtime-metrics", "from": "runtime", "to": "metrics", "label": "采样指标", "classification": "运行事实", "variant": "emphasis", "fromSide": "right", "toSide": "left", "labelAt": [820, 202] },
+    { "id": "runtime-navigation", "from": "runtime", "to": "navigation", "label": "任务状态", "classification": "调度事实", "variant": "default", "fromSide": "bottom", "toSide": "top", "labelAt": [700, 410] },
+    { "id": "metrics-workspace", "from": "metrics", "to": "workspace", "label": "实时读模型", "classification": "只读展示", "variant": "default", "fromSide": "right", "toSide": "left", "labelAt": [1015, 202] },
+    { "id": "navigation-findings", "from": "navigation", "to": "findings", "label": "阻塞与重规划", "classification": "诊断证据", "variant": "security", "fromSide": "right", "toSide": "left", "labelAt": [820, 542] },
+    { "id": "findings-agent", "from": "findings", "to": "agent", "label": "事实", "classification": "只读上下文", "variant": "dashed", "fromSide": "right", "toSide": "left" },
+    { "id": "agent-cloud", "from": "agent", "to": "cloud", "label": "摘要 / 提醒", "classification": "可同步", "variant": "dashed", "labelAt": [960, 542] }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "事实链", "items": ["项目版本与资源先进入快照，再经过结构校验", "仿真、寻路、物料守恒和指标由确定性运行时计算"] },
+    { "dot": "violet", "title": "证据链", "items": ["诊断读取运行事实并形成阻塞、风险和差异证据", "Agent 只能消费结构化事实，不能直接改写仿真结果"] },
+    { "dot": "amber", "title": "消费边界", "items": ["生产工作台消费实时读模型；云端消费摘要、提醒和知识", "视觉结果可作为证据输入，但不替代数量、坐标和寻路结论"] }
+  ]
+}

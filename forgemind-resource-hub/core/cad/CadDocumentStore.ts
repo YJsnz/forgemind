@@ -53,12 +53,12 @@ const decodeRecord = (raw: string | null): { record: StoredCadDocumentRecord; do
 export const saveCadDocumentHandoff = (
   storage: StorageLike,
   document: CadDocument<Sketch, Feature>,
-  options: { sourceResourceId?: string } = {},
+  options: { sourceResourceId?: string; markLatest?: boolean } = {},
 ): { documentKey: string; resourceKey?: string } => {
   const raw = encodeRecord(document, options.sourceResourceId);
   const documentKey = cadDocumentStoreKey(document.id);
   storage.setItem(documentKey, raw);
-  storage.setItem(CAD_LATEST_STORE_KEY, raw);
+  if (options.markLatest !== false) storage.setItem(CAD_LATEST_STORE_KEY, raw);
   let resourceKey: string | undefined;
   if (options.sourceResourceId) {
     resourceKey = cadResourceStoreKey(options.sourceResourceId);
@@ -100,6 +100,42 @@ export const listCadDocumentHandoffs = (storage: StorageLike): StoredCadDocument
     } catch { /* Ignore stale or malformed browser-storage entries. */ }
   }
   return [...projects.values()].sort((a, b) => b.savedAt - a.savedAt);
+};
+
+export const isObsoleteGeneratedCadDocument = (
+  document: CadDocument<Sketch, Feature>,
+  sourceResourceId: string | undefined,
+  currentDocumentIds: Readonly<Record<string, string>>,
+): boolean => {
+  if (/\s·\sB-Rep$/u.test(document.name) || /^资源组合自由建模(?:\s·|$)/u.test(document.name)) return true;
+  if (!sourceResourceId) return false;
+  const currentId = currentDocumentIds[sourceResourceId];
+  return Boolean(currentId && document.id !== currentId);
+};
+
+/** Removes only superseded built-in resource documents from the project list.
+ * User-created documents and the current maintained resource version remain. */
+export const pruneObsoleteResourceCadDocuments = (
+  storage: StorageLike,
+  currentDocumentIds: Readonly<Record<string, string>>,
+): number => {
+  const enumerable = storage as StorageLike & { length?: number; key?: (index: number) => string | null };
+  if (!Number.isFinite(enumerable.length) || typeof enumerable.key !== "function") return 0;
+  const obsoleteKeys: string[] = [];
+  for (let index = 0; index < (enumerable.length ?? 0); index += 1) {
+    const key = enumerable.key(index);
+    if (!key?.startsWith(PREFIX)) continue;
+    try {
+      const loaded = decodeRecord(storage.getItem(key));
+      if (!loaded) continue;
+      // Older ResourceCadBridge sessions predate sourceResourceId and used
+      // these generated names. They are superseded by maintained precision
+      // documents and otherwise keep reappearing as duplicate project entries.
+      if (isObsoleteGeneratedCadDocument(loaded.document, loaded.record.sourceResourceId, currentDocumentIds)) obsoleteKeys.push(key);
+    } catch { /* Malformed records remain isolated and are ignored by listings. */ }
+  }
+  obsoleteKeys.forEach((key) => storage.removeItem(key));
+  return obsoleteKeys.length;
 };
 
 export const removeCadDocumentHandoff = (storage: StorageLike, documentId: string): void => {

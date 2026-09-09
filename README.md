@@ -78,7 +78,7 @@ Forge 生态由一个核心工作台、一个统一身份入口、一个云端�
 | **ForgeMind** | Web `/`，登录后进入工作台 | 三维工厂设计、生产资料、物流、仿真、诊断 | 已落地 | [`ForgeMind 模块用户文档`](docs/ForgeMind-模块用户文档.md) |
 | **ForgePass** | 登录/注册页 | 统一注册、登录、续登、退出和产品身份 | 已落地 | [`ForgePass 用户文档`](docs/ForgePass-用户文档.md) |
 | **ForgeCloud** | Web `/forgecloud` | 工作空间、项目版本、资源、发布、协作、设备/数据摘要 | 已落地；真实工业接入仍有限制 | [`ForgeCloud 用户文档`](docs/ForgeCloud-用户文档.md) |
-| **ForgeHub** | Web `/forgehub` | 3D 资产制作与复用的生态入口 | 当前为预留/预览入口 | [`ForgeHub 用户文档`](docs/ForgeHub-用户文档.md) |
+| **ForgeHub** | 门户 `/forgehub`、本地 `127.0.0.1:3000` | 工业资源、参数化 CAD、STEP/资源包、装配与工程检查 | 本地工作台已落地；云端发布仍未接通 | [`ForgeHub 用户文档`](docs/ForgeHub-用户文档.md) |
 | **ForgeLab** | Web `/forgelab` | 工厂存档、模型资源、布局经验和设计公告社区 | 已落地 | [`ForgeLab 用户文档`](docs/ForgeLab-用户文档.md) |
 | **ForgeMove** | 微信小程序 `ForgeMove/` | 移动摘要、任务、库存、监控和社区动态 | 已落地；需小程序部署配置 | [`ForgeMove 用户文档`](docs/ForgeMove-用户文档.md) |
 
@@ -348,18 +348,20 @@ npm run dev
 | 官方文档 | <http://127.0.0.1:5173/docs> |
 | ForgeCloud | <http://127.0.0.1:5173/forgecloud> |
 | ForgeLab | <http://127.0.0.1:5173/forgelab> |
+| ForgeHub（需 ForgePass） | <http://127.0.0.1:5173/forgehub> |
 
 ### 方式二：单终端一键启动
 
-Windows 推荐双击 `启动ForgeMind.cmd`。启动器只保留一个可见终端，用一个大进度条显示真实启动状态；MySQL、Spring Boot、AI、ASR/TTS、独立语音监听和前端服务均在后台隐藏进程中运行，日志写入 `.forgemind/logs/`。只有前端和所有请求服务都通过健康检查、语音模型预热完成后才显示 `100% / SYSTEM READY`，失败会停在未完成进度并给出日志位置。
+Windows 推荐双击 `启动ForgeMind.cmd`。启动器只保留一个可见终端，用一个大进度条显示真实启动状态；MySQL、Spring Boot、AI、ASR/TTS、独立语音监听、ForgeHub Web CAD 和 ForgeMind 前端服务均在后台隐藏进程中运行，日志写入 `.forgemind/logs/`。只有前端和所有请求服务都通过健康检查、语音模型预热完成后才显示 `100% / SYSTEM READY`，失败会停在未完成进度并给出日志位置。
 
-根入口和 `start-forgemind.bat` 都默认启动前端、MySQL、Spring Boot、FastAPI AI 网关、ASR/TTS 语音服务和独立语音监听，保证注册、登录、远端存档、AI 助手和语音能力在进度条结束后即可使用；不会启动 Ollama 或本地大语言模型，AI 默认走 `rule`。只需要离线前端时直接运行 `npm run dev`，或直接调用不带服务开关的 `scripts/start-forgemind.ps1`；需要保留 AI/语音但跳过数据库时可传 `-SkipSpring`。
+根入口和 `start-forgemind.bat` 都默认启动前端、MySQL、Spring Boot、ForgeHub、FastAPI AI 网关、ASR/TTS 语音服务和独立语音监听，保证注册、登录、CAD、远端存档、AI 助手和语音能力在进度条结束后即可使用；不会启动 Ollama 或本地大语言模型，AI 默认走 `rule`。只需要离线 ForgeMind 前端时直接运行 `npm run dev`，或直接调用不带服务开关的 `scripts/start-forgemind.ps1`；完整入口可用 `-SkipForgeHub` 跳过 CAD 子应用。
 
 ```powershell
 启动ForgeMind.cmd
 启动ForgeMind.cmd -NoBrowser
 启动ForgeMind.cmd -SkipSpring
 启动ForgeMind.cmd -SkipMySql
+启动ForgeMind.cmd -SkipForgeHub
 启动ForgeMind.cmd -IncludeAI
 启动ForgeMind.cmd -IncludeSpring -IncludeAI -Port 5174
 stop-forgemind.bat
@@ -373,6 +375,7 @@ stop-forgemind.bat
 | Spring Boot | `127.0.0.1:8080` | 根入口默认启动；保存、认证和云端能力需要 |
 | FastAPI | `127.0.0.1:8000` | 根入口默认启动；规则助手、ASR/TTS 和视觉网关 |
 | BT TTS | `127.0.0.1:8001` | 根入口默认启动；语音 TTS 后端 |
+| ForgeHub Vinext | `127.0.0.1:3000` | 根入口默认启动；工业资源与 Web CAD |
 | Ollama | `127.0.0.1:11434` | 否；远程/本地模型可选 |
 
 `-IncludeAI` 和 `-IncludeVoiceChat` 可用于给直接调用 PowerShell 的轻量入口增加对应服务；两个一键入口已经自动传入这两个开关。`-IncludeAI` 默认仍使用 `rule`，不会自动拉起 Ollama；`-IncludeVoiceChat` 会等待 ASR/TTS 预热、BT TTS 端口和独立语音进程全部就绪后才完成启动。所有启动服务的标准输出和错误输出都在 `.forgemind/logs/` 中，不再打开多个服务终端。

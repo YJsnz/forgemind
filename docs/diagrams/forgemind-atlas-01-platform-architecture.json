@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ForgeMind 全平台架构与生态边界",
+    "locale": "zh-CN",
+    "output": "forgemind-atlas-01-platform-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/YJsnz/forgemind.git",
+      "revision": "46e2761cc45ed1be85826f60196225b0e6bef3a6"
+    },
+    "views": [
+      { "id": "core-runtime", "label": "核心运行链", "focus": ["operator", "forgepass", "web-shell", "spring-api", "mysql"], "note": "统一身份进入主站，Spring Boot 与 MySQL 保存可恢复结构和审计事实。" },
+      { "id": "deterministic-core", "label": "确定性核心", "focus": ["web-shell", "factory-runtime", "unity-client"], "note": "浏览器业务状态与确定性仿真是事实源；Unity 只接收投影并回传交互。" },
+      { "id": "optional-intelligence", "label": "可选智能能力", "focus": ["web-shell", "ai-gateway", "voice-vision"], "note": "规则模式默认可用；LLM、语音和 GPU 视觉均可降级，不进入仿真 tick。" },
+      { "id": "cad-and-desktop", "label": "CAD 与桌面端", "focus": ["forgehub", "unity-client", "web-shell", "spring-api"], "note": "ForgeHub 独立运行并复核身份；桌面端复用 Web 业务层并可切换 Unity 渲染。" }
+    ]
+  },
+  "components": [
+    { "id": "operator", "type": "external", "label": "工程师与操作员", "sublabel": "Browser / Desktop / Mobile", "pos": [20, 250], "size": [150, 64], "sources": [{ "path": "src/App.tsx", "label": "应用入口" }] },
+    { "id": "forgepass", "type": "security", "label": "ForgePass", "sublabel": "密码 / Email OTP / GitHub", "pos": [210, 250], "size": [160, 64], "tag": "统一身份", "sources": [{ "path": "src/components/ForgePassPage.tsx", "label": "认证界面" }, { "path": "backend/src/main/java/com/forgemind/web/AuthController.java", "label": "认证 API" }] },
+    { "id": "web-shell", "type": "frontend", "label": "ForgeMind Web 主站", "sublabel": "React / Vite / Zustand", "pos": [410, 250], "size": [170, 64], "tag": "业务事实源", "sources": [{ "path": "src/App.tsx", "label": "路由与工作台" }, { "path": "src/components/ForgeMindIntro.tsx", "label": "门户" }] },
+    { "id": "spring-api", "type": "backend", "label": "Spring Boot API", "sublabel": "Java 17 · :8080", "pos": [650, 250], "size": [170, 64], "tag": "权限 / 版本 / 审计", "sources": [{ "path": "backend/src/main/java/com/forgemind/web/FactoryProjectController.java", "label": "工厂项目" }, { "path": "backend/src/main/java/com/forgemind/web/AgentController.java", "label": "Agent 门禁" }] },
+    { "id": "mysql", "type": "database", "label": "MySQL 8.4", "sublabel": "Flyway V1–V33", "pos": [880, 250], "size": [150, 64], "tag": "结构化持久化", "sources": [{ "path": "docker-compose.yml", "label": "本地数据库" }, { "path": "backend/src/main/resources/db/migration/V33__create_email_and_oauth_authentication.sql", "label": "最新认证迁移" }] },
+    { "id": "factory-runtime", "type": "backend", "label": "确定性工厂运行时", "sublabel": "仿真 / 寻路 / 诊断 / 规划", "pos": [410, 430], "size": [190, 64], "tag": "不依赖 LLM", "sources": [{ "path": "src/game/simulation.ts", "label": "固定步长仿真" }, { "path": "src/game/factoryAgent.ts", "label": "确定性 Agent" }, { "path": "src/game/generativeFactory.ts", "label": "生成式工厂" }] },
+    { "id": "ai-gateway", "type": "backend", "label": "AI Gateway", "sublabel": "FastAPI :8000", "pos": [650, 430], "size": [170, 64], "tag": "默认 rule", "sources": [{ "path": "ai-service/main.py", "label": "规则 / LLM / 多模态" }, { "path": "ai-service/rag.py", "label": "RAG" }] },
+    { "id": "voice-vision", "type": "external", "label": "语音与视觉运行时", "sublabel": "BT-7274 / ASR / YOLO", "pos": [880, 430], "size": [180, 64], "tag": "可选 GPU", "sources": [{ "path": "voice-chat/voice_chat.py", "label": "独立语音" }, { "path": "ai-service/main.py", "label": "视觉与语音入口" }] },
+    { "id": "forgehub", "type": "cloud", "label": "ForgeHub", "sublabel": "Vinext / OCCT / STEP / CAD", "pos": [880, 70], "size": [180, 64], "tag": "独立 :3000", "sources": [{ "path": "forgemind-resource-hub/app/page.tsx", "label": "资源与 CAD" }, { "path": "forgemind-resource-hub/app/cad/CadRoute.tsx", "label": "CAD 路由" }] },
+    { "id": "unity-client", "type": "frontend", "label": "Windows + Unity", "sublabel": "WebView2 / native overlay", "pos": [410, 70], "size": [180, 64], "tag": "WebGL 回退", "sources": [{ "path": "src/platform/unityBridge.ts", "label": "桥接协议" }, { "path": "desktop-host/ForgeMindHost.cpp", "label": "桌面宿主" }] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "客户端与产品表面", "wraps": ["forgepass", "web-shell", "factory-runtime", "forgehub", "unity-client"] },
+    { "kind": "security-group", "label": "本地服务与持久化边界", "wraps": ["spring-api", "mysql", "ai-gateway", "voice-vision"] }
+  ],
+  "connections": [
+    { "id": "operator-auth", "from": "operator", "to": "forgepass", "label": "登录 / 注册", "variant": "security", "labelAt": [190, 328] },
+    { "id": "auth-web", "from": "forgepass", "to": "web-shell", "label": "Bearer 会话", "variant": "security", "labelAt": [390, 328] },
+    { "id": "web-api", "from": "web-shell", "to": "spring-api", "label": "REST / SSE", "variant": "emphasis" },
+    { "id": "api-db", "from": "spring-api", "to": "mysql", "label": "事务 / 行锁 / 审计", "labelAt": [850, 328] },
+    { "id": "web-runtime", "from": "web-shell", "to": "factory-runtime", "label": "确定性执行", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "labelAt": [350, 380] },
+    { "id": "web-ai", "from": "web-shell", "to": "ai-gateway", "label": "结构化上下文 / 工具协议", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelAt": [615, 380] },
+    { "id": "ai-modalities", "from": "ai-gateway", "to": "voice-vision", "label": "ASR / TTS / YOLO", "variant": "dashed", "labelAt": [850, 508] },
+    { "id": "hub-auth", "from": "forgehub", "to": "spring-api", "label": "/api/auth/me 复核", "variant": "security" },
+    { "id": "desktop-bridge", "from": "unity-client", "to": "web-shell", "label": "场景投影 / 选择 / 镜头", "variant": "dashed", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "真相源", "items": ["浏览器确定性仿真负责 tick、坐标、碰撞、物料守恒和运行指标", "Spring Boot/MySQL 保存可恢复结构、身份、版本、审批和审计，不保存每帧坐标"] },
+    { "dot": "violet", "title": "可选智能", "items": ["FastAPI 默认 rule；Ollama/DeepSeek 仅由服务端显式启用", "LLM、语音、YOLO GPU 加速都不得成为核心编辑与仿真的启动门禁"] },
+    { "dot": "amber", "title": "当前边界", "items": ["ForgeHub 以本地 CAD 与文件交换为主，身份必须回到 Spring Boot 复核", "真实 OPC UA/MQTT、时序引擎和设备控制执行器仍未完成"] }
+  ]
+}

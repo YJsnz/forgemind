@@ -31,6 +31,17 @@ test("local CAD Agent does not confuse CNC spindles or six-axis robots with shaf
   assert.equal(robot.intent, "robot");
 });
 
+test("local CAD Agent recognizes a hydraulic press and replaces its rough structural proxies", () => {
+  const plan = createLocalCadAgentPlan("建立 2000×1600×2200 mm 液压压力机，包含闭式机架、四导向滑块和安全光幕", { planId: "press-intent" });
+  assert.equal(plan.intent, "press");
+  assert.ok(plan.featureProgram);
+  assert.ok(plan.featureProgramReplaces.includes("press-frame"));
+  const frame = plan.featureProgram.parts.find((part) => part.id === "press-frame");
+  assert.ok(frame.steps.some((step) => step.kind === "extrude" && step.operation === "remove" && step.id === "working-opening"));
+  assert.ok(plan.template.parts.some((part) => part.id === "pump-motor"));
+  assert.ok(plan.template.parts.some((part) => part.mechanicalDetail?.kind === "cableSweep"));
+});
+
 test("local CAD Agent adds editable engineering-detail Bodies to production equipment", () => {
   const cases = [
     ["conveyor-detail", "建立 4500×900×850 mm 滚筒输送线", ["轴承", "齿轮", "线缆", "螺纹牙", "电机"]],
@@ -163,6 +174,7 @@ test("local CAD Agent equipment envelopes remain grounded and close to requested
     ["cnc-envelope", "建立 1600×1200×1900 mm 的数控加工中心，带主轴"],
     ["lathe-envelope", "建立 2000×1100×1600 mm 的数控车床，加工圆棒"],
     ["robot-envelope", "建立 2200×1800×2400 mm 的六轴机器人工作单元"],
+    ["press-envelope", "建立 2000×1600×2200 mm 的液压压力机"],
     ["shaft-envelope", "建立 500×120×120 mm 的阶梯轴"],
   ];
   for (const [id, prompt] of cases) {
@@ -243,5 +255,7 @@ test("local CAD Agent replaces rough robot arm blocks with editable lofted arm p
   assert.equal(sourceIds.includes("forearm-cast-shell"), false);
   assert.ok(sourceIds.includes("upper-arm"));
   assert.ok(sourceIds.includes("forearm"));
-  assert.equal(Object.values(document.features).filter((feature) => feature.type === "loft").length, 2);
+  const armLofts = Object.values(document.features).filter((feature) => feature.type === "loft" && /上臂|前臂/.test(feature.name));
+  assert.equal(armLofts.length, 2);
+  assert.ok(armLofts.every((feature) => feature.sectionSketchIds.length === 5));
 });

@@ -70,13 +70,16 @@ _fast_tts: Any = None
 _fast_tts_lock = threading.Lock()
 _voice_ready = False
 _voice_error: str | None = None
-_yolo_model: Any = None
+_yolo_runtime: Any = None
 _yolo_lock = threading.Lock()
 _yolo_inference_lock = threading.Lock()
 
 SYSTEM_PROMPT = """你是 ForgeMind 工厂的智能管家 BT-7274。
 你称呼用户为“驾驶员”，语气沉稳、冷静、专业、简洁；对简短问候正常回应，不使用活泼语气词。
 你只能依据提供的工厂上下文回答，不得编造设备、配方、产量或运行状态。
+检索依据中的 source、heading 和 excerpt 只支持产品/工艺/历史解释；回答引用知识时优先说明来源章节，不能把检索片段当作实时工厂事实。
+如果问题不是实时事实且检索依据不足，明确说“当前资料不足”，不要用模型常识补写；如果问题涉及当前数值、状态、库存、坐标、路线或仿真指标，必须调用对应实时工具。
+如果证据带有 conflict=project-version-mismatch，必须说明不同项目版本存在冲突，并优先依据当前项目/版本或请求重新核验，不能把冲突片段合并成单一事实。
 当用户要求查询或控制工厂时，使用工具调用；工具参数必须使用上下文中的真实字符串 ID，不要把自然语言编号当成 ID。
 如果对象名称有歧义，先让驾驶员确认，不要猜测。控制动作只提出建议，ForgeMind 前端会在执行前再次校验并决定是否需要确认。
 当用户要求解释、查看或汇总最近一帧视觉检测结果时，如果上下文中的 vision.status 为 ready，必须调用 inspect_vision_result；不要根据记忆猜测缺陷。如果用户要求打开视觉检测工作台，调用 open_panel(panelId="inspection").
@@ -294,9 +297,9 @@ async def asr(request: Request) -> AsrReply:
 @app.post("/api/ai/tts")
 def tts(req: TtsRequest) -> Response:
     """低延迟本地 TTS；默认保留 BT 音色，失联时回退 sherpa VITS。"""
-    text = req.text.strip()
+    text = strip_english_from_speech(req.text)
     if not text:
-        raise HTTPException(status_code=400, detail="播报文本为空")
+        raise HTTPException(status_code=400, detail="播报文本没有可朗读的中文或数字")
     if TTS_BACKEND == "sherpa":
         try:
             return Response(content=synthesize_fast_tts(text, req.length_scale), media_type="audio/wav")
@@ -310,6 +313,16 @@ def tts(req: TtsRequest) -> Response:
             return Response(content=synthesize_fast_tts(text, req.length_scale), media_type="audio/wav")
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=503, detail=f"BT 与备用 TTS 均不可用：{exc}") from exc
+
+
+def strip_english_from_speech(text: str) -> str:
+    """英文仍保留在 UI 文本中，但不会送入 BT 或备用 TTS。"""
+    spoken = re.sub(r"[A-Za-z][A-Za-z0-9_.:/\\-]*", " ", text)
+    spoken = re.sub(r"\s+([，。！？!?；;：:、])", r"\1", spoken)
+    spoken = re.sub(r"([，。！？!?；;：:、])(?:\s*\1)+", r"\1", spoken)
+    spoken = re.sub(r"^[\s，。！？!?；;：:、]+", "", spoken)
+    spoken = re.sub(r"\s+", " ", spoken)
+    return re.sub(r"([\u3400-\u9fff])\s+(?=[\u3400-\u9fff])", r"\1", spoken).strip()
 
 
 def proxy_bt_tts(text: str, length_scale: float) -> Response:
@@ -896,7 +909,7 @@ def compact_model_context(context: dict[str, Any]) -> dict[str, Any]:
         "conversationSummary": str(context.get("conversationSummary", ""))[:1600],
         "ui": {
             key: ui.get(key)
-            for key in ("route", "view", "panel", "floorId", "selectedObjectId", "selectedObjectLabel", "projectId", "projectName", "projectVersion")
+            for key in ("route", "view", "panel", "workspaceId", "floorId", "selectedObjectId", "selectedObjectLabel", "projectId", "projectName", "projectVersion")
             if isinstance(ui, dict) and key in ui
         },
         "task": {
@@ -1190,8 +1203,26 @@ def normalize_evidence(evidence: list[dict[str, Any]] | None) -> list[dict[str, 
         heading = str(item.get("heading", "")).strip()[:120]
         excerpt = str(item.get("excerpt", "")).strip()[:420]
         match = str(item.get("match", "")).strip()[:32]
+        route = str(item.get("route", "")).strip()[:24]
+        score = str(item.get("score", "")).strip()[:16]
+        chunk_id = str(item.get("chunkId", "")).strip()[:180]
+        confidence = str(item.get("confidence", "")).strip()[:16]
+        conflict = str(item.get("conflict", "")).strip()[:48]
+        embedding = str(item.get("embedding", "")).strip()[:16]
         if source and excerpt:
-            normalized.append({"source": source, "heading": heading, "excerpt": excerpt, **({"category": category} if category else {}), **({"match": match} if match else {})})
+            normalized.append({
+                "source": source,
+                "heading": heading,
+                "excerpt": excerpt,
+                **({"category": category} if category else {}),
+                **({"match": match} if match else {}),
+                **({"route": route} if route else {}),
+                **({"score": score} if score else {}),
+                **({"chunkId": chunk_id} if chunk_id else {}),
+                **({"confidence": confidence} if confidence else {}),
+                **({"conflict": conflict} if conflict else {}),
+                **({"embedding": embedding} if embedding else {}),
+            })
     return normalized
 
 
@@ -1322,11 +1353,19 @@ class YoloDetectReply(BaseModel):
 @app.get("/api/vision/yolo/health")
 def yolo_health() -> dict[str, Any]:
     """返回实时 YOLO 模型是否可用；不在健康检查阶段加载权重。"""
+    runtime: Any = None
+    runtime_error: str | None = None
+    try:
+        runtime = get_yolo_runtime()
+    except Exception as exc:  # noqa: BLE001 - health endpoint must report optional backend failure
+        runtime_error = str(exc)
     return {
-        "status": "ready" if YOLO_MODEL_PATH.exists() else "error",
+        "status": "ready" if runtime is not None else "error",
         "model": str(YOLO_MODEL_PATH),
         "modelExists": YOLO_MODEL_PATH.exists(),
-        "loaded": _yolo_model is not None,
+        "loaded": bool(runtime and runtime.model is not None),
+        "runtime": runtime.health() if runtime else None,
+        "error": runtime_error,
         "classes": ["missing_hole", "mouse_bite", "open_circuit", "short", "spur", "spurious_copper"],
     }
 
@@ -1343,21 +1382,20 @@ def readiness() -> dict[str, Any]:
     return {"status": "warming", "ready": False, "voiceEnabled": True}
 
 
-def get_yolo_model():
-    global _yolo_model
-    if _yolo_model is not None:
-        return _yolo_model
+def get_yolo_runtime():
+    global _yolo_runtime
+    if _yolo_runtime is not None:
+        return _yolo_runtime
     with _yolo_lock:
-        if _yolo_model is not None:
-            return _yolo_model
-        if not YOLO_MODEL_PATH.exists():
-            raise RuntimeError(f"找不到 YOLO 模型：{YOLO_MODEL_PATH}")
         try:
-            from ultralytics import YOLO
+            try:
+                from .yolo_runtime import YoloRuntime
+            except ImportError:  # pragma: no cover - uvicorn main:app 运行方式
+                from yolo_runtime import YoloRuntime
         except ImportError as exc:
-            raise RuntimeError("未安装 ultralytics，请安装 ai-service/requirements-yolo.txt") from exc
-        _yolo_model = YOLO(str(YOLO_MODEL_PATH))
-        return _yolo_model
+            raise RuntimeError("视觉运行时模块未就绪") from exc
+        _yolo_runtime = YoloRuntime(YOLO_MODEL_PATH)
+        return _yolo_runtime
 
 
 @app.post("/api/vision/yolo/detect", response_model=YoloDetectReply)
@@ -1366,7 +1404,7 @@ def yolo_detect(req: YoloDetectRequest) -> YoloDetectReply:
     try:
         import cv2
         import numpy as np
-        model = get_yolo_model()
+        runtime = get_yolo_runtime()
         b64 = req.image.split(",", 1)[-1]
         img_bytes = base64.b64decode(b64)
         image = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
@@ -1376,25 +1414,17 @@ def yolo_detect(req: YoloDetectRequest) -> YoloDetectReply:
             return YoloDetectReply(status="error", note="YOLO 正在处理上一帧，请稍后重试")
         started = __import__("time").perf_counter()
         try:
-            result = model.predict(source=image, conf=req.confidence, imgsz=640, verbose=False)[0]
+            detections = runtime.detect(image=image, confidence=req.confidence)
         finally:
             _yolo_inference_lock.release()
-        detections: list[YoloDetection] = []
-        if result.boxes is not None:
-            for box in result.boxes:
-                coords = [int(round(value)) for value in box.xyxy[0].tolist()]
-                detections.append(YoloDetection(
-                    className=str(model.names[int(box.cls[0])]),
-                    confidence=round(float(box.conf[0]), 3),
-                    x1=coords[0], y1=coords[1], x2=coords[2], y2=coords[3],
-                ))
+        typed_detections = [YoloDetection(**detection) for detection in detections]
         return YoloDetectReply(
             status="ready",
-            detections=detections,
+            detections=typed_detections,
             width=int(image.shape[1]),
             height=int(image.shape[0]),
             inferenceMs=round((__import__("time").perf_counter() - started) * 1000, 1),
-            note="YOLOv8 PCB 缺陷模型实时推理",
+            note=f"YOLOv8 PCB 缺陷模型实时推理 · {runtime.info.backend}/{runtime.info.provider}",
         )
     except (ValueError, RuntimeError, ImportError) as exc:
         return YoloDetectReply(status="error", note=str(exc))

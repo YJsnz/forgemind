@@ -6,7 +6,7 @@ import type { ModelingResourceTemplate, ResourceModelPart, ResourcePrimitiveKind
 import type { Sketch } from "../sketch/Sketch.ts";
 import { compileAgentCadFeatureProgram, type AgentCadFeatureProgram, type AgentFeaturePartProgram, type AgentProfile } from "./CadFeatureProgram.ts";
 
-export type LocalCadAgentIntent = "cnc" | "robot" | "conveyor" | "enclosure" | "bracket" | "flange" | "shaft" | "generic";
+export type LocalCadAgentIntent = "cnc" | "robot" | "press" | "conveyor" | "enclosure" | "bracket" | "flange" | "shaft" | "generic";
 export type LocalCadAgentApplyMode = "replace" | "append";
 
 export interface LocalCadAgentFeatureRequests {
@@ -111,6 +111,7 @@ const overallDimensions = (prompt: string) => {
 const intentRules: Record<Exclude<LocalCadAgentIntent, "generic">, Array<[RegExp, number, string]>> = {
   cnc: [[/数控|CNC|加工中心|机床/i, 8, "数控机床"], [/铣床|车床|雕刻机|钻攻中心/i, 6, "机加工设备"], [/夹住.*圆棒.*加工|加工.*圆棒|工件旋转.*加工/i, 6, "车削用途"], [/主轴.*工作台|工作台.*主轴/i, 3, "主轴与工作台"], [/切削|铣削|车削/i, 2, "切削用途"]],
   robot: [[/机器人|机械臂|机械手|robot/i, 8, "工业机器人"], [/六轴|6轴/i, 5, "六轴结构"], [/上下料|码垛|搬运|抓取|焊接工作站/i, 4, "自动化作业"], [/末端夹具|吸盘|焊枪/i, 3, "机器人末端工具"]],
+  press: [[/液压(?:冲压|压力)机|冲床|压力机|press/i, 9, "液压压力设备"], [/冲压|压装|折弯|成形/i, 5, "压力成形用途"], [/滑块|液压缸|工作台.*压/i, 3, "压力机机构"]],
   conveyor: [[/输送|传送|流水线|滚筒线|皮带线|conveyor/i, 8, "输送设备"], [/滚筒|传送带|输送带|链板/i, 5, "输送结构"], [/物料.*移动|工件.*流转/i, 3, "物料流转用途"]],
   enclosure: [[/控制柜|电控柜|配电柜|机柜|机箱|壳体|外壳|enclosure|cabinet/i, 8, "设备柜体"], [/钣金盒|防护罩|电气箱|箱子/i, 5, "箱体结构"], [/装电器|放电气元件|保护内部/i, 3, "电气防护用途"]],
   bracket: [[/支架|角码|托架|bracket/i, 8, "安装支架"], [/固定.*(?:电机|设备|零件)|(?:电机|设备|零件).*固定/i, 5, "固定用途"], [/承托|支撑件|安装座/i, 4, "承托结构"]],
@@ -159,12 +160,12 @@ const parseFeatureRequests = (prompt: string): LocalCadAgentFeatureRequests => {
 };
 
 const defaults: Record<LocalCadAgentIntent, [number, number, number]> = {
-  cnc: [1400, 1100, 1900], robot: [2200, 1800, 2200], conveyor: [3000, 900, 900], enclosure: [800, 500, 1200],
+  cnc: [1400, 1100, 1900], robot: [2200, 1800, 2200], press: [1600, 1200, 2100], conveyor: [3000, 900, 900], enclosure: [800, 500, 1200],
   bracket: [220, 140, 180], flange: [200, 200, 24], shaft: [500, 120, 120], generic: [300, 200, 120],
 };
 
 const titles: Record<LocalCadAgentIntent, string> = {
-  cnc: "数控加工中心参数化模型", robot: "机器人工作单元参数化模型", conveyor: "模块化输送设备参数化模型",
+  cnc: "数控加工中心参数化模型", robot: "机器人工作单元参数化模型", press: "液压压力机参数化模型", conveyor: "模块化输送设备参数化模型",
   enclosure: "工业设备壳体参数化模型", bracket: "加强型安装支架", flange: "带孔工业法兰", shaft: "阶梯轴与联轴结构", generic: "用户需求参数化零件",
 };
 
@@ -205,6 +206,7 @@ const resolveMaterial = (prompt: string, intent: LocalCadAgentIntent) => {
   if (/食品|洁净|潮湿|防水/.test(prompt)) return { material: "不锈钢 / 304", density: 7930, inferred: true };
   if (/户外|室外/.test(prompt)) return { material: "碳钢 / Q235（防腐涂层）", density: 7850, inferred: true };
   if (intent === "cnc") return { material: "灰铸铁 / HT250（床身）", density: 7250, inferred: true };
+  if (intent === "press") return { material: "焊接钢结构 / Q235（机架）", density: 7850, inferred: true };
   if (intent === "enclosure") return { material: "冷轧钢板 / Q235", density: 7850, inferred: true };
   return { material: "碳钢 / Q235", density: 7850, inferred: true };
 };
@@ -356,6 +358,48 @@ const equipmentParts = (intent: LocalCadAgentIntent, prompt: string, length: num
       { x: length * .42, y: bedY * .76, z: railZ - rail * .35 },
     ] });
     for (const x of [-length * .4, length * .4]) for (const z of [-railZ, railZ]) addThreadedFastener(parts, { id: `foot-bolt-${x}-${z}`, label: "支腿调平螺栓", x, y: rail * .25, z, diameter: Math.max(8, rail * .18), length: rail * .5, color: metal });
+  } else if (intent === "press") {
+    primaryPartId = "press-frame";
+    const frameDepth = width * .62, columnX = length * .36, guideX = length * .22;
+    // These five structural proxies are replaced below by coherent feature-
+    // driven solids.  The remaining entries are real serviceable components.
+    parts.push(part("press-frame", "box", "一体式闭式压力机机架", 0, height * .52, 0, length * .9, height * .9, frameDepth, mid));
+    parts.push(part("press-base", "box", "减振铸造底座", 0, height * .08, 0, length, height * .16, width, dark));
+    parts.push(part("press-bed", "box", "精密承压工作台", 0, height * .31, 0, length * .66, height * .1, width * .72, metal));
+    parts.push(part("press-ram", "box", "四导向液压滑块", 0, height * .58, 0, length * .48, height * .18, width * .52, yellow));
+    parts.push(part("press-control", "box", "悬臂式触控操作箱", length * .39, height * .58, -width * .35, length * .18, height * .3, width * .12, dark));
+    parts.push(part("hydraulic-cylinder", "cylinder", "主液压缸筒", 0, height * .82, 0, length * .18, height * .3, length * .18, yellow));
+    parts.push(part("piston-rod", "cylinder", "镀铬活塞杆", 0, height * .67, 0, length * .07, height * .22, length * .07, metal));
+    parts.push(torusOnAxis("cylinder-head-seal", "液压缸端盖密封圈", 0, height * .71, 0, length * .13, length * .018, "y", dark));
+    for (const side of [-1, 1]) {
+      parts.push(cylinderOnAxis(`guide-column-${side < 0 ? "left" : "right"}`, `${side < 0 ? "左" : "右"}侧精密导柱`, side * guideX, height * .55, 0, length * .055, height * .45, "y", metal));
+      parts.push(torusOnAxis(`guide-bush-upper-${side}`, "上导向铜套", side * guideX, height * .67, 0, length * .085, length * .018, "y", yellow));
+      parts.push(torusOnAxis(`guide-bush-lower-${side}`, "下导向铜套", side * guideX, height * .49, 0, length * .085, length * .018, "y", yellow));
+    }
+    parts.push(part("lower-die", "box", "下模与定位镶块", 0, height * .39, 0, length * .38, height * .08, width * .42, dark));
+    parts.push(part("upper-die", "box", "上模与快换模柄", 0, height * .48, 0, length * .32, height * .08, width * .36, dark));
+    parts.push(part("hydraulic-reservoir", "box", "液压油箱与检修盖", -columnX, height * .23, width * .34, length * .22, height * .25, width * .22, dark));
+    parts.push(cylinderOnAxis("pump-motor", "变量泵驱动电机", -columnX, height * .4, width * .34, length * .13, length * .24, "x", mid));
+    parts.push(part("valve-manifold", "box", "比例阀液压集成块", -columnX * .82, height * .5, width * .34, length * .14, height * .12, width * .12, yellow));
+    parts.push(cylinderOnAxis("pressure-gauge", "系统压力表", -columnX * .75, height * .59, width * .315, length * .09, width * .025, "z", metal));
+    parts.push(torusOnAxis("pressure-gauge-bezel", "压力表防护圈", -columnX * .75, height * .59, width * .298, length * .1, length * .012, "z", dark));
+    addCableSweep(parts, { id: "pressure-hose-a", label: "主缸高压油管", diameter: Math.max(12, length * .012), color: dark, points: [
+      { x: -columnX * .72, y: height * .51, z: width * .3 }, { x: -columnX * .55, y: height * .72, z: width * .29 },
+      { x: -length * .12, y: height * .91, z: width * .2 }, { x: 0, y: height * .94, z: length * .04 },
+    ] });
+    addCableSweep(parts, { id: "pressure-hose-b", label: "主缸回油管", diameter: Math.max(10, length * .01), color: dark, points: [
+      { x: -columnX * .8, y: height * .46, z: width * .25 }, { x: -columnX * .62, y: height * .78, z: width * .23 },
+      { x: length * .1, y: height * .89, z: width * .16 }, { x: length * .08, y: height * .82, z: 0 },
+    ] });
+    for (const x of [-length * .36, length * .36]) for (const z of [-width * .36, width * .36]) addThreadedFastener(parts, { id: `press-anchor-${x}-${z}`, label: "机架地脚螺栓", x, y: height * .045, z, diameter: Math.max(14, length * .014), length: height * .07, color: metal });
+    addBoltCircle(parts, { id: "cylinder-flange-bolt", label: "主缸法兰紧固件", x: 0, y: height * .72, z: 0, radius: length * .075, boltDiameter: Math.max(8, length * .008), length: height * .025, axis: "y", count: 8, color: metal });
+    for (const side of [-1, 1]) {
+      parts.push(part(`light-curtain-post-${side}`, "box", `${side < 0 ? "左" : "右"}安全光栅立柱`, side * length * .43, height * .46, -frameDepth * .58, length * .035, height * .55, length * .035, dark));
+      for (let index = 0; index < 6; index += 1) parts.push(cylinderOnAxis(`light-curtain-${side}-${index}`, "安全光栅发射/接收单元", side * length * .43, height * (.24 + index * .075), -frameDepth * .6, length * .018, length * .025, "z", aqua));
+    }
+    parts.push(cylinderOnAxis("control-emergency-stop", "急停按钮", length * .39, height * .64, -width * .42, length * .045, width * .035, "z", "#b34b3e"));
+    parts.push(cylinderOnAxis("control-start", "双手启动按钮", length * .35, height * .54, -width * .42, length * .032, width * .03, "z", aqua));
+    parts.push(cylinderOnAxis("control-reset", "复位按钮", length * .43, height * .54, -width * .42, length * .032, width * .03, "z", yellow));
   } else if (intent === "robot") {
     primaryPartId = "cell-base";
     const base = Math.min(length, width) * .28, shell = "#dce3df", shellAccent = "#91a7a1";
@@ -462,7 +506,11 @@ const equipmentParts = (intent: LocalCadAgentIntent, prompt: string, length: num
     parts.push(part("guard-left", "box", "左侧防护", -length * .46, height * .52, 0, length * .035, height * .96, width * .9, aqua));
     parts.push(part("guard-right", "box", "右侧防护", length * .46, height * .52, 0, length * .035, height * .96, width * .9, aqua));
     parts.push(part("door", "box", "前检修门", -length * .12, height * .55, -width * .43, length * .5, height * .68, width * .025, "#dfe5df"));
+    parts.push(part("door-window", "box", "前门复合安全观察窗", -length * .12, height * .61, -width * .447, length * .34, height * .34, width * .012, "#8fb9b7"));
+    parts.push(cylinderOnAxis("door-handle", "前门旋转锁把", length * .1, height * .54, -width * .462, width * .035, length * .11, "y", dark));
     parts.push(part("control", "box", "数控操作箱", length * .39, height * .62, -width * .37, length * .12, height * .3, width * .14, dark));
+    parts.push(part("control-screen", "box", "数控触摸显示屏", length * .39, height * .67, -width * .447, length * .085, height * .1, width * .012, "#1b2b2d"));
+    for (let index = 0; index < 5; index += 1) parts.push(cylinderOnAxis(`control-key-${index + 1}`, `操作面板功能键 ${index + 1}`, length * (.36 + index * .015), height * .57, -width * .457, length * .012, width * .012, "z", index === 4 ? "#b34b3e" : yellow));
     parts.push(part("chip", "box", "排屑装置", -length * .29, height * .14, width * .4, length * .38, height * .12, width * .12, mid));
     for (const z of [-width * .16, width * .16]) parts.push(part(`linear-guide-${z}`, "box", "工作台直线导轨", -length * .1, height * .285, z, length * .48, height * .025, width * .035, metal));
     parts.push(cylinderOnAxis("ball-screw", "X 轴滚珠丝杠", -length * .1, height * .31, width * .02, width * .035, length * .48, "x", metal));
@@ -501,6 +549,10 @@ const equipmentParts = (intent: LocalCadAgentIntent, prompt: string, length: num
 
 const polygon = (points: Array<[number, number]>): AgentProfile => ({ kind: "polygon", points: points.map(([x, y]) => ({ x, y })) });
 const circle = (x: number, y: number, radiusMm: number): AgentProfile => ({ kind: "circle", center: { x, y }, radiusMm });
+const roundedRectangle = (centerX: number, centerY: number, widthMm: number, heightMm: number, radiusMm: number): AgentProfile => ({
+  kind: "roundedRectangle", center: { x: centerX, y: centerY }, widthMm, heightMm,
+  radiusMm: Math.max(.1, Math.min(radiusMm, widthMm / 2 - .1, heightMm / 2 - .1)),
+});
 const rectangle = (minX: number, minY: number, maxX: number, maxY: number): AgentProfile => polygon([[minX, minY], [maxX, minY], [maxX, maxY], [minX, maxY]]);
 const roundedOctagon = (centerX: number, centerY: number, width: number, height: number, cornerRatio = .18): AgentProfile => {
   const halfWidth = width / 2, halfHeight = height / 2;
@@ -591,6 +643,79 @@ const featureDrivenProgram = (
         }) : []),
       ],
     }];
+  } else if (intent === "press") {
+    primaryPartId = "press-frame";
+    replaces = ["press-frame", "press-base", "press-bed", "press-ram", "press-control"];
+    const frameDepth = width * .62;
+    parts = [{
+      id: "press-frame", name: "一体式闭式压力机机架", appearance: dark, engineering, steps: [
+        { id: "outer-frame", name: "整体机架圆角外轮廓", kind: "extrude", plane: { type: "XY", offset: -frameDepth / 2 }, profile: roundedRectangle(0, height * .52, length * .9, height * .96, length * .055), distanceMm: frameDepth, operation: "new" },
+        { id: "working-opening", name: "压力机工作窗口", kind: "extrude", plane: { type: "XY", offset: -frameDepth / 2 - .1 }, profile: roundedRectangle(0, height * .53, length * .56, height * .46, length * .04), distanceMm: frameDepth + .2, operation: "remove" },
+        { id: "rear-service-opening", name: "机架后部维护减重腔", kind: "extrude", plane: { type: "XY", offset: frameDepth * .14 }, profile: roundedRectangle(0, height * .77, length * .42, height * .12, length * .025), distanceMm: frameDepth * .38, operation: "remove" },
+      ],
+    }, {
+      id: "press-base", name: "圆角减振铸造底座", appearance: dark, engineering, steps: [{ id: "base-loft", name: "四截面底座放样", kind: "loft", sections: [
+        { plane: { type: "XZ", offset: 0 }, profile: roundedRectangle(0, 0, length * .96, width * .96, length * .035) },
+        { plane: { type: "XZ", offset: height * .045 }, profile: roundedRectangle(0, 0, length, width, length * .045) },
+        { plane: { type: "XZ", offset: height * .12 }, profile: roundedRectangle(0, 0, length * .94, width * .91, length * .04) },
+        { plane: { type: "XZ", offset: height * .16 }, profile: roundedRectangle(0, 0, length * .88, width * .84, length * .035) },
+      ] }] ,
+    }, {
+      id: "press-bed", name: "T 槽精密承压工作台", appearance: metal, engineering, steps: [{ id: "bed-loft", name: "承压台圆角放样", kind: "loft", sections: [
+        { plane: { type: "XZ", offset: height * .27 }, profile: roundedRectangle(0, 0, length * .62, width * .68, length * .018) },
+        { plane: { type: "XZ", offset: height * .31 }, profile: roundedRectangle(0, 0, length * .68, width * .74, length * .022) },
+        { plane: { type: "XZ", offset: height * .36 }, profile: roundedRectangle(0, 0, length * .64, width * .7, length * .018) },
+      ] }] ,
+    }, {
+      id: "press-ram", name: "四导向液压滑块", appearance: accent, engineering, steps: [{ id: "ram-loft", name: "滑块铸件过渡放样", kind: "loft", sections: [
+        { plane: { type: "XZ", offset: height * .49 }, profile: roundedRectangle(0, 0, length * .43, width * .47, length * .022) },
+        { plane: { type: "XZ", offset: height * .56 }, profile: roundedRectangle(0, 0, length * .5, width * .54, length * .032) },
+        { plane: { type: "XZ", offset: height * .64 }, profile: roundedRectangle(0, 0, length * .47, width * .5, length * .026) },
+      ] }] ,
+    }, {
+      id: "press-control", name: "圆角悬臂式操作箱", appearance: dark, engineering, steps: [{ id: "panel-loft", name: "操作箱曲面外壳放样", kind: "loft", sections: [
+        { plane: { type: "XY", offset: -width * .44 }, profile: roundedRectangle(length * .39, height * .59, length * .18, height * .31, length * .022) },
+        { plane: { type: "XY", offset: -width * .37 }, profile: roundedRectangle(length * .39, height * .59, length * .17, height * .29, length * .02) },
+        { plane: { type: "XY", offset: -width * .31 }, profile: roundedRectangle(length * .385, height * .59, length * .15, height * .27, length * .018) },
+      ] }] ,
+    }];
+  } else if (intent === "cnc" && requests.cncType !== "lathe") {
+    primaryPartId = "base";
+    replaces = ["base", "column", "head", "door", "control"];
+    parts = [{
+      id: "base", name: "一体式减振铸造床身", appearance: dark, engineering, steps: [{ id: "bed-casting", name: "床身四截面圆角放样", kind: "loft", sections: [
+        { plane: { type: "XZ", offset: 0 }, profile: roundedRectangle(0, 0, length * .96, width * .96, length * .04) },
+        { plane: { type: "XZ", offset: height * .045 }, profile: roundedRectangle(0, 0, length, width, length * .05) },
+        { plane: { type: "XZ", offset: height * .12 }, profile: roundedRectangle(0, 0, length * .94, width * .91, length * .04) },
+        { plane: { type: "XZ", offset: height * .16 }, profile: roundedRectangle(0, 0, length * .86, width * .82, length * .035) },
+      ] }],
+    }, {
+      id: "column", name: "加强筋式机床立柱", appearance: metal, engineering, steps: [{ id: "column-casting", name: "立柱渐缩铸件放样", kind: "loft", sections: [
+        { plane: { type: "XZ", offset: height * .16 }, profile: roundedRectangle(length * .2, width * .16, length * .34, width * .48, length * .035) },
+        { plane: { type: "XZ", offset: height * .37 }, profile: roundedRectangle(length * .2, width * .17, length * .31, width * .44, length * .034) },
+        { plane: { type: "XZ", offset: height * .68 }, profile: roundedRectangle(length * .18, width * .18, length * .28, width * .39, length * .03) },
+        { plane: { type: "XZ", offset: height * .88 }, profile: roundedRectangle(length * .16, width * .18, length * .25, width * .35, length * .028) },
+      ] }],
+    }, {
+      id: "head", name: "流线型主轴箱铸件", appearance: dark, engineering, steps: [{ id: "head-casting", name: "主轴箱五截面放样", kind: "loft", sections: [
+        { plane: { type: "XZ", offset: height * .56 }, profile: roundedRectangle(length * .12, -width * .04, length * .2, width * .24, length * .026) },
+        { plane: { type: "XZ", offset: height * .64 }, profile: roundedRectangle(length * .12, -width * .03, length * .27, width * .31, length * .032) },
+        { plane: { type: "XZ", offset: height * .74 }, profile: roundedRectangle(length * .12, 0, length * .31, width * .34, length * .036) },
+        { plane: { type: "XZ", offset: height * .83 }, profile: roundedRectangle(length * .12, width * .02, length * .27, width * .3, length * .032) },
+        { plane: { type: "XZ", offset: height * .89 }, profile: roundedRectangle(length * .12, width * .03, length * .22, width * .25, length * .026) },
+      ] }],
+    }, {
+      id: "door", name: "带安全观察窗的圆角前门", appearance: metal, engineering, steps: [
+        { id: "door-panel", name: "前门圆角轮廓", kind: "extrude", plane: { type: "XY", offset: -width * .46 }, profile: roundedRectangle(-length * .12, height * .55, length * .52, height * .7, length * .025), distanceMm: width * .03, operation: "new" },
+        { id: "window-opening", name: "复合安全窗开口", kind: "extrude", plane: { type: "XY", offset: -width * .465 }, profile: roundedRectangle(-length * .12, height * .61, length * .36, height * .36, length * .018), distanceMm: width * .04, operation: "remove" },
+      ],
+    }, {
+      id: "control", name: "斜面数控操作终端", appearance: dark, engineering, steps: [{ id: "control-shell", name: "操作箱三截面圆角放样", kind: "loft", sections: [
+        { plane: { type: "XY", offset: -width * .46 }, profile: roundedRectangle(length * .39, height * .62, length * .135, height * .32, length * .018) },
+        { plane: { type: "XY", offset: -width * .39 }, profile: roundedRectangle(length * .39, height * .62, length * .125, height * .3, length * .016) },
+        { plane: { type: "XY", offset: -width * .32 }, profile: roundedRectangle(length * .38, height * .62, length * .11, height * .27, length * .014) },
+      ] }],
+    }];
   } else if (intent === "generic") {
     primaryPartId = "main";
     if (/管|软管|线缆|弯曲路径/.test(prompt)) {
@@ -617,16 +742,24 @@ const featureDrivenProgram = (
   } else if (intent === "robot") {
     const base = Math.min(length, width) * .28;
     primaryPartId = "upper-arm";
-    replaces = ["upper-arm", "upper-arm-cast-shell", "forearm", "forearm-cast-shell"];
+    replaces = ["cell-base", "fixture", "upper-arm", "upper-arm-cast-shell", "forearm", "forearm-cast-shell", "controller-cabinet"];
     parts = [{ id: "upper-arm", name: "J2–J3 多截面流线型上臂", appearance: accent, engineering, steps: [{ id: "loft", name: "上臂铸件多截面放样", kind: "loft", sections: [
-      { plane: { type: "YZ", offset: length * .015 }, profile: roundedOctagon(height * .31, 0, base * .52, base * .46) },
-      { plane: { type: "YZ", offset: length * .1 }, profile: roundedOctagon(height * .45, 0, base * .42, base * .34) },
-      { plane: { type: "YZ", offset: length * .205 }, profile: roundedOctagon(height * .645, 0, base * .38, base * .4) },
+      { plane: { type: "YZ", offset: length * .015 }, profile: circle(height * .31, 0, base * .28) },
+      { plane: { type: "YZ", offset: length * .055 }, profile: circle(height * .37, 0, base * .25) },
+      { plane: { type: "YZ", offset: length * .105 }, profile: circle(height * .46, 0, base * .22) },
+      { plane: { type: "YZ", offset: length * .16 }, profile: circle(height * .56, 0, base * .205) },
+      { plane: { type: "YZ", offset: length * .205 }, profile: circle(height * .645, 0, base * .215) },
     ] }] }, { id: "forearm", name: "J3–J5 多截面流线型前臂", appearance: metal, engineering, steps: [{ id: "loft", name: "前臂铸件多截面放样", kind: "loft", sections: [
-      { plane: { type: "YZ", offset: length * .215 }, profile: roundedOctagon(height * .66, 0, base * .36, base * .38) },
-      { plane: { type: "YZ", offset: length * .34 }, profile: roundedOctagon(height * .79, 0, base * .28, base * .3) },
-      { plane: { type: "YZ", offset: length * .445 }, profile: roundedOctagon(height - base * .17, 0, base * .24, base * .26) },
-    ] }] }];
+      { plane: { type: "YZ", offset: length * .215 }, profile: circle(height * .66, 0, base * .21) },
+      { plane: { type: "YZ", offset: length * .27 }, profile: circle(height * .72, 0, base * .185) },
+      { plane: { type: "YZ", offset: length * .335 }, profile: circle(height * .79, 0, base * .16) },
+      { plane: { type: "YZ", offset: length * .395 }, profile: circle(height - base * .22, 0, base * .145) },
+      { plane: { type: "YZ", offset: length * .445 }, profile: circle(height - base * .17, 0, base * .13) },
+    ] }] }, { id: "cell-base", name: "圆角机器人单元底板", appearance: dark, engineering, steps: [{ id: "base", name: "底板圆角实体", kind: "extrude", plane: { type: "XZ", offset: 0 }, profile: roundedRectangle(0, 0, length, width, Math.min(length, width) * .035), distanceMm: 60, operation: "new" }] }, { id: "fixture", name: "圆角定位工装台", appearance: metal, engineering, steps: [{ id: "fixture-loft", name: "工装台渐缩放样", kind: "loft", sections: [
+      { plane: { type: "XZ", offset: 60 }, profile: roundedRectangle(-length * .3, 0, length * .29, width * .35, length * .022) },
+      { plane: { type: "XZ", offset: height * .22 }, profile: roundedRectangle(-length * .3, 0, length * .25, width * .31, length * .018) },
+      { plane: { type: "XZ", offset: height * .53 }, profile: roundedRectangle(-length * .3, 0, length * .27, width * .33, length * .02) },
+    ] }] }, { id: "controller-cabinet", name: "圆角机器人控制柜", appearance: dark, engineering, steps: [{ id: "cabinet", name: "控制柜圆角壳体", kind: "extrude", plane: { type: "XY", offset: width * .21 }, profile: roundedRectangle(-length * .4, height * .18, length * .2, height * .32, length * .018), distanceMm: width * .22, operation: "new" }] }];
   }
 
   if (!parts.length) return {};
@@ -654,13 +787,13 @@ export const createLocalCadAgentPlan = (promptInput: string, options: { planId?:
         : intent === "robot" && featureRequests.robotEndEffector === "suction" ? "六轴真空搬运机器人工作单元"
           : intent === "generic" && /外壳|壳体|防护罩/.test(prompt) ? "自由曲面壳体参数化模型" : titles[intent];
   const generated = equipmentParts(intent, prompt, length, width, height, featureRequests);
-  const hasEngineeringDetail = intent === "cnc" || intent === "robot" || intent === "conveyor";
+  const hasEngineeringDetail = intent === "cnc" || intent === "robot" || intent === "press" || intent === "conveyor";
   const template: ModelingResourceTemplate = {
     resourceId: id, resourceCode: "AGENT-CAD", resourceTitle: resolvedTitle, projectName: resolvedTitle,
     materialSpec: material.material,
     density: material.density,
-    tolerance: intent === "cnc" || intent === "shaft" || intent === "flange" ? .03 : .1,
-    process: intent === "enclosure" ? "钣金折弯 / 焊接装配" : intent === "robot" || intent === "conveyor" || intent === "cnc" ? "机加工 / 焊接装配" : "机加工",
+    tolerance: intent === "cnc" || intent === "shaft" || intent === "flange" ? .03 : intent === "press" ? .05 : .1,
+    process: intent === "enclosure" ? "钣金折弯 / 焊接装配" : intent === "robot" || intent === "press" || intent === "conveyor" || intent === "cnc" ? "机加工 / 焊接装配" : "机加工",
     parts: generated.parts,
   };
   const featureProgramResult = featureDrivenProgram(id, resolvedTitle, intent, prompt, { length, width, height }, featureRequests, material);
@@ -706,6 +839,7 @@ export const createLocalCadAgentPlan = (promptInput: string, options: { planId?:
     generated.cuts.length ? "孔结构使用精确圆柱工具体执行 B-Rep 切除。" : hasEngineeringDetail ? "螺纹、齿轮、轴承和线缆使用可编辑机械参数生成，并可随特征历史稳定重建与导出。" : "首版优先建立可编辑主体结构，细节可继续使用精修工具补充。",
     ...(intent === "conveyor" ? [`输送线采用${featureRequests.conveyorType === "belt" ? "皮带" : "滚筒"}结构，包含轴承、齿轮、电机、传动防护、线缆与调平紧固件。`] : []),
     ...(intent === "robot" ? [`机器人包含关节轴承、减速齿轮、伺服驱动、中空腕部、线缆、${featureRequests.robotEndEffector === "welder" ? "焊枪" : featureRequests.robotEndEffector === "suction" ? "真空吸盘" : "两指夹具"}和控制柜。`, "机械臂外观采用独立精细表面层，包含流线铸造外壳、关节端盖、装配缝、检修盖和法兰紧固件。"] : []),
+    ...(intent === "press" ? ["压力机采用带真实工作窗口的一体式闭式机架，并配置液压缸、活塞杆、四导向滑块、上下模和承压工作台。", "液压站、泵电机、阀块、压力表、软管、安全光幕和操作按钮均作为可编辑工程组件保留。"] : []),
     ...(intent === "cnc" ? [featureRequests.cncType === "lathe" ? "数控车床包含主轴箱、卡盘、刀塔、尾座、导轨、滚珠丝杠、轴承和伺服传动。" : "数控机床包含导轨、滚珠丝杠、主轴轴承、伺服齿轮、刀柄刀库、线缆和工作台紧固件。"] : []),
     ...(featureRequests.filletRadiusMm ? [`按需求在主体稳定边上建立 R${featureRequests.filletRadiusMm} mm 圆角。`] : []),
     ...(featureRequests.chamferDistanceMm ? [`按需求在主体稳定边上建立 ${featureRequests.chamferDistanceMm} mm 倒角。`] : []),
@@ -718,6 +852,7 @@ export const createLocalCadAgentPlan = (promptInput: string, options: { planId?:
     ...(featureRequests.chamferDistanceMm ? [`建立 ${featureRequests.chamferDistanceMm} mm 真实倒角特征`] : []),
     ...(intent === "conveyor" ? ["建立滚筒—轴承—齿轮—电机传动链"] : []),
     ...(intent === "robot" ? ["建立六轴关节轴承、减速齿轮、伺服与末端夹具", "生成 J1–J6 流线外壳、端盖、密封圈、检修盖板与表面紧固件"] : []),
+    ...(intent === "press" ? ["建立圆角闭式机架、工作窗口、承压台与四导向滑块", "建立液压缸—活塞杆—阀块—泵站—软管动力链和安全光幕"] : []),
     ...(intent === "cnc" ? [featureRequests.cncType === "lathe" ? "建立主轴—卡盘—刀塔—尾座—丝杠传动机构" : "建立导轨—滚珠丝杠—主轴轴承—伺服齿轮—刀库内部机构"] : []),
     ...(hasEngineeringDetail ? ["生成紧固件螺纹牙、动力/编码器线缆与维护细节"] : []),
   ];

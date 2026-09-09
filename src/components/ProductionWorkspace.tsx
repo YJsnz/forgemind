@@ -109,9 +109,9 @@ export function ProductionWorkspace() {
     }
   }, [tab])
 
-  // The plant enters as a readable sequence: routes first, then asset blocks,
-  // then the live cargo. This keeps the map legible while still giving it a
-  // sense of motion when a filter or the simulation state changes.
+  // Routes and asset blocks animate only when the map view itself changes.
+  // Live item-lot counts fluctuate on simulation ticks and must never restart
+  // this entrance sequence, otherwise the whole map repeatedly fades out.
   useEffect(() => {
     if (tab !== 'map') return
     const frame = frameRef.current
@@ -129,21 +129,11 @@ export function ProductionWorkspace() {
       duration: 560,
       ease: 'out(3)',
     })
-    const cargoAnimation = animateIfAllowed(frame.querySelectorAll<HTMLElement>('.fm-production-moving-lot'), {
-      scale: [0.76, 1.12],
-      opacity: [0.62, 1],
-      delay: stagger(90),
-      duration: 760,
-      loop: true,
-      alternate: true,
-      ease: 'inOutSine',
-    })
     return () => {
       nodeAnimation?.cancel()
       routeAnimation?.cancel()
-      cargoAnimation?.cancel()
     }
-  }, [mapFilter, objects.length, snapshot.itemLots.length, tab])
+  }, [mapFilter, objects.length, tab])
 
   useEffect(() => {
     const frame = frameRef.current

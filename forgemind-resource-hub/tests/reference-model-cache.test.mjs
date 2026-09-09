@@ -51,3 +51,22 @@ test("precision demonstration GLB assets remain present and substantial", async 
   const cacheSource = await readFile(new URL("../app/kernel-debug/ReferenceModelCache.ts", import.meta.url), "utf8");
   assert.match(cacheSource, /import\("three\/examples\/jsm\/loaders\/GLTFLoader\.js"\)/);
 });
+
+test("all bundled ForgeHub GLB models are selectable and copied into the production build", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../public/models/industrial/manifest.json", import.meta.url), "utf8"));
+  const relativePaths = [
+    ...manifest.components.map((component) => `industrial/${component.file}`),
+    "forklift_agv.glb",
+    "robot_arm_6dof_white.glb",
+  ];
+  assert.equal(relativePaths.length, 13);
+
+  const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  for (const relativePath of relativePaths) {
+    const publicAsset = new URL(`../public/models/${relativePath}`, import.meta.url);
+    const builtAsset = new URL(`../dist/client/models/${relativePath}`, import.meta.url);
+    assert.ok((await stat(publicAsset)).size > 0, `${relativePath} must exist in ForgeHub public assets`);
+    assert.ok((await stat(builtAsset)).size > 0, `${relativePath} must be copied into the ForgeHub production build`);
+    assert.match(pageSource, new RegExp(relativePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${relativePath} must be selectable in the reference model list`);
+  }
+});

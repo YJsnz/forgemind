@@ -45,8 +45,8 @@ export default defineConfig(async () => {
 
   return {
     server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+      ? { host: "127.0.0.1", watch: { useFsEvents: false, usePolling: true } }
+      : { host: "127.0.0.1" },
     // occt-wasm ships an ESM loader next to its WebAssembly asset. Keep that
     // pair out of dependency prebundling and preserve the modern WASM features
     // required by the upstream build.

@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "ForgePass 认证与产品交接时序",
+    "locale": "zh-CN",
+    "output": "forgemind-atlas-05-auth-product-handoff.html",
+    "viewBox": [1080, 620],
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "login", "label": "登录链", "focus": ["operator", "portal", "pass", "auth", "db"], "note": "密码、邮箱 OTP 或 GitHub OAuth 最终都由服务端建立身份会话。" },
+      { "id": "handoff", "label": "产品交接", "focus": ["portal", "pass", "mind", "hub"], "note": "门户先经过 ForgePass，ForgeHub 到达后清理 fragment 并复核 /api/auth/me。" },
+      { "id": "session", "label": "会话恢复", "focus": ["portal", "mind", "hub", "auth"], "note": "前端恢复 Bearer 会话，独立产品不得只信任浏览器传来的展示状态。" }
+    ]
+  },
+  "participants": [
+    { "id": "operator", "type": "external", "label": "工程师", "sublabel": "浏览器 / 桌面端" },
+    { "id": "portal", "type": "frontend", "label": "门户", "sublabel": "ForgeMind / 路由" },
+    { "id": "pass", "type": "security", "label": "ForgePass", "sublabel": "密码 / OTP / OAuth" },
+    { "id": "auth", "type": "backend", "label": "认证 API", "sublabel": "Spring Boot :8080" },
+    { "id": "db", "type": "database", "label": "MySQL", "sublabel": "用户 / 会话 / 绑定" },
+    { "id": "mind", "type": "frontend", "label": "工作台", "sublabel": "ForgeMind 业务会话" },
+    { "id": "hub", "type": "cloud", "label": "ForgeHub", "sublabel": "独立 CAD :3000" }
+  ],
+  "segments": [
+    { "from": 140, "to": 285, "label": "身份建立" },
+    { "from": 305, "to": 460, "label": "会话交接" },
+    { "from": 480, "to": 560, "label": "独立产品复核" }
+  ],
+  "messages": [
+    { "id": "open-portal", "from": "operator", "to": "portal", "y": 160, "label": "打开 ForgeMind", "variant": "default" },
+    { "id": "open-pass", "from": "portal", "to": "pass", "y": 192, "label": "进入 ForgePass", "variant": "security" },
+    { "id": "credential", "from": "pass", "to": "auth", "y": 224, "label": "密码 / OTP / OAuth", "variant": "security" },
+    { "id": "persist-identity", "from": "auth", "to": "db", "y": 256, "label": "绑定身份与会话", "variant": "emphasis" },
+    { "id": "auth-result", "from": "auth", "to": "pass", "y": 288, "label": "token / exchange code", "variant": "return" },
+    { "id": "session-to-portal", "from": "pass", "to": "portal", "y": 320, "label": "建立 Bearer 会话", "variant": "security" },
+    { "id": "open-workspace", "from": "portal", "to": "mind", "y": 360, "label": "进入主工作台", "variant": "emphasis" },
+    { "id": "hub-fragment", "from": "portal", "to": "hub", "y": 400, "label": "fragment 交接", "variant": "security" },
+    { "id": "hub-me", "from": "hub", "to": "auth", "y": 456, "label": "GET /api/auth/me", "variant": "security" },
+    { "id": "hub-session", "from": "auth", "to": "hub", "y": 488, "label": "复核用户身份", "variant": "return" },
+    { "id": "workspace-ready", "from": "mind", "to": "operator", "y": 525, "label": "加载工作区", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "portal", "from": 155, "to": 600, "type": "frontend" },
+    { "participant": "pass", "from": 187, "to": 330, "type": "security" },
+    { "participant": "auth", "from": 219, "to": 500, "type": "backend" },
+    { "participant": "db", "from": 251, "to": 275, "type": "database" },
+    { "participant": "mind", "from": 355, "to": 550, "type": "frontend" },
+    { "participant": "hub", "from": 395, "to": 520, "type": "cloud" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "统一认证", "items": ["密码、Email OTP 与 GitHub OAuth 都在 Spring Boot 服务端完成身份绑定", "MySQL 保存身份、会话和审计事实，浏览器不持有服务端密钥"] },
+    { "dot": "rose", "title": "ForgeHub 门禁", "items": ["入口语义是先进入 ForgePass，登录成功后才进入独立 CAD", "ForgeHub 清除 URL fragment，再通过 /api/auth/me 复核当前身份"] },
+    { "dot": "amber", "title": "交接边界", "items": ["ForgeMind 与 ForgeHub 可共享登录结果，但产品路由仍各自执行权限门禁", "无有效会话时回到认证，不把展示页面当作授权证明"] }
+  ]
+}

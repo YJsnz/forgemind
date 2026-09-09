@@ -1,5 +1,5 @@
 import { requestAssistant, dispatchAssistantState, type AssistantRequestResult } from './assistantRuntime'
-import { shouldAutoStopAssistantTurn, type AssistantVoiceTurnState } from './assistantVoiceSession'
+import { ASSISTANT_VOICE_DEFAULTS, shouldAutoStopAssistantTurn, type AssistantVoiceTurnState } from './assistantVoiceSession'
 
 const AI_ASR_URL = 'http://127.0.0.1:8000/api/ai/asr'
 const TARGET_SAMPLE_RATE = 16000
@@ -72,10 +72,10 @@ export async function startAssistantTurnRecorder(options: AssistantTurnRecorderO
   const sink = audioContext.createGain()
   const chunks: number[] = []
   const sourceSampleRate = audioContext.sampleRate
-  const maxWaitMs = options.maxWaitMs ?? 9000
-  const maxTurnMs = options.maxTurnMs ?? 9000
-  const silenceMs = options.silenceMs ?? 760
-  const minSpeechMs = options.minSpeechMs ?? 360
+  const maxWaitMs = options.maxWaitMs ?? ASSISTANT_VOICE_DEFAULTS.maxWaitMs
+  const maxTurnMs = options.maxTurnMs ?? ASSISTANT_VOICE_DEFAULTS.maxTurnMs
+  const silenceMs = options.silenceMs ?? ASSISTANT_VOICE_DEFAULTS.silenceMs
+  const minSpeechMs = options.minSpeechMs ?? ASSISTANT_VOICE_DEFAULTS.minSpeechMs
   const startedAt = performance.now()
   let speechStartedAtMs: number | null = null
   let lastVoiceAtMs: number | null = null

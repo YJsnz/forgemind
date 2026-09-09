@@ -50,6 +50,7 @@ export interface CadWorkbenchToolbarActions {
   toggleSection: () => void;
   showShortcutHelp: () => void;
   openAgent: () => void;
+  newProject: () => void;
   openCommandPalette: () => void;
   openReadiness: () => void;
   exportCadProject: () => void;
@@ -132,6 +133,7 @@ export function CadWorkbenchToolbar({ state, actions }: { state: CadWorkbenchToo
     </div>
     <div className="cad-command-group cad-command-group-file">
       <b>项目</b><div>
+        <button type="button" onClick={actions.newProject} disabled={busy} title="清空当前设计并从空白项目开始">新建项目</button>
         <button type="button" onClick={actions.openAgent} disabled={busy} title="描述设备或零件，生成可编辑建模方案">✦ Agent</button>
         <button type="button" onClick={actions.openCommandPalette} title="Ctrl / Cmd + K">搜索命令</button>
         <button type="button" onClick={actions.openReadiness}>工程检查 {readinessScore}%</button>

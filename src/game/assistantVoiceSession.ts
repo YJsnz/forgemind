@@ -1,5 +1,13 @@
 export type AssistantVoiceTurnState = 'waiting' | 'speaking' | 'finishing'
 
+/** 浏览器语音轮次默认参数；保持在纯逻辑模块，便于无浏览器回归测试。 */
+export const ASSISTANT_VOICE_DEFAULTS = {
+  maxWaitMs: 6000,
+  maxTurnMs: 9000,
+  silenceMs: 480,
+  minSpeechMs: 280,
+} as const
+
 export interface AssistantVoiceTurnStopInput {
   elapsedMs: number
   speechStartedAtMs: number | null

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ForgeMind 当前系统架构",
+    "locale": "zh-CN",
+    "output": "forgemind-architecture-archify.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/YJsnz/forgemind.git",
+      "revision": "46e2761cc45ed1be85826f60196225b0e6bef3a6"
+    },
+    "views": [
+      {
+        "id": "primary-product-path",
+        "label": "主产品路径",
+        "focus": ["operator", "forgemind-ui", "spring-api", "mysql"],
+        "note": "从操作员进入 ForgeMind，到后端读取和持久化工厂事实。"
+      },
+      {
+        "id": "trusted-ai-path",
+        "label": "可信 AI 路径",
+        "focus": ["forgemind-ui", "spring-api", "ai-gateway", "voice-services"],
+        "note": "AI 只编排可选能力，实时工厂事实仍由确定性工具提供。"
+      },
+      {
+        "id": "forge-ecosystem",
+        "label": "Forge 生态入口",
+        "focus": ["operator", "forgemind-ui", "forgepass", "forgehub"],
+        "note": "ForgePass 负责访问前提，ForgeHub 作为独立 CAD 工作区接入。"
+      }
+    ]
+  },
+  "components": [
+    { "id": "operator", "type": "external", "label": "操作员", "sublabel": "Browser / Voice", "pos": [40, 240], "size": [130, 64], "sources": [{ "path": "src/components/ForgeMindIntro.tsx", "label": "入口" }] },
+    { "id": "forgemind-ui", "type": "frontend", "label": "ForgeMind 前端", "sublabel": "Vite :5173", "pos": [240, 240], "size": [150, 64], "tag": "确定性仿真", "sources": [{ "path": "src/components/ProductionWorkspace.tsx", "label": "生产工作台" }, { "path": "src/game/assistantRuntime.ts", "label": "助手运行时" }] },
+    { "id": "forgepass", "type": "security", "label": "ForgePass", "sublabel": "登录 / OAuth / OTP", "pos": [240, 60], "size": [150, 64], "tag": "访问前提", "sources": [{ "path": "src/components/ForgePassPage.tsx", "label": "认证界面" }, { "path": "backend/src/main/java/com/forgemind/web/AuthController.java", "label": "认证 API" }] },
+    { "id": "spring-api", "type": "backend", "label": "Spring Boot API", "sublabel": ":8080", "pos": [460, 240], "size": [150, 64], "tag": "权限 / 版本 / 审计", "sources": [{ "path": "backend/src/main/java/com/forgemind/web/AgentController.java", "label": "服务端入口" }, { "path": "backend/src/main/java/com/forgemind/web/AuthController.java", "label": "身份门禁" }] },
+    { "id": "mysql", "type": "database", "label": "MySQL", "sublabel": "Flyway schema", "pos": [680, 240], "size": [140, 64], "sources": [{ "path": "backend/src/main/resources/db/migration/V33__create_email_and_oauth_authentication.sql", "label": "认证迁移" }, { "path": "backend/src/main/resources/db/migration/V31__create_assistant_knowledge_documents.sql", "label": "知识库迁移" }] },
+    { "id": "ai-gateway", "type": "backend", "label": "AI Gateway", "sublabel": "FastAPI :8000 · RAG / YOLO", "pos": [460, 410], "size": [170, 64], "tag": "可选 / 默认 rule", "sources": [{ "path": "ai-service/main.py", "label": "AI 网关 / 检测" }, { "path": "ai-service/rag.py", "label": "RAG" }] },
+    { "id": "voice-services", "type": "backend", "label": "语音服务", "sublabel": "BT-7274 / ASR / TTS", "pos": [780, 410], "size": [160, 64], "tag": "可选设备能力", "sources": [{ "path": "voice-chat/voice_chat.py", "label": "独立语音" }, { "path": "ai-service/main.py", "label": "语音网关" }] },
+    { "id": "forgehub", "type": "cloud", "label": "ForgeHub", "sublabel": "独立高精细 CAD", "pos": [900, 60], "size": [170, 64], "tag": "登录后进入", "sources": [{ "path": "forgemind-resource-hub/app/cad/CadRoute.tsx", "label": "CAD 路由" }, { "path": "forgemind-resource-hub/core/cad/CadDocumentStore.ts", "label": "CAD 存储" }] },
+    { "id": "deterministic-engine", "type": "backend", "label": "确定性仿真与 Agent", "sublabel": "规则 / 寻路 / 诊断", "pos": [240, 410], "size": [180, 64], "tag": "核心事实源", "sources": [{ "path": "src/components/FactoryAgentWorkspace.tsx", "label": "Agent 工作区" }, { "path": "src/components/ProductionWorkspace.tsx", "label": "仿真工作台" }] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "浏览器与独立工作区", "wraps": ["forgemind-ui", "forgepass", "forgehub", "deterministic-engine"] },
+    { "kind": "security-group", "label": "服务端与可选能力", "wraps": ["spring-api", "mysql", "ai-gateway", "voice-services"] }
+  ],
+  "connections": [
+    { "id": "operator-to-ui", "from": "operator", "to": "forgemind-ui", "label": "HTTPS / 浏览器交互", "variant": "emphasis", "labelAt": [205, 318] },
+    { "id": "ui-to-auth", "from": "forgemind-ui", "to": "forgepass", "label": "登录 / 令牌交接", "variant": "security", "fromSide": "top", "toSide": "bottom" },
+    { "id": "ui-to-api", "from": "forgemind-ui", "to": "spring-api", "label": "REST / SSE", "variant": "emphasis" },
+    { "id": "auth-to-api", "from": "forgepass", "to": "spring-api", "label": "校验身份", "variant": "security", "fromSide": "right", "toSide": "top" },
+    { "id": "api-to-db", "from": "spring-api", "to": "mysql", "label": "持久化工厂事实 / 审计", "labelAt": [645, 318] },
+    { "id": "ui-to-engine", "from": "forgemind-ui", "to": "deterministic-engine", "label": "规则仿真 / 寻路 / Agent 诊断", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "labelDx": -100 },
+    { "id": "ui-to-ai", "from": "forgemind-ui", "to": "ai-gateway", "label": "助手请求 / 结构化事实", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "ai-to-voice", "from": "ai-gateway", "to": "voice-services", "label": "TTS / ASR", "variant": "dashed" },
+    { "id": "ui-to-hub", "from": "forgemind-ui", "to": "forgehub", "label": "登录后 URL fragment 交接", "variant": "dashed", "fromSide": "left", "toSide": "top", "via": [[190, 272], [190, 20], [985, 20]], "labelAt": [550, 40] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "核心事实", "items": ["前端仿真、寻路和诊断可在无 AI 服务时运行", "Spring Boot 负责权限、版本、Patch 和审计边界"] },
+    { "dot": "violet", "title": "可选 AI", "items": ["AI Gateway 默认 rule，远程模型必须由服务端显式启用", "模型不得直接决定坐标、碰撞、物料数量或仿真指标"] },
+    { "dot": "amber", "title": "生态接入", "items": ["ForgePass 是访问前提，不属于主产品 Logo 墙", "ForgeHub 是独立 CAD 工作区并复核交接会话"] }
+  ]
+}

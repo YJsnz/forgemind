@@ -136,8 +136,21 @@ def ask_assistant(question, conversation, conversation_summary):
     return str(result.get("answer") or "规则助手没有返回文本。")
 
 
+def strip_english_from_speech(text):
+    """屏幕和日志保留原回答，语音副本跳过英文、缩写和对象 ID。"""
+    spoken = re.sub(r"[A-Za-z][A-Za-z0-9_.:/\\-]*", " ", text)
+    spoken = re.sub(r"\s+([，。！？!?；;：:、])", r"\1", spoken)
+    spoken = re.sub(r"([，。！？!?；;：:、])(?:\s*\1)+", r"\1", spoken)
+    spoken = re.sub(r"^[\s，。！？!?；;：:、]+", "", spoken)
+    spoken = re.sub(r"\s+", " ", spoken)
+    return re.sub(r"([\u3400-\u9fff])\s+(?=[\u3400-\u9fff])", r"\1", spoken).strip()
+
+
 def speak(text):
     """BT-7274 语音合成（HTTP 服务），服务不可用时回退本地 sherpa。"""
+    text = strip_english_from_speech(text)
+    if not text:
+        return
     try:
         body = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(

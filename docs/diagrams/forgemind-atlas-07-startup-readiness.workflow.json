@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "ForgeMind 启动、就绪与降级工作流",
+    "locale": "zh-CN",
+    "animation": "trace",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "output": "forgemind-atlas-07-startup-readiness.html",
+    "views": [
+      { "id": "full-start", "label": "完整启动", "focus": ["operator", "script", "mysql", "spring", "ai", "vite"], "note": "按依赖顺序启动数据库、后端、可选 AI 与前端；ForgeHub 作为独立入口纳入同一启动编排。" },
+      { "id": "degraded", "label": "降级边界", "focus": ["spring", "ai", "vite"], "note": "AI、语音和视觉不可用时保持规则模式和核心编辑可运行。" },
+      { "id": "health", "label": "健康门禁", "focus": ["mysql", "spring", "ai", "vite"], "note": "启动脚本等待健康、就绪和端口内容检查后才报告 SYSTEM READY。" }
+    ]
+  },
+  "lanes": [
+    { "id": "core", "label": "核心启动链", "variant": "normal" },
+    { "id": "exception", "label": "降级 / 失败", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "prepare", "label": "准备", "fromCol": 0, "toCol": 1 },
+    { "id": "services", "label": "服务就绪", "fromCol": 2, "toCol": 4, "variant": "emphasis" },
+    { "id": "surfaces", "label": "入口可用", "fromCol": 5, "toCol": 5, "variant": "emphasis" }
+  ],
+  "groups": [
+    { "id": "core-gate", "label": "核心不可跳过", "lane": "core", "fromCol": 1, "toCol": 3, "variant": "security" },
+    { "id": "optional-gate", "label": "可选降级", "lane": "core", "fromCol": 3, "toCol": 4, "variant": "dashed" }
+  ],
+  "mainPath": ["operator", "script", "mysql", "spring", "vite"],
+  "nodes": [
+    { "id": "operator", "lane": "core", "col": 0, "type": "external", "label": "启动者", "sublabel": "cmd / PowerShell", "width": 132 },
+    { "id": "script", "lane": "core", "col": 1, "type": "backend", "label": "启动编排", "sublabel": "依赖顺序 + 轮询", "tag": "统一入口", "width": 132 },
+    { "id": "mysql", "lane": "core", "col": 2, "type": "database", "label": "MySQL", "sublabel": "Docker 8.4", "tag": "结构前提", "width": 132 },
+    { "id": "spring", "lane": "core", "col": 3, "type": "backend", "label": "Spring Boot", "sublabel": ":8080 health", "tag": "核心 API", "width": 132 },
+    { "id": "ai", "lane": "core", "col": 4, "type": "backend", "label": "AI Gateway", "sublabel": ":8000 readiness", "tag": "默认 rule", "width": 132 },
+    { "id": "vite", "lane": "core", "col": 5, "type": "frontend", "label": "SYSTEM READY", "sublabel": "ForgeMind :5173", "tag": "主入口", "width": 132 }
+  ],
+  "edges": [
+    { "id": "invoke", "from": "operator", "to": "script", "variant": "default" },
+    { "id": "start-db", "from": "script", "to": "mysql", "label": "启动并等待", "variant": "security" },
+    { "id": "start-spring", "from": "mysql", "to": "spring", "label": "迁移 + health", "variant": "emphasis" },
+    { "id": "start-vite", "from": "spring", "to": "vite", "label": "端口 + 内容检查", "variant": "emphasis" },
+    { "id": "optional-ai", "from": "spring", "to": "ai", "label": "尝试就绪", "variant": "dashed", "route": "auto" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "核心门禁", "items": ["MySQL、Spring Boot、前端入口构成可恢复工厂的核心启动链", "健康检查通过后才允许进入工作台并报告 SYSTEM READY"] },
+    { "dot": "violet", "title": "可选能力", "items": ["AI Gateway 默认 rule，Ollama、语音、视觉不可用时不阻断核心编辑与仿真", "ForgeHub 作为独立产品入口单独执行内容和身份门禁"] },
+    { "dot": "amber", "title": "失败语义", "items": ["数据库或核心 API 失败是启动失败，必须明确报告原因", "可选服务失败进入降级状态，不伪装为全量能力就绪"] }
+  ]
+}

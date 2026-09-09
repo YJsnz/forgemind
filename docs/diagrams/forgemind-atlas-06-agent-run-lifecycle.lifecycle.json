@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "ForgeMind Agent Run 生命周期",
+    "locale": "zh-CN",
+    "output": "forgemind-atlas-06-agent-run-lifecycle.html",
+    "viewBox": [1040, 566],
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "main", "label": "主生命周期", "focus": ["queued", "planning", "executing", "reviewing", "completed"], "note": "从接受请求到确定性复核完成。" },
+      { "id": "waiting", "label": "等待与人工门", "focus": ["executing", "approval", "blocked", "reviewing"], "note": "等待批准或补充输入不等于失败。" },
+      { "id": "recovery", "label": "失败与恢复", "focus": ["executing", "failed"], "note": "区分可重试失败与人工终止边界。" }
+    ]
+  },
+  "lanes": [
+    { "id": "main", "label": "运行阶段" },
+    { "id": "waiting", "label": "等待 / 人工" },
+    { "id": "recovery", "label": "恢复" }
+  ],
+  "states": [
+    { "id": "queued", "type": "start", "label": "已排队", "sublabel": "请求已接受", "lane": "main", "col": 0, "step": "01", "tag": "入口" },
+    { "id": "planning", "type": "active", "label": "规划中", "sublabel": "目标与工具图", "lane": "main", "col": 1, "step": "02", "tag": "编排" },
+    { "id": "executing", "type": "active", "label": "执行中", "sublabel": "确定性工具调用", "lane": "main", "col": 2, "step": "03", "tag": "事实" },
+    { "id": "reviewing", "type": "decision", "label": "复核中", "sublabel": "质量与批准门", "lane": "main", "col": 3, "step": "04", "tag": "门禁" },
+    { "id": "completed", "type": "success", "label": "已完成", "sublabel": "报告与事件链", "lane": "main", "col": 4, "step": "05", "tag": "完成" },
+    { "id": "approval", "type": "waiting", "label": "等待批准", "sublabel": "人工决策", "lane": "waiting", "col": 0, "tag": "暂停" },
+    { "id": "blocked", "type": "waiting", "label": "等待输入", "sublabel": "缺少上下文", "lane": "waiting", "col": 1, "tag": "暂停" },
+    { "id": "failed", "type": "failure", "label": "可恢复失败", "sublabel": "工具 / 服务错误", "lane": "recovery", "col": 0, "yOffset": 78, "tag": "重试" }
+  ],
+  "transitions": [
+    { "id": "main-plan", "from": "queued", "to": "planning", "variant": "default" },
+    { "id": "plan-execute", "from": "planning", "to": "executing", "variant": "emphasis" },
+    { "id": "execute-review", "from": "executing", "to": "reviewing", "variant": "emphasis" },
+    { "id": "review-complete", "from": "reviewing", "to": "completed", "variant": "emphasis" },
+    { "id": "needs-approval", "from": "executing", "to": "approval", "variant": "security", "route": "drop" },
+    { "id": "missing-input", "from": "reviewing", "to": "blocked", "variant": "default", "route": "drop" },
+    { "id": "failed-retry", "from": "executing", "to": "failed", "variant": "security", "fromSide": "left", "toSide": "left", "via": [[320, 157], [320, 385]] },
+    { "id": "retry-back", "from": "failed", "to": "executing", "variant": "emphasis", "fromSide": "left", "toSide": "top", "via": [[20, 385], [20, 80], [402, 80]] }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "主链", "items": ["排队、规划、执行、复核、完成构成五段主生命周期", "完成状态携带报告、指标差异和事件链，而不是单纯 UI 状态"] },
+    { "dot": "rose", "title": "等待不是失败", "items": ["人工批准和补充输入会暂停运行，但保留可恢复上下文", "取消与超时才是终止出口"] },
+    { "dot": "amber", "title": "恢复边界", "items": ["工具或服务错误进入可恢复失败，重试受预算和审计事件约束", "动态工厂事实需要重新读取，不能沿用过期摘要"] }
+  ]
+}

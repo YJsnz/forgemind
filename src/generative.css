@@ -531,3 +531,455 @@
   .fm-generative-library-inspector, .fm-generative-recipe-editor { border-top: 1px solid rgba(175, 222, 211, .12); border-left: 0; }
   .fm-generative-recipe-list { grid-template-columns: 1fr; }
 }
+
+/* 2026-09-04 visual alignment: keep the generative workflow in the same
+   paper-and-schematic language as the production control workspace. */
+.fm-generative-workspace {
+  inset: 0;
+  padding: 18px 20px 20px;
+  background: linear-gradient(135deg, rgba(221, 232, 226, .88), rgba(242, 247, 244, .96) 46%, rgba(215, 228, 221, .82));
+}
+
+.fm-generative-workspace::before {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(rgba(50, 88, 82, .055) 1px, transparent 1px), linear-gradient(90deg, rgba(50, 88, 82, .055) 1px, transparent 1px);
+  background-size: 32px 32px;
+  content: '';
+  opacity: .7;
+}
+
+.fm-generative-workspace .glass3d::before,
+.fm-generative-workspace .glass3d::after {
+  display: none;
+}
+
+.fm-generative-frame {
+  border: 1px solid rgba(49, 79, 72, .2);
+  border-radius: 0;
+  background: rgba(248, 251, 249, .94);
+  box-shadow: 0 18px 44px rgba(47, 66, 59, .14);
+  color: #2b4844;
+}
+
+.fm-generative-header,
+.fm-generative-grid,
+.fm-generative-footer {
+  border-color: rgba(49, 79, 72, .16);
+}
+
+.fm-generative-header h1,
+.fm-generative-card-head b,
+.fm-floor-diagnostics-head h2,
+.fm-agent-control-head h2,
+.fm-generative-library-head h2,
+.fm-generative-model-hero h3,
+.fm-generative-empty b {
+  color: #203a39;
+}
+
+.fm-generative-kicker,
+.fm-generative-card-head span,
+.fm-generative-footer,
+.fm-generative-stage-footer,
+.fm-generative-input-note,
+.fm-generative-header h1 em {
+  color: #70827a;
+}
+
+.fm-generative-kicker span,
+.fm-generative-card-head span,
+.fm-generative-footer strong {
+  color: #a77a0b;
+}
+
+.fm-generative-header p,
+.fm-floor-diagnostics-head p,
+.fm-agent-control-head p,
+.fm-generative-library-head p {
+  color: #6c7e76;
+}
+
+.fm-generative-surface-switch {
+  gap: 0;
+  padding: 0;
+  border: 1px solid rgba(49, 79, 72, .2);
+  border-radius: 0;
+  background: #edf4f0;
+}
+
+.fm-generative-surface-switch button {
+  min-width: 88px;
+  border-radius: 0;
+  color: #6f8078;
+}
+
+.fm-generative-surface-switch button + button {
+  border-left: 1px solid rgba(49, 79, 72, .16);
+}
+
+.fm-generative-surface-switch button.is-active {
+  color: #263b37;
+  background: #f4d779;
+  box-shadow: inset 0 -2px 0 #b88915;
+}
+
+.fm-generative-status {
+  color: #71837b;
+}
+
+.fm-generative-status small,
+.fm-generative-live-strip span,
+.fm-generative-live-note,
+.fm-floor-diagnostic-card-top small,
+.fm-floor-diagnostic-card > p,
+.fm-floor-diagnostic-metrics em,
+.fm-floor-diagnostic-metrics small,
+.fm-floor-diagnostic-health small,
+.fm-agent-control-version small,
+.fm-agent-finding p,
+.fm-agent-finding small,
+.fm-generative-candidate p,
+.fm-generative-candidate-foot,
+.fm-generative-diff-note,
+.fm-generative-empty,
+.fm-generative-comparison span,
+.fm-generative-whatif-result span,
+.fm-generative-whatif-result small,
+.fm-generative-model-description,
+.fm-generative-model-meta span,
+.fm-generative-library-section-head b,
+.fm-generative-recipe-card small,
+.fm-generative-recipe-card p {
+  color: #71827a;
+}
+
+.fm-generative-live-strip {
+  border-color: rgba(49, 79, 72, .14);
+  background: #e8f0ec;
+}
+
+.fm-generative-live-strip b,
+.fm-generative-stage-footer b,
+.fm-generative-graph-summary b,
+.fm-generative-candidate-metrics b,
+.fm-generative-comparison b,
+.fm-generative-whatif-result b,
+.fm-generative-selected-route b {
+  color: #2a4a45;
+}
+
+.fm-generative-live-strip b.is-stable,
+.fm-generative-status.is-running,
+.fm-generative-adjustment-note,
+.fm-generative-structure-note {
+  color: #2f806d;
+}
+
+.fm-generative-live-strip b.is-attention,
+.fm-generative-status.is-running,
+.fm-generative-scale-note,
+.fm-generative-warning {
+  color: #a77a0b;
+}
+
+.fm-generative-live-strip b.is-blocked {
+  color: #ad5b51;
+}
+
+.fm-floor-diagnostics,
+.fm-generative-library,
+.fm-agent-control-room {
+  border-color: rgba(49, 79, 72, .18);
+  background: #eef5f1;
+}
+
+.fm-floor-diagnostics::before {
+  background: linear-gradient(90deg, rgba(55, 111, 105, .08) 1px, transparent 1px), linear-gradient(rgba(55, 111, 105, .06) 1px, transparent 1px);
+  background-size: 24px 24px;
+  opacity: .8;
+}
+
+.fm-floor-diagnostics-head,
+.fm-agent-control-head,
+.fm-generative-library-head,
+.fm-generative-library-tabs,
+.fm-agent-tool-strip,
+.fm-generative-result-actions,
+.fm-generative-stage-footer {
+  border-color: rgba(49, 79, 72, .14);
+}
+
+.fm-floor-diagnostics-head > div:first-child > span,
+.fm-generative-library-head > div:first-child > span,
+.fm-generative-library-section-head span,
+.fm-generative-new-item > span,
+.fm-agent-section-title span,
+.fm-agent-tool-strip > span,
+.fm-generative-whatif-head span {
+  color: #4e8e89;
+}
+
+.fm-floor-diagnostics-filters button,
+.fm-agent-control-actions button,
+.fm-agent-control-actions select,
+.fm-agent-patch-actions button,
+.fm-generative-whatif-actions button,
+.fm-generative-result-actions button {
+  border-color: rgba(49, 79, 72, .18);
+  color: #46655e;
+  background: #e5eee9;
+}
+
+.fm-floor-diagnostics-filters button:hover,
+.fm-floor-diagnostics-filters button.is-active,
+.fm-agent-control-actions button:hover,
+.fm-agent-patch-actions button:hover,
+.fm-generative-whatif-actions button:hover,
+.fm-generative-result-actions button:hover {
+  border-color: rgba(184, 137, 21, .72);
+  color: #7c5a08;
+  background: #f7edc5;
+}
+
+.fm-floor-diagnostic-card,
+.fm-agent-summary > div,
+.fm-agent-finding,
+.fm-generative-card,
+.fm-generative-candidate,
+.fm-generative-comparison div,
+.fm-generative-whatif-result > div,
+.fm-generative-graph-summary div,
+.fm-generative-model-card,
+.fm-generative-recipe-card {
+  border-color: rgba(49, 79, 72, .16);
+  color: #294943;
+  background: rgba(248, 251, 249, .88);
+}
+
+.fm-floor-diagnostic-card:hover,
+.fm-floor-diagnostic-card.is-selected,
+.fm-generative-candidate:hover,
+.fm-generative-candidate.is-selected,
+.fm-generative-model-card:hover,
+.fm-generative-model-card.is-selected,
+.fm-generative-recipe-card:hover,
+.fm-generative-recipe-card.is-selected {
+  border-color: rgba(184, 137, 21, .7);
+  background: #fff8dc;
+  transform: translateY(-1px);
+}
+
+.fm-floor-diagnostic-card-top > span,
+.fm-floor-diagnostic-metrics b,
+.fm-generative-candidate-top span,
+.fm-generative-candidate-foot b,
+.fm-generative-model-card em,
+.fm-generative-recipe-card strong,
+.fm-generative-library-status b,
+.fm-generative-whatif-head b {
+  color: #ad7d0d;
+}
+
+.fm-floor-diagnostic-card-top b,
+.fm-floor-diagnostic-health b,
+.fm-agent-summary b,
+.fm-agent-finding strong,
+.fm-generative-candidate h3,
+.fm-generative-model-card b,
+.fm-generative-recipe-card b {
+  color: #294943;
+}
+
+.fm-floor-diagnostic-card-title h3,
+.fm-generative-candidate h3 {
+  color: #25433f;
+}
+
+.fm-floor-diagnostic-detail,
+.fm-generative-whatif {
+  border-color: rgba(49, 79, 72, .18);
+  background: #e5eee9;
+}
+
+.fm-floor-diagnostic-detail > p,
+.fm-generative-selected-route small {
+  color: #5f756c;
+}
+
+.fm-floor-diagnostic-issue-list span {
+  color: #5b756c;
+  background: rgba(90, 167, 165, .1);
+}
+
+.fm-agent-control-input,
+.fm-agent-tool-strip {
+  border-color: rgba(49, 79, 72, .13);
+}
+
+.fm-agent-control-input textarea,
+.fm-agent-control-actions select,
+.fm-generative-library-toolbar input,
+.fm-generative-new-item input,
+.fm-generative-new-item select,
+.fm-generative-recipe-editor input,
+.fm-generative-recipe-editor select,
+.fm-generative-field textarea,
+.fm-generative-field input,
+.fm-generative-field select {
+  border-color: rgba(49, 79, 72, .2);
+  color: #294943;
+  background: #fbfdfb;
+}
+
+.fm-agent-control-input textarea:focus,
+.fm-generative-library-toolbar input:focus,
+.fm-generative-new-item input:focus,
+.fm-generative-new-item select:focus,
+.fm-generative-recipe-editor input:focus,
+.fm-generative-recipe-editor select:focus,
+.fm-generative-field textarea:focus,
+.fm-generative-field input:focus,
+.fm-generative-field select:focus {
+  border-color: #b88915;
+  background: #fffdf1;
+  box-shadow: 0 0 0 2px rgba(184, 137, 21, .12);
+}
+
+.fm-generative-primary,
+.fm-generative-result-actions button.is-primary,
+.fm-agent-control-actions button.is-primary,
+.fm-agent-patch-actions button.is-primary {
+  border-color: #b88915;
+  color: #263b37;
+  background: #f0cc59;
+}
+
+.fm-generative-cancel {
+  border-color: rgba(173, 91, 81, .42);
+  color: #a45149;
+  background: #fbefec;
+}
+
+.fm-generative-cancel:hover {
+  border-color: #ad5b51;
+  background: #f6dfdb;
+}
+
+.fm-generative-stage-map {
+  border-color: rgba(49, 114, 109, .24);
+  background: #e1ece8;
+}
+
+.fm-generative-map-grid {
+  opacity: .82;
+  background-image: linear-gradient(rgba(61, 126, 120, .12) 1px, transparent 1px), linear-gradient(90deg, rgba(61, 126, 120, .12) 1px, transparent 1px);
+}
+
+.fm-generative-map-cross {
+  background: rgba(184, 137, 21, .42);
+}
+
+.fm-generative-map-label,
+.fm-generative-map-signal,
+.fm-generative-stage-step,
+.fm-generative-empty > span {
+  color: #648078;
+}
+
+.fm-generative-map-label.label-bottom,
+.fm-generative-map-signal.has-candidates,
+.fm-generative-stage-step.is-active {
+  color: #9a700a;
+}
+
+.fm-generative-stage-step i {
+  border-color: rgba(49, 79, 72, .24);
+}
+
+.fm-generative-stage-step.is-active i {
+  border-color: #b88915;
+  box-shadow: 0 0 10px rgba(184, 137, 21, .22);
+}
+
+.fm-generative-stage-step.is-complete {
+  color: #2f806d;
+}
+
+.fm-generative-mini-layout i {
+  border-color: #5aa7a5;
+  background: rgba(90, 167, 165, .42);
+}
+
+.fm-generative-mini-layout i.is-source {
+  border-color: #b88915;
+  background: rgba(240, 204, 89, .74);
+}
+
+.fm-generative-mini-layout i.is-smelter,
+.fm-generative-mini-layout i.is-assembler,
+.fm-generative-mini-layout i.is-inspection,
+.fm-generative-mini-layout i.is-storage {
+  border-color: #4f8e88;
+  background: rgba(111, 151, 145, .62);
+}
+
+.fm-generative-mini-layout i.is-agv {
+  border-color: #b88915;
+  background: rgba(240, 204, 89, .72);
+}
+
+.fm-generative-whatif-actions button:disabled,
+.fm-generative-result-actions button:disabled {
+  background: #e6ede9;
+}
+
+.fm-generative-empty > span {
+  border-color: rgba(49, 79, 72, .28);
+  color: #b88915;
+}
+
+.fm-generative-selected-route {
+  border-left-color: #b88915;
+  background: #fff8dc;
+}
+
+.fm-generative-library-inspector,
+.fm-generative-recipe-editor {
+  border-color: rgba(49, 79, 72, .14);
+  background: #eaf2ed;
+}
+
+.fm-generative-bound-item:hover,
+.fm-generative-bound-item.is-selected {
+  border-color: rgba(90, 167, 165, .36);
+  background: #e1eee9;
+}
+
+.fm-generative-library-action,
+.fm-generative-new-item button,
+.fm-generative-selected-route button {
+  border-color: rgba(49, 114, 109, .28);
+  color: #327a78;
+  background: transparent;
+}
+
+.fm-generative-library-action:hover {
+  border-color: #b88915;
+  color: #8c6508;
+  background: #fff8dc;
+}
+
+.fm-generative-footer i,
+.fm-generative-input-note i {
+  background: #5aa7a5;
+  box-shadow: 0 0 8px rgba(90, 167, 165, .42);
+}
+
+@media (max-width: 760px) {
+  .fm-generative-workspace {
+    inset: 0;
+    padding: 10px;
+  }
+}

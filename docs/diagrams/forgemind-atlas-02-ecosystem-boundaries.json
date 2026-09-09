@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ForgeMind 生态边界与协作关系",
+    "locale": "zh-CN",
+    "output": "forgemind-atlas-02-ecosystem-boundaries.html",
+    "quality_profile": "showcase",
+    "repository": { "url": "https://github.com/YJsnz/forgemind.git", "revision": "46e2761cc45ed1be85826f60196225b0e6bef3a6" }
+  },
+  "components": [
+    { "id": "operator", "type": "external", "label": "工程师 / 操作员", "sublabel": "统一入口", "pos": [40, 280], "size": [150, 64], "sources": [{ "path": "src/App.tsx", "label": "应用入口" }] },
+    { "id": "forgepass", "type": "security", "label": "ForgePass", "sublabel": "身份与会话", "pos": [250, 280], "size": [150, 64], "tag": "访问前提", "sources": [{ "path": "src/components/ForgePassPage.tsx", "label": "认证界面" }, { "path": "backend/src/main/java/com/forgemind/web/AuthController.java", "label": "认证 API" }] },
+    { "id": "forgemind", "type": "frontend", "label": "ForgeMind", "sublabel": "设计 / 仿真 / 诊断", "pos": [460, 280], "size": [170, 64], "tag": "事实源", "sources": [{ "path": "src/App.tsx", "label": "主站路由" }, { "path": "src/game/simulation.ts", "label": "运行时" }] },
+    { "id": "forgecloud", "type": "cloud", "label": "ForgeCloud", "sublabel": "统一云控制面", "pos": [700, 120], "size": [170, 64], "sources": [{ "path": "backend/src/main/java/com/forgemind/web/CloudPlatformController.java", "label": "云平台 API" }, { "path": "src/components/ForgeCloudConsole.tsx", "label": "云控制台" }] },
+    { "id": "forgelab", "type": "cloud", "label": "ForgeLab", "sublabel": "社区 / 模板 / 资产", "pos": [700, 240], "size": [170, 64], "sources": [{ "path": "backend/src/main/java/com/forgemind/web/ForgeLabController.java", "label": "社区 API" }] },
+    { "id": "forgemove", "type": "cloud", "label": "ForgeMove", "sublabel": "移动端协同", "pos": [700, 360], "size": [170, 64], "sources": [{ "path": "docs/ForgeMove-用户文档.md", "label": "模块边界" }] },
+    { "id": "forgehub", "type": "cloud", "label": "ForgeHub", "sublabel": "CAD / STEP / 资源", "pos": [700, 480], "size": [170, 64], "tag": "独立产品", "sources": [{ "path": "forgemind-resource-hub/app/page.tsx", "label": "资源门户" }, { "path": "forgemind-resource-hub/app/cad/CadRoute.tsx", "label": "CAD 路由" }] },
+    { "id": "service", "type": "backend", "label": "统一服务层", "sublabel": "权限 / 版本 / 云 API", "pos": [930, 300], "size": [170, 64], "sources": [{ "path": "backend/src/main/java/com/forgemind/web/FactoryProjectController.java", "label": "项目 API" }, { "path": "backend/src/main/java/com/forgemind/web/CloudPlatformController.java", "label": "云平台 API" }] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "产品生态表面", "wraps": ["forgepass", "forgemind", "forgecloud", "forgelab", "forgemove", "forgehub"] }
+  ],
+  "connections": [
+    { "id": "operator-pass", "from": "operator", "to": "forgepass", "label": "登录 / 会话", "variant": "security", "labelAt": [220, 358] },
+    { "id": "pass-mind", "from": "forgepass", "to": "forgemind", "label": "身份交接", "variant": "security", "labelAt": [430, 358] },
+    { "id": "mind-cloud", "from": "forgemind", "to": "forgecloud", "variant": "emphasis" },
+    { "id": "mind-lab", "from": "forgemind", "to": "forgelab", "variant": "default" },
+    { "id": "mind-move", "from": "forgemind", "to": "forgemove", "variant": "dashed" },
+    { "id": "mind-hub", "from": "forgemind", "to": "forgehub", "variant": "default" },
+    { "id": "mind-service", "from": "forgemind", "to": "service", "label": "统一 API", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "职责边界", "items": ["ForgeMind 是工厂设计与确定性运行时；ForgeCloud 是统一云控制面", "ForgeLab、ForgeMove、ForgeHub 是协作、移动和 CAD 资源产品表面"] },
+    { "dot": "violet", "title": "统一锚点", "items": ["ForgePass 是所有产品入口的身份前提", "Spring Boot 负责服务端权限、版本、审计与持久化"] },
+    { "dot": "amber", "title": "当前实现边界", "items": ["生态间已有本地接口与交接；真实工业设备控制和生产级遥测仍未接入", "AI Gateway 保持可选，不能替代确定性事实源"] }
+  ]
+}

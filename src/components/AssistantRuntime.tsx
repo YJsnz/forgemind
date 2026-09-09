@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { dispatchAssistantNotice, dispatchAssistantState, requestAssistant, speakAssistantText } from '../game/assistantRuntime'
+import { dispatchAssistantNotice, dispatchAssistantState, requestAssistant, speakAssistantText, warmAssistantVoicePresets } from '../game/assistantRuntime'
 import { AI_SERVICE_ENABLED } from '../game/api'
 import { dispatchAssistantPanelCommand } from '../game/assistantPanels'
 import type { AssistantPanelId } from '../game/assistantProtocol'
@@ -16,6 +16,7 @@ import { assistantVisionSignature, readAssistantVisionSnapshot, VISION_RESULT_KE
  */
 export function AssistantRuntime() {
   useEffect(() => {
+    if (AI_SERVICE_ENABLED) void warmAssistantVoicePresets()
     if (window.localStorage.getItem('forgemind.token')) {
       void hydrateAssistantReminderPolicy()
       void hydrateAssistantMemory()

@@ -1,0 +1,54 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "ForgeMind 可信 Agent 执行工作流",
+    "locale": "zh-CN",
+    "animation": "trace",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "output": "forgemind-atlas-04-trusted-agent.html",
+    "views": [
+      { "id": "approved-path", "label": "批准执行链", "focus": ["workspace", "snapshot", "diagnosis", "patch", "approval", "apply", "review"], "note": "从目标、快照、确定性分析到人工批准、应用和应用后复核。" },
+      { "id": "rejection-path", "label": "拒绝与重规划", "focus": ["diagnosis", "patch", "approval"], "note": "拒绝、版本冲突和资源冲突都回到受控重规划，不直接改写工厂。" },
+      { "id": "evidence-path", "label": "证据与审计", "focus": ["snapshot", "diagnosis", "review"], "note": "动态事实来自确定性工具，运行事件和复核摘要进入审计链。" }
+    ]
+  },
+  "lanes": [
+    { "id": "core", "label": "运行时与治理", "variant": "normal" }
+  ],
+  "phases": [
+    { "id": "intent", "label": "理解目标", "fromCol": 0, "toCol": 1 },
+    { "id": "analysis", "label": "确定性分析", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "governed-change", "label": "受控变更", "fromCol": 4, "toCol": 5, "variant": "security" }
+  ],
+  "groups": [
+    { "id": "read-only", "label": "只读事实链", "lane": "core", "fromCol": 1, "toCol": 3, "variant": "emphasis" },
+    { "id": "human-gate", "label": "人工决策闸门", "lane": "core", "fromCol": 3, "toCol": 5, "variant": "security" },
+    { "id": "audit-path", "label": "事件与复核证据", "lane": "core", "fromCol": 2, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["workspace", "snapshot", "diagnosis", "patch", "approval", "apply", "review"],
+  "nodes": [
+    { "id": "workspace", "lane": "core", "col": 0, "type": "frontend", "label": "Agent 工作台", "sublabel": "目标 / 版本 / 范围", "width": 132 },
+    { "id": "snapshot", "lane": "core", "col": 1, "type": "backend", "label": "确定性快照", "sublabel": "实时结构化事实", "tag": "不可伪造", "width": 132 },
+    { "id": "diagnosis", "lane": "core", "col": 2, "type": "backend", "label": "诊断与分析", "sublabel": "仿真 / 寻路 / 指标", "tag": "只读工具", "width": 132 },
+    { "id": "patch", "lane": "core", "col": 3, "type": "messagebus", "label": "Patch 候选", "sublabel": "影响面 + 预期差异", "tag": "待批准", "width": 132 },
+    { "id": "approval", "lane": "core", "col": 4, "type": "security", "label": "人工批准", "sublabel": "权限 / 版本 / 资源", "tag": "强门禁", "width": 132 },
+    { "id": "apply", "lane": "core", "col": 5, "type": "backend", "label": "应用 Patch", "sublabel": "锁定 + 新存档", "tag": "可逆", "width": 132 },
+    { "id": "review", "lane": "core", "col": 5, "type": "backend", "label": "应用后复核", "sublabel": "前后指标差异", "tag": "确定性证据", "width": 132, "yOffset": 84 }
+  ],
+  "edges": [
+    { "id": "workspace-snapshot", "from": "workspace", "to": "snapshot", "label": "读取版本", "variant": "emphasis" },
+    { "id": "snapshot-diagnosis", "from": "snapshot", "to": "diagnosis", "label": "工具事实", "variant": "emphasis" },
+    { "id": "diagnosis-patch", "from": "diagnosis", "to": "patch", "label": "生成候选", "variant": "security" },
+    { "id": "patch-approval", "from": "patch", "to": "approval", "label": "提交批准", "variant": "security", "route": "auto" },
+    { "id": "approval-apply", "from": "approval", "to": "apply", "label": "批准", "variant": "emphasis", "route": "auto" },
+    { "id": "apply-review", "from": "apply", "to": "review", "variant": "emphasis", "route": "auto" },
+    { "id": "review-result", "from": "review", "to": "workspace", "label": "回显结果", "variant": "default", "role": "return", "route": "auto" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "事实先行", "items": ["动态工厂数值、碰撞、寻路和指标必须通过确定性工具重读", "LLM 只做目标理解、解释和候选编排，不拥有事实写权限"] },
+    { "dot": "rose", "title": "变更门禁", "items": ["Patch 携带影响面、版本指纹和资源归属，批准后才可应用", "版本冲突、权限不足和资源冲突进入拒绝、重规划或回滚分支"] },
+    { "dot": "amber", "title": "复核闭环", "items": ["应用动作在新存档上重新运行确定性诊断", "应用前后吞吐、利用率、在制品、阻塞、运输和库存差异进入事件链"] }
+  ]
+}
